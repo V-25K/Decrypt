@@ -1,0 +1,197 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "decrypttest",
+  "post": {
+    "dir": "dist/client",
+    "entrypoints": {
+      "default": {
+        "inline": true,
+        "entry": "preview.html",
+        "height": "tall"
+      },
+      "game": {
+        "entry": "game.html",
+        "height": "tall"
+      },
+      "shop": {
+        "entry": "shop.html",
+        "height": "tall"
+      },
+      "quest": {
+        "entry": "quest.html",
+        "height": "tall"
+      },
+      "stats": {
+        "entry": "stats.html",
+        "height": "tall"
+      },
+      "leaderboard": {
+        "entry": "leaderboard.html",
+        "height": "tall"
+      }
+    }
+  },
+  "media": {
+    "dir": "public"
+  },
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  },
+  "menu": {
+    "items": [
+      {
+        "label": "Create a new Decrypt post",
+        "description": "Create Decrypt post",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "Decrypt: Reroll Daily Puzzle",
+        "description": "Reroll and publish a new daily puzzle",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-reroll"
+      },
+      {
+        "label": "Decrypt: Post Last Generated Challenge",
+        "description": "Publish the staged daily challenge if posting failed",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-post-last-generated"
+      },
+      {
+        "label": "Decrypt: Inject Manual Puzzle",
+        "description": "Inject custom puzzle text",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-inject"
+      },
+      {
+        "label": "Decrypt: Reset Stored Data",
+        "description": "Delete indexed puzzle and player data",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-reset-data"
+      }
+    ]
+  },
+  "forms": {
+    "mod_inject_form": "/internal/forms/mod-inject-submit"
+  },
+  "scheduler": {
+    "tasks": {
+      "decrypt-publish-daily-0000": {
+        "endpoint": "/internal/scheduler/publish-daily",
+        "cron": "0 0 * * *"
+      },
+      "decrypt-publish-daily-0800": {
+        "endpoint": "/internal/scheduler/publish-daily",
+        "cron": "0 8 * * *"
+      },
+      "decrypt-publish-daily-1600": {
+        "endpoint": "/internal/scheduler/publish-daily",
+        "cron": "0 16 * * *"
+      },
+      "decrypt-verify-daily-1810": {
+        "endpoint": "/internal/scheduler/verify-daily",
+        "cron": "10 18 * * *"
+      }
+    }
+  },
+  "settings": {
+    "global": {
+      "geminiApiKey": {
+        "type": "string",
+        "label": "Gemini API Key",
+        "isSecret": true
+      }
+    },
+    "subreddit": {
+      "publishHourUtc": {
+        "type": "number",
+        "label": "Daily publish hour (UTC)",
+        "defaultValue": 0,
+        "validationEndpoint": "/internal/settings/validate-publish-hour"
+      },
+      "timezone": {
+        "type": "string",
+        "label": "Timezone label",
+        "defaultValue": "UTC"
+      },
+      "dailyAutomationEnabled": {
+        "type": "select",
+        "label": "Daily automation enabled",
+        "options": [
+          {
+            "label": "Enabled",
+            "value": "enabled"
+          },
+          {
+            "label": "Disabled",
+            "value": "disabled"
+          }
+        ],
+        "defaultValue": "disabled"
+      },
+      "logicalCipherPercent": {
+        "type": "number",
+        "label": "Logical cipher frequency percent",
+        "defaultValue": 10,
+        "validationEndpoint": "/internal/settings/validate-logical-percent"
+      },
+      "aiMaxRetries": {
+        "type": "number",
+        "label": "AI max retries",
+        "defaultValue": 3,
+        "validationEndpoint": "/internal/settings/validate-ai-retries"
+      },
+      "contentSafetyMode": {
+        "type": "select",
+        "label": "Content safety mode",
+        "options": [
+          {
+            "label": "Strict",
+            "value": "strict"
+          },
+          {
+            "label": "Balanced",
+            "value": "balanced"
+          }
+        ],
+        "defaultValue": "strict"
+      }
+    }
+  },
+  "payments": {
+    "productsFile": "./products.json",
+    "endpoints": {
+      "fulfillOrder": "/internal/payments/fulfill",
+      "refundOrder": "/internal/payments/refund"
+    }
+  },
+  "permissions": {
+    "http": {
+      "enable": true,
+      "domains": [
+        "generativelanguage.googleapis.com"
+      ]
+    },
+    "redis": true,
+    "payments": true,
+    "reddit": {
+      "enable": true
+    }
+  },
+  "triggers": {
+    "onAppInstall": "/internal/triggers/on-app-install"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  },
+  "dev": {
+    "subreddit": "decrypttest_dev"
+  }
+}

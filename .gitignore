@@ -1,0 +1,30 @@
+node_modules
+.yarn
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+webroot
+dist
+coverage
+.vite
+.cache
+
+# Local editor / IDE files
+.vscode/
+.idea/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Devvit local debug output
+devvit_logs_capture*.txt
+
+# Local workspace instructions / tooling
+AGENTS.md
+tools/

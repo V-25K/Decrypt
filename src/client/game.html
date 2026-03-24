@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <link rel="preload" as="image" href="/background.jpg" fetchpriority="high" />
+    <link rel="preload" as="image" href="/result.jpg" fetchpriority="high" />
+    <link rel="preload" as="image" href="/snoo.png" fetchpriority="high" />
+    <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
+    <link rel="preload" as="audio" href="/sounds/buttonClick.wav" type="audio/wav" />
+    <link rel="preload" as="audio" href="/sounds/correct.wav" type="audio/wav" />
+    <link rel="preload" as="audio" href="/sounds/mistake.wav" type="audio/wav" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #111111;
+        color: #f4f4f4;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background:
+          linear-gradient(rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.44)),
+          url('/background.jpg') center / cover no-repeat;
+      }
+
+      #root {
+        position: relative;
+        z-index: 1;
+        min-height: 100%;
+      }
+    </style>
+    <title>devvit</title>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="game.tsx"></script>
+  </body>
+</html>

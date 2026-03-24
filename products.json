@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developers.reddit.com/schema/products.v1.json",
+  "products": [
+    {
+      "sku": "rookie_stash",
+      "displayName": "Rookie Stash",
+      "description": "500 coins, 1 hammer, 1 shield",
+      "price": 50,
+      "accountingType": "CONSUMABLE",
+      "metadata": {
+        "tier": "rookie",
+        "category": "bundle"
+      }
+    },
+    {
+      "sku": "decoder_pack",
+      "displayName": "Decoder Pack",
+      "description": "2600 coins, mixed powerups, and 2h infinite hearts",
+      "price": 250,
+      "accountingType": "CONSUMABLE",
+      "metadata": {
+        "tier": "core",
+        "category": "bundle"
+      }
+    },
+    {
+      "sku": "cryptographer_vault",
+      "displayName": "Cryptographer Vault",
+      "description": "13000 coins, 6 of each powerup, and 24h infinite hearts",
+      "price": 1000,
+      "accountingType": "CONSUMABLE",
+      "metadata": {
+        "tier": "premium",
+        "category": "bundle"
+      }
+    }
+  ]
+}
