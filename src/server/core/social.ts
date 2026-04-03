@@ -14,6 +14,16 @@ const formatDuration = (totalSeconds: number): string => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
+const toShareFailureReason = (error: unknown): string => {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message.length > 0) {
+      return message;
+    }
+  }
+  return 'Failed to submit comment.';
+};
+
 export const shareResultAsComment = async (params: {
   levelId: string;
   solveSeconds: number;
@@ -50,7 +60,7 @@ export const shareResultAsComment = async (params: {
       runAs: 'USER',
     });
     return { success: true, reason: null, commentId: comment.id };
-  } catch (_error) {
-    return { success: false, reason: 'Failed to submit comment.', commentId: null };
+  } catch (error) {
+    return { success: false, reason: toShareFailureReason(error), commentId: null };
   }
 };

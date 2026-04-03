@@ -126,6 +126,13 @@ export const reserveUsedSignature = async (
   return reserved === 1;
 };
 
+export const getUsedSignatureOwner = async (
+  signature: string
+): Promise<string | null> => {
+  const value = await redis.hGet(keyUsedStrings, signature);
+  return value ?? null;
+};
+
 export const clearUsedSignature = async (
   signature: string,
   levelId: string

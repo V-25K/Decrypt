@@ -35,6 +35,8 @@ const serializeSession = (session: SessionState): Record<string, string> => ({
   activeLevelId: session.activeLevelId,
   mode: session.mode,
   startTimestamp: `${session.startTimestamp}`,
+  activeMs: `${session.activeMs}`,
+  lastSeenAt: `${session.lastSeenAt}`,
   mistakesMade: `${session.mistakesMade}`,
   shieldIsActive: session.shieldIsActive ? '1' : '0',
   revealedIndices: JSON.stringify(session.revealedIndices),
@@ -64,11 +66,16 @@ export const getSessionState = async (
   if (Object.keys(hash).length === 0) {
     return null;
   }
+  if (!hash.activeLevelId) {
+    return null;
+  }
 
   return sessionSchema.parse({
-    activeLevelId: hash.activeLevelId ?? '',
+    activeLevelId: hash.activeLevelId,
     mode: hash.mode === 'endless' ? 'endless' : 'daily',
     startTimestamp: numberField(hash, 'startTimestamp', Date.now()),
+    activeMs: numberField(hash, 'activeMs', 0),
+    lastSeenAt: numberField(hash, 'lastSeenAt', 0),
     mistakesMade: numberField(hash, 'mistakesMade', 0),
     shieldIsActive: numberField(hash, 'shieldIsActive', 0) === 1,
     revealedIndices: parseRevealed(hash.revealedIndices),
@@ -89,6 +96,8 @@ export const createSessionState = async (params: {
     activeLevelId: params.levelId,
     mode: params.mode,
     startTimestamp: Date.now(),
+    activeMs: 0,
+    lastSeenAt: 0,
     mistakesMade: 0,
     shieldIsActive: false,
     revealedIndices: params.prefilledIndices,
@@ -111,6 +120,20 @@ export const saveSessionState = async (
 ): Promise<void> => {
   const sessionKey = keySession(userId, postId);
   await redis.hSet(sessionKey, serializeSession(session));
+  await redis.expire(sessionKey, sessionTtlSeconds);
+  await trackSessionKey(sessionKey);
+};
+
+export const saveSessionTimingState = async (
+  userId: string,
+  postId: string,
+  timing: { activeMs: number; lastSeenAt: number }
+): Promise<void> => {
+  const sessionKey = keySession(userId, postId);
+  await redis.hSet(sessionKey, {
+    activeMs: `${Math.max(0, Math.floor(timing.activeMs))}`,
+    lastSeenAt: `${Math.max(0, Math.floor(timing.lastSeenAt))}`,
+  });
   await redis.expire(sessionKey, sessionTtlSeconds);
   await trackSessionKey(sessionKey);
 };

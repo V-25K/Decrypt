@@ -5,6 +5,7 @@ export type RouterOutputs = inferRouterOutputs<AppRouter>;
 export type Puzzle = RouterOutputs['game']['loadLevel']['puzzle'];
 export type Profile = RouterOutputs['game']['bootstrap']['profile'];
 export type Inventory = RouterOutputs['game']['bootstrap']['inventory'];
+export type EndlessCatalogStatus = RouterOutputs['game']['bootstrap']['endlessCatalog'];
 export type StoreProduct = RouterOutputs['store']['getProducts']['products'][number];
 export type QuestStatus = RouterOutputs['quests']['getStatus'];
 export type QuestProgress = QuestStatus['progress'];

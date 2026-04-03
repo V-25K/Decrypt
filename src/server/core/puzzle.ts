@@ -4,13 +4,13 @@ import type {
   PuzzlePublic,
   PuzzleTile,
   StoredPadlockChain,
-} from '../../shared/game';
-import { puzzlePrivateSchema, puzzlePublicSchema } from '../../shared/game';
-import { chooseCipherType, buildCipherMapping, invertCipherMapping } from './cipher';
-import { difficultyToTier, maxPuzzleTotalLength, sanitizePhrase } from './content';
-import { runDummySolver } from './dummy-solver';
-import { checkPadlockStatus } from './gameplay';
-import { deriveSeed, mulberry32, randInt, shuffleWithRng, type Rng } from './rng';
+} from '../../shared/game.ts';
+import { puzzlePrivateSchema, puzzlePublicSchema } from '../../shared/game.ts';
+import { chooseCipherType, buildCipherMapping, invertCipherMapping } from './cipher.ts';
+import { difficultyToTier, maxPuzzleTotalLength, sanitizePhrase } from './content.ts';
+import { runDummySolver } from './dummy-solver.ts';
+import { checkPadlockStatus } from './gameplay.ts';
+import { deriveSeed, mulberry32, randInt, shuffleWithRng, type Rng } from './rng.ts';
 
 const isLetter = (char: string): boolean => /^[A-Z]$/.test(char);
 
@@ -674,9 +674,12 @@ const computeTimingTargets = (
 
 export const buildPublicPuzzle = (
   puzzle: PuzzlePrivate,
-  revealedIndices: number[]
+  revealedIndices: number[],
+  sessionRevealedIndices?: number[]
 ): PuzzlePublic => {
   const lockSet = new Set(puzzle.lockIndices ?? []);
+  const prefilledSet = new Set(puzzle.prefilledIndices);
+  const sessionRevealedSet = new Set(sessionRevealedIndices ?? []);
   const revealedSet = new Set([...puzzle.prefilledIndices, ...revealedIndices]);
   if (revealedSet.size === 0) {
     const initialPadlockStatus = checkPadlockStatus(puzzle, revealedSet);
@@ -743,6 +746,7 @@ export const buildPublicPuzzle = (
         isBlind: false,
         isGold: false,
         isLocked: false,
+        isSessionRevealed: false,
       };
     }
 
@@ -761,6 +765,8 @@ export const buildPublicPuzzle = (
       isBlind,
       isGold,
       isLocked,
+      isSessionRevealed:
+        sessionRevealedSet.has(tile.index) && !prefilledSet.has(tile.index),
       hasLock: lockSet.has(tile.index),
       lockChainId: isLocked ? lockMeta?.chainId ?? null : null,
       lockRemainingKeys: isLocked ? lockMeta?.remainingKeys : undefined,

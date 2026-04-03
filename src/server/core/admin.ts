@@ -9,8 +9,9 @@ import {
   injectManualPuzzle,
   publishDailyPost,
 } from './generator';
-import { resetInstallationStorage } from './maintenance';
 import type { ChallengeType } from '../../shared/game';
+import { activateEndlessCatalog, getEndlessCatalogStatus } from './endless-catalog';
+import { auditBundledEndlessStagingCollisions } from './endless-audit';
 
 export const rerollAndPublish = async (): Promise<{
   levelId: string;
@@ -115,6 +116,14 @@ export const injectAndPublishManualPuzzle = async (params: {
   };
 };
 
-export const resetAllStoredData = async () => {
-  return await resetInstallationStorage();
+export const getEndlessCatalogAdminStatus = async () => {
+  return await getEndlessCatalogStatus();
+};
+
+export const activateEndlessCatalogVersion = async (catalogVersion: string) => {
+  return await activateEndlessCatalog(catalogVersion);
+};
+
+export const getEndlessStagingCollisionReport = async () => {
+  return await auditBundledEndlessStagingCollisions();
 };

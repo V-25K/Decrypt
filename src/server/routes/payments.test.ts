@@ -8,9 +8,12 @@ const {
   saveInventoryMock,
   hasPurchasedSkuMock,
   markSkuPurchasedMock,
+  unmarkSkuPurchasedMock,
   redisGetMock,
   redisSetMock,
+  redisDelMock,
   updateQuestProgressOnPurchaseMock,
+  updateQuestProgressOnRefundMock,
 } = vi.hoisted(() => ({
   getUserProfileMock: vi.fn(),
   getInventoryMock: vi.fn(),
@@ -18,9 +21,12 @@ const {
   saveInventoryMock: vi.fn(),
   hasPurchasedSkuMock: vi.fn(),
   markSkuPurchasedMock: vi.fn(),
+  unmarkSkuPurchasedMock: vi.fn(),
   redisGetMock: vi.fn(),
   redisSetMock: vi.fn(),
+  redisDelMock: vi.fn(),
   updateQuestProgressOnPurchaseMock: vi.fn(),
+  updateQuestProgressOnRefundMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -35,6 +41,7 @@ vi.mock('@devvit/web/server', () => ({
   redis: {
     get: redisGetMock,
     set: redisSetMock,
+    del: redisDelMock,
   },
 }));
 
@@ -45,10 +52,12 @@ vi.mock('../core/state', () => ({
   saveInventory: saveInventoryMock,
   hasPurchasedSku: hasPurchasedSkuMock,
   markSkuPurchased: markSkuPurchasedMock,
+  unmarkSkuPurchased: unmarkSkuPurchasedMock,
 }));
 
 vi.mock('../core/quests', () => ({
   updateQuestProgressOnPurchase: updateQuestProgressOnPurchaseMock,
+  updateQuestProgressOnRefund: updateQuestProgressOnRefundMock,
 }));
 
 import { paymentsRoutes } from './payments';
@@ -88,9 +97,12 @@ afterEach(() => {
   saveInventoryMock.mockReset();
   hasPurchasedSkuMock.mockReset();
   markSkuPurchasedMock.mockReset();
+  unmarkSkuPurchasedMock.mockReset();
   redisGetMock.mockReset();
   redisSetMock.mockReset();
+  redisDelMock.mockReset();
   updateQuestProgressOnPurchaseMock.mockReset();
+  updateQuestProgressOnRefundMock.mockReset();
 });
 
 describe('payments one-time bundle fulfillment', () => {
@@ -108,6 +120,7 @@ describe('payments one-time bundle fulfillment', () => {
       },
       body: JSON.stringify({
         id: 'order_1',
+        userId: 'u_order',
         status: OrderStatus.ORDER_STATUS_PAID,
         products: [{ sku: 'rookie_stash' }],
       }),
@@ -115,15 +128,20 @@ describe('payments one-time bundle fulfillment', () => {
 
     expect(response.status).toBe(200);
     expect(saveUserProfileMock).toHaveBeenCalledWith(
-      'u_test',
+      'u_order',
       expect.objectContaining({ coins: 510 })
     );
     expect(saveInventoryMock).toHaveBeenCalledWith(
-      'u_test',
+      'u_order',
       expect.objectContaining({ hammer: 1, shield: 1 })
     );
-    expect(markSkuPurchasedMock).toHaveBeenCalledWith('u_test', 'rookie_stash');
-    expect(updateQuestProgressOnPurchaseMock).toHaveBeenCalledWith({ userId: 'u_test' });
+    expect(markSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(updateQuestProgressOnPurchaseMock).toHaveBeenCalledWith({ userId: 'u_order' });
+    expect(redisSetMock).toHaveBeenCalledWith(
+      'decrypt:payments:granted_order_skus:order_1',
+      JSON.stringify(['rookie_stash']),
+      expect.any(Object)
+    );
   });
 
   it('skips rookie stash if already purchased', async () => {
@@ -138,6 +156,7 @@ describe('payments one-time bundle fulfillment', () => {
       },
       body: JSON.stringify({
         id: 'order_2',
+        userId: 'u_order',
         status: OrderStatus.ORDER_STATUS_PAID,
         products: [{ sku: 'rookie_stash' }],
       }),
@@ -158,6 +177,7 @@ describe('payments one-time bundle fulfillment', () => {
       },
       body: JSON.stringify({
         id: 'order_3',
+        userId: 'u_order',
         status: OrderStatus.ORDER_STATUS_CANCELED,
         products: [{ sku: 'rookie_stash' }],
       }),
@@ -168,5 +188,65 @@ describe('payments one-time bundle fulfillment', () => {
     expect(saveInventoryMock).not.toHaveBeenCalled();
     expect(markSkuPurchasedMock).not.toHaveBeenCalled();
     expect(updateQuestProgressOnPurchaseMock).not.toHaveBeenCalled();
+  });
+
+  it('revokes granted entitlements on refund and clears one-time ownership', async () => {
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getInventoryMock.mockResolvedValue({
+      hammer: 1,
+      wand: 0,
+      shield: 1,
+      rocket: 0,
+    });
+    redisGetMock.mockResolvedValue(JSON.stringify(['rookie_stash']));
+    redisSetMock.mockResolvedValue('OK');
+
+    const response = await paymentsRoutes.request('http://localhost/refund', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'order_refund_1',
+        userId: 'u_order',
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      'u_order',
+      expect.objectContaining({ coins: 0 })
+    );
+    expect(saveInventoryMock).toHaveBeenCalledWith(
+      'u_order',
+      expect.objectContaining({ hammer: 0, shield: 0 })
+    );
+    expect(unmarkSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(updateQuestProgressOnRefundMock).toHaveBeenCalledWith({ userId: 'u_order' });
+    expect(redisDelMock).toHaveBeenCalledWith('decrypt:payments:granted_order_skus:order_refund_1');
+    expect(redisDelMock).toHaveBeenCalledWith('decrypt:payments:processed_order:order_refund_1');
+  });
+
+  it('treats repeated refunds as idempotent', async () => {
+    redisSetMock.mockResolvedValue(null);
+
+    const response = await paymentsRoutes.request('http://localhost/refund', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'order_refund_2',
+        userId: 'u_order',
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(saveInventoryMock).not.toHaveBeenCalled();
+    expect(unmarkSkuPurchasedMock).not.toHaveBeenCalled();
+    expect(updateQuestProgressOnRefundMock).not.toHaveBeenCalled();
   });
 });

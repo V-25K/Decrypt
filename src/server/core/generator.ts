@@ -6,6 +6,7 @@ import { buildPuzzle } from './puzzle';
 import {
   computeGlobalDailyBias,
 } from './difficulty-calibration';
+import { getBundledEndlessReservationOwner } from './endless-reservations';
 import {
   clearUsedSignature,
   getPuzzlePublishedPostId,
@@ -288,13 +289,6 @@ const generatePuzzlePayload = async (params: {
     }
 
     const text = sanitizePhrase(phrase.text);
-    console.log(
-      `[generatePuzzleForDate] level=${params.levelId} attempt=${
-        attempt + 1
-      }/${params.retries} type=${phrase.challengeType} preferredType=${preferredType} len=${
-        text.length
-      }`
-    );
     const quoteValidation = validateQuoteForPhase1(text, params.difficulty);
     if (!quoteValidation.valid) {
       lastFailureReason = quoteValidation.reasons.join('; ');
@@ -311,6 +305,15 @@ const generatePuzzlePayload = async (params: {
       lastFailureReason = 'empty signature';
       console.warn(
         `[generatePuzzleForDate] level=${params.levelId} rejected quote: empty signature`
+      );
+      continue;
+    }
+
+    const endlessReservationOwner = getBundledEndlessReservationOwner(normalized);
+    if (endlessReservationOwner && endlessReservationOwner !== params.levelId) {
+      lastFailureReason = `signature reserved by endless ${endlessReservationOwner}`;
+      console.warn(
+        `[generatePuzzleForDate] level=${params.levelId} rejected quote: reserved by endless ${endlessReservationOwner}`
       );
       continue;
     }
@@ -401,12 +404,6 @@ export const generatePuzzleForDate = async (
     }
     const difficulty = clampDifficultyWithinTier(baseDifficulty, bias, tierRange);
     const difficultyLabel = `difficulty ${difficulty} of 10 (${tier})`;
-    console.log(
-      `[generatePuzzleForDate] dateKey=${dateKey} level=${levelId} difficulty=${difficulty} aiKey=${
-        settings.geminiApiKey ? 'present' : 'missing'
-      } retries=${retries}`
-    );
-
     const payload = await generatePuzzlePayload({
       levelId,
       dateKey,
@@ -561,6 +558,12 @@ export const injectManualPuzzle = async (params: {
   const normalizedSignature = normalizeContent(text);
   if (!normalizedSignature) {
     throw new Error('Injected puzzle quote invalid: empty signature');
+  }
+  const endlessReservationOwner = getBundledEndlessReservationOwner(normalizedSignature);
+  if (endlessReservationOwner && endlessReservationOwner !== levelId) {
+    throw new Error(
+      `Injected puzzle quote already reserved by endless level ${endlessReservationOwner}.`
+    );
   }
   const reserved = await reserveUsedSignature(normalizedSignature, levelId);
   if (!reserved) {

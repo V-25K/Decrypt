@@ -13,7 +13,7 @@ export type DecryptSettings = {
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
-const defaultDailyAutomationEnabled = false;
+const defaultDailyAutomationEnabled = true;
 
 export const parseDailyAutomationSetting = (value: unknown): boolean => {
   if (typeof value === 'boolean') {

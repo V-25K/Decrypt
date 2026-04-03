@@ -67,13 +67,6 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-inject"
-      },
-      {
-        "label": "Decrypt: Reset Stored Data",
-        "description": "Delete indexed puzzle and player data",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/mod-reset-data"
       }
     ]
   },
@@ -86,13 +79,9 @@
         "endpoint": "/internal/scheduler/publish-daily",
         "cron": "0 0 * * *"
       },
-      "decrypt-publish-daily-0800": {
+      "decrypt-publish-daily-1200": {
         "endpoint": "/internal/scheduler/publish-daily",
-        "cron": "0 8 * * *"
-      },
-      "decrypt-publish-daily-1600": {
-        "endpoint": "/internal/scheduler/publish-daily",
-        "cron": "0 16 * * *"
+        "cron": "0 12 * * *"
       },
       "decrypt-verify-daily-1810": {
         "endpoint": "/internal/scheduler/verify-daily",
@@ -133,7 +122,7 @@
             "value": "disabled"
           }
         ],
-        "defaultValue": "disabled"
+        "defaultValue": "enabled"
       },
       "logicalCipherPercent": {
         "type": "number",
@@ -181,11 +170,16 @@
     "redis": true,
     "payments": true,
     "reddit": {
-      "enable": true
+      "enable": true,
+      "asUser": [
+        "SUBMIT_COMMENT",
+        "SUBSCRIBE_TO_SUBREDDIT"
+      ]
     }
   },
   "triggers": {
-    "onAppInstall": "/internal/triggers/on-app-install"
+    "onAppInstall": "/internal/triggers/on-app-install",
+    "onAppUpgrade": "/internal/triggers/on-app-upgrade"
   },
   "scripts": {
     "dev": "vite build --watch",

@@ -15,5 +15,6 @@ describe('defaultUserProfile', () => {
     expect(profile.dailyFirstTryWins).toBe(0);
     expect(profile.endlessFirstTryWins).toBe(0);
     expect(profile.bestOverallRank).toBe(0);
+    expect(profile.communityJoinRewardClaimed).toBe(false);
   });
 });

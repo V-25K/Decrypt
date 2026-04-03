@@ -2,7 +2,10 @@ export type SfxKind = 'button' | 'correct' | 'wrong' | 'clear';
 
 type SfxAssetKind = 'button' | 'correct' | 'wrong';
 
+const sfxEnabledStorageKey = 'decrypt-sfx-enabled-v1';
+
 const sfxAssetKinds: SfxAssetKind[] = ['button', 'correct', 'wrong'];
+const criticalSfxAsset: SfxAssetKind = 'button';
 type SfxPlaybackConfig = {
   asset: SfxAssetKind;
   gain: number;
@@ -31,6 +34,29 @@ const decodedBuffers = new Map<SfxAssetKind, AudioBuffer>();
 const loadingBuffers = new Map<SfxAssetKind, Promise<AudioBuffer | null>>();
 const htmlAudioPools = new Map<SfxAssetKind, HTMLAudioElement[]>();
 const htmlAudioIndices = new Map<SfxAssetKind, number>();
+const primedHtmlAssets = new Set<SfxAssetKind>();
+const activeBufferSources = new Set<AudioBufferSourceNode>();
+let bootPrimed = false;
+
+const readStoredSfxEnabled = (): boolean => {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  try {
+    const raw = window.localStorage.getItem(sfxEnabledStorageKey);
+    if (raw === '0' || raw === 'false') {
+      return false;
+    }
+    if (raw === '1' || raw === 'true') {
+      return true;
+    }
+  } catch (_error) {
+    // Ignore storage failures and keep SFX enabled.
+  }
+  return true;
+};
+
+let sfxEnabled = readStoredSfxEnabled();
 
 const isJSDom = (): boolean =>
   typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent);
@@ -68,6 +94,9 @@ const primeHtmlSfx = (): void => {
     return;
   }
   for (const asset of sfxAssetKinds) {
+    if (primedHtmlAssets.has(asset)) {
+      continue;
+    }
     const pool = getHtmlAudioPool(asset);
     if (!pool) {
       continue;
@@ -79,10 +108,17 @@ const primeHtmlSfx = (): void => {
         // Ignore preload failures.
       }
     }
+    primedHtmlAssets.add(asset);
   }
 };
 
 const playHtmlSfx = (config: SfxPlaybackConfig): void => {
+  if (!sfxEnabled) {
+    return;
+  }
+  if (isJSDom()) {
+    return;
+  }
   const pool = getHtmlAudioPool(config.asset);
   if (!pool || pool.length === 0) {
     return;
@@ -115,6 +151,38 @@ const getAudioContext = (): AudioContext | null => {
     getOutputNode(audioContextInstance);
   }
   return audioContextInstance;
+};
+
+const persistSfxEnabled = (enabled: boolean): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(sfxEnabledStorageKey, enabled ? '1' : '0');
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+};
+
+const stopAllSfxPlayback = (): void => {
+  activeBufferSources.forEach((source) => {
+    try {
+      source.stop();
+    } catch (_error) {
+      // Ignore nodes that already ended.
+    }
+  });
+  activeBufferSources.clear();
+  htmlAudioPools.forEach((pool) => {
+    pool.forEach((audio) => {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (_error) {
+        // Ignore playback reset failures.
+      }
+    });
+  });
 };
 
 const decodeAsset = async (asset: SfxAssetKind): Promise<AudioBuffer | null> => {
@@ -160,6 +228,9 @@ const startBufferPlayback = (
   config: SfxPlaybackConfig,
   startAt = context.currentTime + 0.002
 ) => {
+  if (!sfxEnabled) {
+    return;
+  }
   const source = context.createBufferSource();
   const gain = context.createGain();
 
@@ -172,14 +243,32 @@ const startBufferPlayback = (
   gain.gain.value = config.gain;
   source.connect(gain);
   gain.connect(getOutputNode(context));
+  activeBufferSources.add(source);
   source.start(startAt);
   source.onended = () => {
+    activeBufferSources.delete(source);
     source.disconnect();
     gain.disconnect();
   };
 };
 
+export const isSfxEnabled = (): boolean => sfxEnabled;
+
+export const setSfxEnabled = (enabled: boolean): boolean => {
+  sfxEnabled = enabled;
+  persistSfxEnabled(enabled);
+  if (!enabled) {
+    stopAllSfxPlayback();
+    return sfxEnabled;
+  }
+  primeSfx();
+  return sfxEnabled;
+};
+
 export const primeSfx = (): void => {
+  if (!sfxEnabled) {
+    return;
+  }
   const context = getAudioContext();
   if (!context) {
     primeHtmlSfx();
@@ -191,22 +280,54 @@ export const primeSfx = (): void => {
   }
 
   primeHtmlSfx();
-  for (const asset of sfxAssetKinds) {
+  const prioritizedAssets: SfxAssetKind[] = [
+    criticalSfxAsset,
+    ...sfxAssetKinds.filter((asset) => asset !== criticalSfxAsset),
+  ];
+  for (const asset of prioritizedAssets) {
     void decodeAsset(asset);
   }
 };
 
-export const playSfx = (kind: SfxKind): void => {
+export const primeSfxOnBoot = (): void => {
+  if (bootPrimed || isJSDom()) {
+    return;
+  }
+  bootPrimed = true;
+  if (!sfxEnabled) {
+    return;
+  }
+  primeHtmlSfx();
   const context = getAudioContext();
   if (!context) {
     return;
   }
-
   if (context.state === 'suspended') {
-    void context.resume();
+    void context.resume().catch(() => undefined);
+  }
+  void decodeAsset(criticalSfxAsset);
+};
+
+export const playSfx = (kind: SfxKind): void => {
+  if (!sfxEnabled) {
+    return;
+  }
+  const config = sfxPlayback[kind];
+  const context = getAudioContext();
+  if (!context) {
+    playHtmlSfx(config);
+    return;
   }
 
-  const config = sfxPlayback[kind];
+  if (context.state !== 'running') {
+    if (context.state === 'suspended') {
+      void context.resume().catch(() => undefined);
+    }
+    playHtmlSfx(config);
+    void decodeAsset(config.asset);
+    return;
+  }
+
   const readyBuffer = decodedBuffers.get(config.asset);
   if (readyBuffer) {
     startBufferPlayback(context, readyBuffer, config);
@@ -218,6 +339,7 @@ export const playSfx = (kind: SfxKind): void => {
 };
 
 export const disposeSfx = (): void => {
+  stopAllSfxPlayback();
   if (!audioContextInstance) {
     return;
   }
@@ -228,4 +350,6 @@ export const disposeSfx = (): void => {
   loadingBuffers.clear();
   htmlAudioPools.clear();
   htmlAudioIndices.clear();
+  primedHtmlAssets.clear();
+  bootPrimed = false;
 };

@@ -82,6 +82,8 @@ const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   dailySolveTimeTotalSec: 0,
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
+  audioEnabled: true,
+  communityJoinRewardClaimed: false,
   unlockedFlairs: ['First Patron'],
   activeFlair: 'First Patron',
   ...overrides,
@@ -124,6 +126,6 @@ describe('claimQuest', () => {
       'Quick Reader',
     ]);
     expect(result.profile.questsCompleted).toBe(2);
-    expect(result.rewardCoins).toBe(100);
+    expect(result.rewardCoins).toBe(60);
   });
 });

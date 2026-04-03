@@ -1,4 +1,4 @@
-import type { PuzzlePrivate, SessionState } from '../../shared/game';
+import type { PuzzlePrivate, SessionState } from '../../shared/game.ts';
 
 export type RevealedTile = {
   index: number;

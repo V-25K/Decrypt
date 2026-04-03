@@ -13,7 +13,11 @@ type HomeScreenProps = {
   challengeMetrics: ChallengeMetrics;
   challengeTypeLabel: string;
   onPlay: () => void;
+  onPlayEndless: () => void;
   homePanelClass: string;
+  endlessCatalogAvailable: boolean;
+  endlessPublishedLevelCount: number;
+  endlessActiveCatalogVersion: string | null;
 };
 
 export const HomeScreen = ({
@@ -25,15 +29,22 @@ export const HomeScreen = ({
   challengeMetrics,
   challengeTypeLabel,
   onPlay,
+  onPlayEndless,
   homePanelClass,
+  endlessCatalogAvailable,
+  endlessPublishedLevelCount,
+  endlessActiveCatalogVersion,
 }: HomeScreenProps) => (
   <section className="flex min-h-0 flex-1 flex-col" data-testid="home-screen">
     <main className="flex min-h-0 flex-1 flex-col px-3 py-3">
       <div className={homePanelClass}>
-        <div className="flex justify-center">
+        <div className="flex items-center justify-center">
           <img
             src="/logo.png"
             alt="Decrypt"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className={`h-auto ${deviceTier === 'mobile' ? 'w-[148px]' : 'w-[190px]'}`}
           />
         </div>
@@ -47,6 +58,7 @@ export const HomeScreen = ({
             )}
             type="button"
             onClick={() => onHomeTabSelect('endless')}
+            disabled={busy && homeTab !== 'endless'}
           >
             Endless
           </button>
@@ -102,23 +114,55 @@ export const HomeScreen = ({
           >
             <div className="app-text flex items-center justify-between text-xs font-black uppercase">
               <span>Endless Levels</span>
-              <span className="app-text-muted text-[10px]">Coming Soon</span>
+              <span className="app-text-muted text-[10px]">
+                {endlessCatalogAvailable
+                  ? endlessActiveCatalogVersion ?? 'Ready'
+                  : 'Coming Soon'}
+              </span>
             </div>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {endlessPreviewLevels.map((levelNumber) => (
+            {endlessCatalogAvailable ? (
+              <>
+                <div className="app-text mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-bold uppercase">
+                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                    <div className="app-text-soft text-[9px]">Levels</div>
+                    <div>{endlessPublishedLevelCount.toLocaleString()}</div>
+                  </div>
+                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                    <div className="app-text-soft text-[9px]">Catalog</div>
+                    <div>{endlessActiveCatalogVersion ?? 'Live'}</div>
+                  </div>
+                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                    <div className="app-text-soft text-[9px]">Mode</div>
+                    <div>Static</div>
+                  </div>
+                </div>
                 <button
-                  key={`home-endless-level-${levelNumber}`}
-                  data-testid={`home-endless-level-${levelNumber}`}
-                  className="btn-3d btn-neutral rounded-lg px-2 py-2 text-center"
-                  onClick={() => showToast('Endless mode is coming soon.')}
+                  data-testid="home-play-endless-button"
+                  className="btn-3d btn-primary mt-4 w-full rounded-xl px-4 py-3 text-lg font-black uppercase"
+                  onClick={onPlayEndless}
+                  disabled={busy}
                   type="button"
                 >
-                  <div className="app-text text-[11px] font-black uppercase">
-                    Lv {String(levelNumber).padStart(2, '0')}
-                  </div>
+                  Play Endless
                 </button>
-              ))}
-            </div>
+              </>
+            ) : (
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {endlessPreviewLevels.map((levelNumber) => (
+                  <button
+                    key={`home-endless-level-${levelNumber}`}
+                    data-testid={`home-endless-level-${levelNumber}`}
+                    className="btn-3d btn-neutral rounded-lg px-2 py-2 text-center"
+                    onClick={() => showToast('Endless mode is coming soon.')}
+                    type="button"
+                  >
+                    <div className="app-text text-[11px] font-black uppercase">
+                      Lv {String(levelNumber).padStart(2, '0')}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
         )}
       </div>

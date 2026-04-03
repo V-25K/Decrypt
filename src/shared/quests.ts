@@ -41,7 +41,7 @@ export const questCatalog: QuestDefinition[] = [
     category: 'daily',
     progressField: 'dailyPlayCount',
     target: 1,
-    reward: { coins: 25, inventory: {}, flair: null },
+    reward: { coins: 15, inventory: {}, flair: null },
   },
   {
     id: 'daily_play_3',
@@ -50,7 +50,7 @@ export const questCatalog: QuestDefinition[] = [
     category: 'daily',
     progressField: 'dailyPlayCount',
     target: 3,
-    reward: { coins: 55, inventory: {}, flair: null },
+    reward: { coins: 25, inventory: {}, flair: null },
   },
   {
     id: 'daily_share_1',
@@ -59,7 +59,7 @@ export const questCatalog: QuestDefinition[] = [
     category: 'daily',
     progressField: 'dailyShareCount',
     target: 1,
-    reward: { coins: 35, inventory: {}, flair: null },
+    reward: { coins: 15, inventory: {}, flair: null },
   },
   {
     id: 'daily_fast_under_120',
@@ -79,7 +79,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'dailyUnder5Min',
     target: 1,
     binary: true,
-    reward: { coins: 30, inventory: {}, flair: null },
+    reward: { coins: 15, inventory: {}, flair: null },
   },
   {
     id: 'daily_no_mistake',
@@ -89,7 +89,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'dailyNoMistake',
     target: 1,
     binary: true,
-    reward: { coins: 50, inventory: {}, flair: null },
+    reward: { coins: 30, inventory: {}, flair: null },
   },
   {
     id: 'daily_no_powerups',
@@ -109,7 +109,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeWordsmith',
     target: 50,
     groupKey: 'wordsmith',
-    reward: { coins: 100, inventory: {}, flair: 'Quick Reader' },
+    reward: { coins: 60, inventory: {}, flair: 'Quick Reader' },
   },
   {
     id: 'milestone_wordsmith_200',
@@ -119,7 +119,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeWordsmith',
     target: 200,
     groupKey: 'wordsmith',
-    reward: { coins: 275, inventory: {}, flair: 'Close Reader' },
+    reward: { coins: 140, inventory: {}, flair: 'Close Reader' },
   },
   {
     id: 'milestone_wordsmith_500',
@@ -129,7 +129,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeWordsmith',
     target: 500,
     groupKey: 'wordsmith',
-    reward: { coins: 650, inventory: {}, flair: 'Cipher Reader' },
+    reward: { coins: 300, inventory: {}, flair: 'Cipher Reader' },
   },
   {
     id: 'milestone_wordsmith_1000',
@@ -139,7 +139,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeWordsmith',
     target: 1000,
     groupKey: 'wordsmith',
-    reward: { coins: 1500, inventory: {}, flair: 'Golden Brain' },
+    reward: { coins: 650, inventory: {}, flair: 'Golden Brain' },
   },
   {
     id: 'milestone_flawless_5',
@@ -149,7 +149,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeFlawless',
     target: 5,
     groupKey: 'flawless',
-    reward: { coins: 120, inventory: {}, flair: 'Steady Hand' },
+    reward: { coins: 70, inventory: {}, flair: 'Steady Hand' },
   },
   {
     id: 'milestone_flawless_10',
@@ -159,7 +159,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeFlawless',
     target: 10,
     groupKey: 'flawless',
-    reward: { coins: 260, inventory: {}, flair: 'Sure Footed' },
+    reward: { coins: 140, inventory: {}, flair: 'Sure Footed' },
   },
   {
     id: 'milestone_flawless_20',
@@ -169,7 +169,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeFlawless',
     target: 20,
     groupKey: 'flawless',
-    reward: { coins: 550, inventory: {}, flair: 'Clean Solver' },
+    reward: { coins: 280, inventory: {}, flair: 'Clean Solver' },
   },
   {
     id: 'milestone_flawless_50',
@@ -179,7 +179,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeFlawless',
     target: 50,
     groupKey: 'flawless',
-    reward: { coins: 1100, inventory: {}, flair: 'Unshaken' },
+    reward: { coins: 550, inventory: {}, flair: 'Unshaken' },
   },
   {
     id: 'milestone_flawless_100',
@@ -189,7 +189,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeFlawless',
     target: 100,
     groupKey: 'flawless',
-    reward: { coins: 2200, inventory: {}, flair: 'Untouchable' },
+    reward: { coins: 1000, inventory: {}, flair: 'Untouchable' },
   },
   {
     id: 'milestone_spent_500',
@@ -199,7 +199,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeCoinsSpent',
     target: 500,
     groupKey: 'spender',
-    reward: { coins: 40, inventory: { hammer: 1 }, flair: 'Well Stocked' },
+    reward: { coins: 20, inventory: { hammer: 1 }, flair: 'Well Stocked' },
   },
   {
     id: 'milestone_spent_2000',
@@ -209,7 +209,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeCoinsSpent',
     target: 2000,
     groupKey: 'spender',
-    reward: { coins: 60, inventory: { shield: 1 }, flair: 'Big Buyer' },
+    reward: { coins: 35, inventory: { shield: 1 }, flair: 'Big Buyer' },
   },
   {
     id: 'milestone_spent_10000',
@@ -219,7 +219,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeCoinsSpent',
     target: 10000,
     groupKey: 'spender',
-    reward: { coins: 300, inventory: { wand: 2 }, flair: 'Treasure Room' },
+    reward: { coins: 125, inventory: { wand: 2 }, flair: 'Treasure Room' },
   },
   {
     id: 'milestone_spent_50000',
@@ -230,7 +230,7 @@ export const questCatalog: QuestDefinition[] = [
     target: 50000,
     groupKey: 'spender',
     reward: {
-      coins: 2000,
+      coins: 700,
       inventory: { shield: 2, wand: 4, rocket: 4 },
       flair: 'Deep Pockets',
     },
@@ -277,7 +277,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeDailyTopRanks',
     target: 1,
     groupKey: 'dailyTop',
-    reward: { coins: 250, inventory: {}, flair: 'Front Runner' },
+    reward: { coins: 100, inventory: {}, flair: 'Front Runner' },
   },
   {
     id: 'milestone_daily_top_10',
@@ -287,7 +287,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeDailyTopRanks',
     target: 10,
     groupKey: 'dailyTop',
-    reward: { coins: 900, inventory: {}, flair: 'Crown Holder' },
+    reward: { coins: 300, inventory: {}, flair: 'Crown Holder' },
   },
   {
     id: 'milestone_daily_top_20',
@@ -297,7 +297,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeDailyTopRanks',
     target: 20,
     groupKey: 'dailyTop',
-    reward: { coins: 2200, inventory: {}, flair: 'Top Table' },
+    reward: { coins: 700, inventory: {}, flair: 'Top Table' },
   },
   {
     id: 'milestone_daily_top_50',
@@ -307,7 +307,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeDailyTopRanks',
     target: 50,
     groupKey: 'dailyTop',
-    reward: { coins: 5500, inventory: {}, flair: 'Headliner' },
+    reward: { coins: 1600, inventory: {}, flair: 'Headliner' },
   },
   {
     id: 'milestone_daily_top_100',
@@ -317,7 +317,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeDailyTopRanks',
     target: 100,
     groupKey: 'dailyTop',
-    reward: { coins: 11000, inventory: {}, flair: 'Hall of Fame' },
+    reward: { coins: 3000, inventory: {}, flair: 'Hall of Fame' },
   },
   {
     id: 'milestone_endless_20',
@@ -327,7 +327,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeEndlessClears',
     target: 20,
     groupKey: 'endless',
-    reward: { coins: 150, inventory: {}, flair: 'Long Run' },
+    reward: { coins: 60, inventory: {}, flair: 'Long Run' },
   },
   {
     id: 'milestone_endless_40',
@@ -337,7 +337,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeEndlessClears',
     target: 40,
     groupKey: 'endless',
-    reward: { coins: 350, inventory: {}, flair: 'Deep Run' },
+    reward: { coins: 140, inventory: {}, flair: 'Deep Run' },
   },
   {
     id: 'milestone_endless_80',
@@ -347,7 +347,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeEndlessClears',
     target: 80,
     groupKey: 'endless',
-    reward: { coins: 800, inventory: {}, flair: 'Marathoner' },
+    reward: { coins: 300, inventory: {}, flair: 'Marathoner' },
   },
   {
     id: 'milestone_endless_150',
@@ -357,7 +357,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeEndlessClears',
     target: 150,
     groupKey: 'endless',
-    reward: { coins: 1800, inventory: {}, flair: 'No Finish Line' },
+    reward: { coins: 650, inventory: {}, flair: 'No Finish Line' },
   },
 ];
 

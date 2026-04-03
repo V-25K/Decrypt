@@ -4,12 +4,14 @@ export const heartsPerRun = 3;
 export const heartRefillIntervalMs = 30 * 60 * 1000;
 export const minSolveSeconds = 3;
 export const sessionTtlSeconds = 60 * 60;
+export const sessionInactivityThresholdMs = 10 * 60 * 1000;
 export const dailyDataTtlSeconds = 90 * 24 * 60 * 60;
 
-export const defaultCoinsReward = 100;
-export const flawlessBonusCoins = 50;
+export const defaultCoinsReward = 35;
+export const flawlessBonusCoins = 15;
 export const fastSolveSeconds = 60;
-export const fastSolveBonusCoins = 25;
+export const fastSolveBonusCoins = 10;
+export const communityJoinRewardCoins = 100;
 
 export const powerupCosts: Record<PowerupType, number> = {
   hammer: 60,

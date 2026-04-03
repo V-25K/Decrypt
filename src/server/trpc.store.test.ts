@@ -6,18 +6,27 @@ const {
   bootstrapGameMock,
   getPurchasedSkusMock,
   submitGuessesForSessionMock,
+  subscribeToCurrentSubredditMock,
+  getUserProfileMock,
+  saveUserProfileMock,
 } = vi.hoisted(() => ({
   getProductsMock: vi.fn(),
   getOrdersMock: vi.fn(),
   bootstrapGameMock: vi.fn(),
   getPurchasedSkusMock: vi.fn(),
   submitGuessesForSessionMock: vi.fn(),
+  subscribeToCurrentSubredditMock: vi.fn(),
+  getUserProfileMock: vi.fn(),
+  saveUserProfileMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
   payments: {
     getProducts: getProductsMock,
     getOrders: getOrdersMock,
+  },
+  reddit: {
+    subscribeToCurrentSubreddit: subscribeToCurrentSubredditMock,
   },
 }));
 
@@ -35,9 +44,9 @@ vi.mock('./core/game-service', () => ({
 vi.mock('./core/state', () => ({
   getInventory: vi.fn(),
   getPurchasedSkus: getPurchasedSkusMock,
-  getUserProfile: vi.fn(),
+  getUserProfile: getUserProfileMock,
   saveInventory: vi.fn(),
-  saveUserProfile: vi.fn(),
+  saveUserProfile: saveUserProfileMock,
 }));
 
 import { appRouter } from './trpc';
@@ -48,6 +57,9 @@ afterEach(() => {
   bootstrapGameMock.mockReset();
   getPurchasedSkusMock.mockReset();
   submitGuessesForSessionMock.mockReset();
+  subscribeToCurrentSubredditMock.mockReset();
+  getUserProfileMock.mockReset();
+  saveUserProfileMock.mockReset();
 });
 
 describe('store.getProducts', () => {
@@ -74,7 +86,7 @@ describe('store.getProducts', () => {
     const caller = appRouter.createCaller({
       userId: 't2_u_test',
       username: 'tester',
-      subredditName: 'decrypttest_dev',
+      subredditName: 'PlayDecrypt',
       postId: 't3_testpost',
     });
     const result = await caller.store.getProducts();
@@ -112,7 +124,7 @@ describe('store.getProducts', () => {
     const caller = appRouter.createCaller({
       userId: 't2_u_test',
       username: 'tester',
-      subredditName: 'decrypttest_dev',
+      subredditName: 'PlayDecrypt',
       postId: 't3_testpost',
     });
     const result = await caller.store.getProducts();
@@ -158,7 +170,7 @@ describe('game.submitGuesses', () => {
     const caller = appRouter.createCaller({
       userId: 't2_u_test',
       username: 'tester',
-      subredditName: 'decrypttest_dev',
+      subredditName: 'PlayDecrypt',
       postId: 't3_testpost',
     });
 
@@ -174,5 +186,123 @@ describe('game.submitGuesses', () => {
     expect(result.ok).toBe(true);
     expect(result.results).toHaveLength(1);
     expect(result.results[0]?.isCorrect).toBe(true);
+  });
+});
+
+describe('profile.joinCommunity', () => {
+  it('subscribes once, saves the joined state, and awards coins', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+    subscribeToCurrentSubredditMock.mockResolvedValue(undefined);
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(1);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_u_test',
+      expect.objectContaining({
+        coins: 125,
+        communityJoinRewardClaimed: true,
+      })
+    );
+    expect(result).toMatchObject({
+      success: true,
+      joined: true,
+      rewardCoins: 100,
+      profile: expect.objectContaining({
+        coins: 125,
+        communityJoinRewardClaimed: true,
+      }),
+    });
+  });
+
+  it('returns the saved joined state without rewarding twice', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 125,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRewardClaimed: true,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).not.toHaveBeenCalled();
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      joined: true,
+      rewardCoins: 0,
+      profile: expect.objectContaining({
+        communityJoinRewardClaimed: true,
+      }),
+    });
   });
 });

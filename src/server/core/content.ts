@@ -46,6 +46,23 @@ export const exceedsPuzzleTotalLength = (
 
 export type DifficultyTier = 'easy' | 'medium' | 'hard';
 
+export type QuotePromptProfile = {
+  tier: DifficultyTier;
+  lengthBounds: {
+    min: number;
+    max: number;
+  };
+  letterBounds: {
+    min: number;
+    max: number;
+  };
+  wordCountBounds: {
+    min: number;
+    max: number;
+  };
+  recommendedMinUniqueWords: number;
+};
+
 export const difficultyToTier = (difficulty: number): DifficultyTier => {
   if (difficulty <= 3) {
     return 'easy';
@@ -54,6 +71,37 @@ export const difficultyToTier = (difficulty: number): DifficultyTier => {
     return 'medium';
   }
   return 'hard';
+};
+
+export const quotePromptProfileForDifficulty = (
+  difficulty: number
+): QuotePromptProfile => {
+  const tier = difficultyToTier(difficulty);
+  if (tier === 'easy') {
+    return {
+      tier,
+      lengthBounds: { min: 15, max: 35 },
+      letterBounds: { min: 12, max: 24 },
+      wordCountBounds: { min: 3, max: 6 },
+      recommendedMinUniqueWords: 3,
+    };
+  }
+  if (tier === 'medium') {
+    return {
+      tier,
+      lengthBounds: { min: 36, max: maxPuzzleTotalLength },
+      letterBounds: { min: 18, max: 36 },
+      wordCountBounds: { min: 5, max: 9 },
+      recommendedMinUniqueWords: 4,
+    };
+  }
+  return {
+    tier,
+    lengthBounds: { min: 46, max: maxPuzzleTotalLength },
+    letterBounds: { min: 24, max: 42 },
+    wordCountBounds: { min: 7, max: 10 },
+    recommendedMinUniqueWords: 5,
+  };
 };
 
 export const quotePassesTierLength = (

@@ -1,4 +1,4 @@
-import type { PuzzlePrivate, PuzzleTile } from '../../shared/game';
+import type { PuzzlePrivate, PuzzleTile } from '../../shared/game.ts';
 
 const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
 const suffixHints = ['ING', 'TION'] as const;

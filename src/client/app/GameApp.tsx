@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -30,16 +29,27 @@ import {
   promotedOfferPrioritySkus,
 } from '../../shared/store';
 import {
-  getCommunityFlairStyle,
+  isPrimaryCommunitySubreddit,
+  primaryCommunitySubreddit,
+} from '../../shared/community';
+import {
   getQuestProgressValue,
-  questCatalog,
-  questProgressionGroups,
-  type QuestDefinition,
-  type QuestReward,
 } from '../../shared/quests';
-import { disposeSfx, playSfx, primeSfx } from '../sfx';
+import {
+  disposeSfx,
+  isSfxEnabled,
+  playSfx,
+  primeSfx,
+  setSfxEnabled as persistSfxEnabled,
+} from '../sfx';
+import {
+  preloadImageAsset,
+  preloadImageBatch,
+  warmImagePreloads,
+} from './asset-preload';
 import {
   coinEmoji,
+  challengeHeartbeatIntervalMs,
   confettiPalette,
   crossMarkEmoji,
   emptyHeartGlyph,
@@ -49,10 +59,6 @@ import {
   lockEmoji,
   maxOutcomeCrowdAvatars,
   maxWordTileColumns,
-  outcomeCrowdCollisionPadding,
-  outcomeCrowdCollisionPasses,
-  outcomeCrowdPalette,
-  outcomeCrowdScale,
   powerupCost,
   powerupIcon,
   powerupLabel,
@@ -65,12 +71,12 @@ import type {
   ChallengeMetrics,
   DailyLeaderboardEntry,
   DeviceTier,
+  EndlessCatalogStatus,
   HomeTab,
   Inventory,
   LeaderboardTab,
   PowerupType,
   Profile,
-  QuestProgress,
   QuestStatus,
   RouterOutputs,
   RankSummary,
@@ -83,83 +89,60 @@ import {
   HomeIcon,
   InfoIcon,
   ReplayIcon,
+  SettingsIcon,
   ShareIcon,
 } from '../components/Icons';
 import { HelpOverlay } from '../components/HelpOverlay';
+import { SettingsOverlay } from '../components/SettingsOverlay';
 import { BuyDialog } from '../components/BuyDialog';
 import { BottomNav } from '../components/BottomNav';
 import { HomeScreen } from '../screens/HomeScreen';
+import {
+  clearCorrectGuessIndices,
+  consumeExpandedScreenIntent,
+  persistCorrectGuessIndices,
+  persistOutcomeState,
+  readCorrectGuessIndices,
+  readEntrypointScreen,
+  readOutcomeState,
+  setExpandedScreenIntent,
+} from './game-storage';
+import {
+  buildOutcomeCrowdBubbles,
+  outcomeCrowdCollisionPasses,
+  outcomeCrowdGravity,
+  resolveOutcomeCrowdCollision,
+  settleOutcomeCrowdBoundary,
+  syncOutcomeCrowdNodePosition,
+  type OutcomeCrowdBubble,
+  type OutcomeCrowdViewport,
+} from './outcome-crowd';
+import {
+  computeAverageSolveSeconds,
+  flairChipStyle,
+  flairTagStyle,
+  formatChallengeType,
+  formatCountdown,
+  formatDifficultyLabel,
+  formatLeaderboardName,
+  formatQuestReward,
+  formatRankLabel,
+  formatStatDuration,
+  getVisibleMilestoneIds,
+  groupedQuestIds,
+  isQuestHidden,
+  questCards,
+} from './game-formatters';
 
-type PersistedOutcomeState = {
-  levelId: string;
-  isComplete: boolean;
-  isGameOver: boolean;
-  completion: RouterOutputs['game']['completeSession'] | null;
-  solveSeconds: number | null;
-  savedAt: number;
-};
-type OutcomeCrowdBubble = {
-  id: string;
-  avatarUrl: string;
-  rank: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  radius: number;
-  z: number;
-  anchorX: number;
-  anchorY: number;
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-  backgroundColor: string;
-  driftPhase: number;
-  isPodium: boolean;
-};
-type OutcomeCrowdViewport = {
-  width: number;
-  height: number;
-};
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
 type ConfettiModule = typeof import('canvas-confetti');
-const expandedScreenIntentKey = 'decrypt-expanded-screen-intent';
-const expandedScreenIntentTtlMs = 15000;
-const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
-
-const isCompletionResult = (
-  value: unknown
-): value is RouterOutputs['game']['completeSession'] => {
-  if (!isRecord(value)) {
-    return false;
-  }
-  const ok = value.ok;
-  const accepted = value.accepted;
-  const solveSeconds = value.solveSeconds;
-  const score = value.score;
-  const rewardCoins = value.rewardCoins;
-  const mistakes = value.mistakes;
-  const usedPowerups = value.usedPowerups;
-  const profile = value.profile;
-  const inventory = value.inventory;
-  return (
-    typeof ok === 'boolean' &&
-    typeof accepted === 'boolean' &&
-    typeof solveSeconds === 'number' &&
-    typeof score === 'number' &&
-    typeof rewardCoins === 'number' &&
-    typeof mistakes === 'number' &&
-    typeof usedPowerups === 'number' &&
-    isRecord(profile) &&
-    isRecord(inventory)
-  );
-};
+const criticalUiImageAssets = ['/background.webp', '/logo.png', '/snoo.png'];
+const deferredUiImageAssets = ['/result.webp'];
+const criticalOutcomeAvatarCount = 3;
+const outcomeCrowdFallbackReadyMs = 650;
+const nonCriticalWarmupDelayMs = 180;
+const nonCriticalWarmupTimeoutMs = 1400;
 
 const LazyShopScreen = lazy(() =>
   import('../screens/ShopScreen').then((module) => ({ default: module.ShopScreen }))
@@ -186,114 +169,6 @@ const pickPromotedOffer = (products: StoreProduct[]): StoreProduct | null => {
   return null;
 };
 
-const setExpandedScreenIntent = (screen: AppScreen) => {
-  try {
-    const payload = JSON.stringify({ screen, ts: Date.now() });
-    sessionStorage.setItem(expandedScreenIntentKey, payload);
-  } catch (_error) {
-    // ignore storage failures; expanded fallback stays on challenge.
-  }
-};
-
-const consumeExpandedScreenIntent = (): AppScreen | null => {
-  try {
-    const value = sessionStorage.getItem(expandedScreenIntentKey);
-    sessionStorage.removeItem(expandedScreenIntentKey);
-    if (!value) {
-      return null;
-    }
-    const parsed = JSON.parse(value);
-    if (!isRecord(parsed)) {
-      return null;
-    }
-    const screenValue = parsed.screen;
-    const tsValue = parsed.ts;
-    if (
-      typeof screenValue === 'string' &&
-      (screenValue === 'shop' ||
-        screenValue === 'home' ||
-        screenValue === 'quest' ||
-        screenValue === 'stats' ||
-        screenValue === 'leaderboard') &&
-      typeof tsValue === 'number' &&
-      Date.now() - tsValue <= expandedScreenIntentTtlMs
-    ) {
-      return screenValue;
-    }
-    return null;
-  } catch (_error) {
-    return null;
-  }
-};
-
-const readEntrypointScreen = (): AppScreen | null => {
-  const value = document.getElementById('root')?.getAttribute('data-initial-screen');
-  if (
-    value === 'home' ||
-    value === 'shop' ||
-    value === 'quest' ||
-    value === 'stats' ||
-    value === 'leaderboard'
-  ) {
-    return value;
-  }
-  return null;
-};
-
-const persistOutcomeState = (state: PersistedOutcomeState | null) => {
-  try {
-    if (!state) {
-      sessionStorage.removeItem(outcomeStateStorageKey);
-      return;
-    }
-    sessionStorage.setItem(outcomeStateStorageKey, JSON.stringify(state));
-  } catch (_error) {
-    // Ignore persistence failures.
-  }
-};
-
-const readOutcomeState = (): PersistedOutcomeState | null => {
-  try {
-    const raw = sessionStorage.getItem(outcomeStateStorageKey);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!isRecord(parsed)) {
-      return null;
-    }
-    const levelId = parsed.levelId;
-    const isComplete = parsed.isComplete;
-    const isGameOver = parsed.isGameOver;
-    const savedAt = parsed.savedAt;
-    if (
-      typeof levelId !== 'string' ||
-      typeof isComplete !== 'boolean' ||
-      typeof isGameOver !== 'boolean' ||
-      typeof savedAt !== 'number'
-    ) {
-      return null;
-    }
-    const completion = isCompletionResult(parsed.completion)
-      ? parsed.completion
-      : null;
-    const solveSeconds =
-      parsed.solveSeconds === null || typeof parsed.solveSeconds === 'number'
-        ? (parsed.solveSeconds ?? null)
-        : null;
-    return {
-      levelId,
-      isComplete,
-      isGameOver,
-      completion,
-      solveSeconds,
-      savedAt,
-    };
-  } catch (_error) {
-    return null;
-  }
-};
-
 const isSuccessfulOrderStatus = (status: unknown): boolean =>
   status === OrderResultStatus.STATUS_SUCCESS ||
   status === 1 ||
@@ -302,265 +177,48 @@ const isSuccessfulOrderStatus = (status: unknown): boolean =>
 
 const toPurchaseErrorMessage = (errorMessage: string | null | undefined): string => {
   if (typeof errorMessage === 'string' && /order not placed/i.test(errorMessage)) {
-    return 'Order not placed. For sandbox testing, run upload + playtest and verify products sync.';
+    return 'Unable to place your order right now. Please try again.';
   }
   return errorMessage ?? 'Purchase canceled.';
 };
 
-const formatCountdown = (remainingMs: number): string => {
-  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+const scheduleNonCriticalWarmup = (
+  task: () => void,
+  delayMs = nonCriticalWarmupDelayMs,
+  timeoutMs = nonCriticalWarmupTimeoutMs
+): (() => void) => {
+  if (typeof window === 'undefined') {
+    return () => undefined;
   }
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-};
-
-const formatQuestReward = (
-  reward: QuestReward
-): { reward: string; flair: string | null } => {
-  const parts: string[] = [];
-  if (reward.coins > 0) {
-    parts.push(`${coinEmoji} +${reward.coins}`);
-  }
-  const inventoryParts: Array<{ key: keyof Inventory; icon: string }> = [
-    { key: 'hammer', icon: powerupIcon.hammer },
-    { key: 'wand', icon: powerupIcon.wand },
-    { key: 'shield', icon: powerupIcon.shield },
-    { key: 'rocket', icon: powerupIcon.rocket },
-  ];
-  for (const item of inventoryParts) {
-    const count = reward.inventory[item.key] ?? 0;
-    if (count > 0) {
-      parts.push(`${item.icon} +${count}`);
-    }
-  }
-  return {
-    reward: parts.join(' '),
-    flair: reward.flair,
-  };
-};
-
-const flairChipStyle = (
-  flair: string,
-  active: boolean
-): CSSProperties | undefined => {
-  const style = getCommunityFlairStyle(flair);
-  if (!style) {
-    return undefined;
-  }
-  return {
-    backgroundColor: style.backgroundColor,
-    color: style.textColor === 'dark' ? '#111111' : '#ffffff',
-    borderColor: '#111111',
-    opacity: active ? 1 : 0.82,
-  };
-};
-
-const flairTagStyle = (flair: string): CSSProperties | undefined => {
-  const style = getCommunityFlairStyle(flair);
-  if (!style) {
-    return undefined;
-  }
-  return {
-    backgroundColor: style.backgroundColor,
-    color: style.textColor === 'dark' ? '#111111' : '#ffffff',
-    borderColor: '#111111',
-  };
-};
-
-const groupedQuestIds = new Set(
-  Object.values(questProgressionGroups).flat()
-);
-
-const getVisibleMilestoneIds = (
-  progress: QuestProgress,
-  claimedSet: Set<string>
-): Set<string> => {
-  const visible = new Set<string>();
-  for (const group of Object.values(questProgressionGroups)) {
-    for (const questId of group) {
-      const quest = questCards.find((entry) => entry.id === questId);
-      if (!quest) {
-        continue;
-      }
-      const current = getQuestProgressValue(quest, progress);
-      const completed = current >= quest.target;
-      const claimed = claimedSet.has(questId);
-      if (!(completed && claimed)) {
-        visible.add(questId);
-        break;
-      }
-    }
-  }
-  return visible;
-};
-
-const isQuestHidden = (
-  quest: QuestDefinition,
-  progress: QuestProgress,
-  claimedSet: Set<string>
-): boolean => {
-  const current = getQuestProgressValue(quest, progress);
-  const completed = current >= quest.target;
-  const claimed = claimedSet.has(quest.id);
-  return completed && claimed;
-};
-
-const clampNumber = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
-
-const settleOutcomeBubbleCollision = (
-  first: OutcomeCrowdBubble,
-  second: OutcomeCrowdBubble,
-  normalX: number,
-  normalY: number,
-  overlap: number
-) => {
-  const firstPositionWeight = first.isPodium ? 0.18 : 0.52;
-  const secondPositionWeight = second.isPodium ? 0.18 : 0.52;
-
-  first.x -= normalX * overlap * firstPositionWeight;
-  first.y -= normalY * overlap * firstPositionWeight;
-  second.x += normalX * overlap * secondPositionWeight;
-  second.y += normalY * overlap * secondPositionWeight;
-
-  const relativeNormalVelocity =
-    (second.vx - first.vx) * normalX + (second.vy - first.vy) * normalY;
-  if (relativeNormalVelocity >= 0) {
-    return;
-  }
-
-  const damping = first.isPodium || second.isPodium ? 0.72 : 0.84;
-  const correction = -relativeNormalVelocity * damping;
-  const firstVelocityWeight = first.isPodium ? 0.24 : 0.5;
-  const secondVelocityWeight = second.isPodium ? 0.24 : 0.5;
-
-  first.vx -= normalX * correction * firstVelocityWeight;
-  first.vy -= normalY * correction * firstVelocityWeight;
-  second.vx += normalX * correction * secondVelocityWeight;
-  second.vy += normalY * correction * secondVelocityWeight;
-};
-
-const settleOutcomeBubbleBoundary = (bubble: OutcomeCrowdBubble) => {
-  bubble.x = clampNumber(bubble.x, bubble.minX, bubble.maxX);
-  bubble.y = clampNumber(bubble.y, bubble.minY, bubble.maxY);
-
-  if (bubble.x <= bubble.minX && bubble.vx < 0) {
-    bubble.vx *= -0.35;
-  } else if (bubble.x >= bubble.maxX && bubble.vx > 0) {
-    bubble.vx *= -0.35;
-  }
-
-  if (bubble.y <= bubble.minY && bubble.vy < 0) {
-    bubble.vy *= -0.35;
-  } else if (bubble.y >= bubble.maxY && bubble.vy > 0) {
-    bubble.vy *= -0.35;
-  }
-};
-
-const buildOutcomeCrowdBubbles = (
-  avatarUrls: string[],
-  viewport: OutcomeCrowdViewport
-): OutcomeCrowdBubble[] => {
-  if (viewport.width <= 0 || viewport.height <= 0) {
-    return [];
-  }
-  const visibleUrls = avatarUrls.slice(0, maxOutcomeCrowdAvatars);
-  const podiumSpecs = [
-    {
-      x: viewport.width * 0.5,
-      y: viewport.height * 0.82,
-      size:
-        clampNumber(viewport.width * 0.25, 112, 168) * outcomeCrowdScale,
-      color: '#d4af37',
-      z: 30,
-      rank: 1,
-    },
-    {
-      x: viewport.width * 0.32,
-      y: viewport.height * 0.84,
-      size:
-        clampNumber(viewport.width * 0.21, 94, 142) * outcomeCrowdScale,
-      color: '#d8dde6',
-      z: 29,
-      rank: 2,
-    },
-    {
-      x: viewport.width * 0.68,
-      y: viewport.height * 0.855,
-      size:
-        clampNumber(viewport.width * 0.18, 82, 124) * outcomeCrowdScale,
-      color: '#cd7f32',
-      z: 28,
-      rank: 3,
-    },
-  ];
-
-  return visibleUrls.map((avatarUrl, index) => {
-    const podiumSpec = podiumSpecs[index];
-    if (podiumSpec) {
-      const radius = podiumSpec.size / 2;
-      return {
-        id: `outcome-podium-${index}`,
-        avatarUrl,
-        rank: podiumSpec.rank,
-        x: podiumSpec.x,
-        y: podiumSpec.y,
-        vx: 0,
-        vy: 0,
-        size: podiumSpec.size,
-        radius,
-        z: podiumSpec.z,
-        anchorX: podiumSpec.x,
-        anchorY: podiumSpec.y,
-        minX: podiumSpec.x - 18,
-        maxX: podiumSpec.x + 18,
-        minY: podiumSpec.y - 14,
-        maxY: podiumSpec.y + 14,
-        backgroundColor: podiumSpec.color,
-        driftPhase: index * 1.3,
-        isPodium: true,
-      };
-    }
-
-    const trailingIndex = index - podiumSpecs.length;
-    const side = trailingIndex % 2 === 0 ? -1 : 1;
-    const pairIndex = Math.floor(trailingIndex / 2);
-    const bandIndex = pairIndex % 5;
-    const columnIndex = Math.floor(pairIndex / 5);
-    const xBase = side < 0 ? 0.22 : 0.78;
-    const xPct = xBase + columnIndex * side * 0.11;
-    const yPct = 0.72 - bandIndex * 0.08 - columnIndex * 0.03;
-    const size =
-      clampNumber(112 - trailingIndex * 4, 54, 92) * outcomeCrowdScale;
-    const radius = size / 2;
-    const anchorX = viewport.width * clampNumber(xPct, 0.08, 0.92);
-    const anchorY = viewport.height * clampNumber(yPct, 0.34, 0.76);
-    return {
-      id: `outcome-crowd-${index}`,
-      avatarUrl,
-      rank: index + 1,
-      x: anchorX,
-      y: anchorY,
-      vx: (trailingIndex % 2 === 0 ? 1 : -1) * (0.012 + trailingIndex * 0.0012),
-      vy: (trailingIndex % 3 === 0 ? -1 : 1) * (0.009 + trailingIndex * 0.001),
-      size,
-      radius,
-      z: 20 - trailingIndex,
-      anchorX,
-      anchorY,
-      minX: radius + 8,
-      maxX: viewport.width - radius - 8,
-      minY: viewport.height * 0.32 + radius,
-      maxY: viewport.height - radius - 12,
-      backgroundColor: outcomeCrowdPalette[trailingIndex % outcomeCrowdPalette.length] ?? '#8ecdf8',
-      driftPhase: trailingIndex * 0.77,
-      isPodium: false,
+  if (typeof window.requestIdleCallback === 'function') {
+    const idleId = window.requestIdleCallback(
+      () => {
+        task();
+      },
+      { timeout: timeoutMs }
+    );
+    return () => {
+      window.cancelIdleCallback(idleId);
     };
-  });
+  }
+  const timerId = window.setTimeout(task, delayMs);
+  return () => {
+    window.clearTimeout(timerId);
+  };
+};
+
+const canInitializeConfettiCanvas = (canvas: HTMLCanvasElement): boolean => {
+  if (
+    typeof navigator !== 'undefined' &&
+    typeof navigator.userAgent === 'string' &&
+    /jsdom/i.test(navigator.userAgent)
+  ) {
+    return false;
+  }
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return typeof canvas.transferControlToOffscreen === 'function';
 };
 
 const letterTileState = (
@@ -594,7 +252,7 @@ const letterTileClass = (
 ) => {
   const state = letterTileState(selected, isLocked, isCorrectGuess, isWrongGuess);
   const baseClass =
-    'tile-btn relative rounded-md px-[5px] py-[1px] transition-colors duration-500';
+    'tile-btn relative rounded-md px-[4px] py-[1px] transition-colors duration-500';
   if (state === 'locked') {
     return `${baseClass} tile-state-locked`;
   }
@@ -636,74 +294,6 @@ const defaultChallengeMetrics: ChallengeMetrics = {
   winRatePct: 0,
 };
 
-const questCards: QuestDefinition[] = questCatalog;
-
-const formatChallengeType = (value: string | undefined): string => {
-  const normalized = (value ?? 'QUOTE')
-    .toUpperCase()
-    .replace(/[^A-Z_]/g, '')
-    .trim();
-  switch (normalized) {
-    case 'LYRIC_LINE':
-      return 'Lyric';
-    case 'MOVIE_LINE':
-      return 'Movie';
-    case 'ANIME_LINE':
-      return 'Anime';
-    case 'SPEECH_LINE':
-      return 'Speech';
-    case 'BOOK_LINE':
-      return 'Book';
-    case 'TV_LINE':
-      return 'TV';
-    case 'SAYING':
-      return 'Saying';
-    case 'PROVERB':
-      return 'Proverb';
-    case 'QUOTE':
-    default:
-      return 'Quote';
-  }
-};
-
-const formatDifficultyLabel = (value: number | undefined): string => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return 'Medium';
-  }
-  if (value <= 3) {
-    return 'Easy';
-  }
-  if (value <= 7) {
-    return 'Medium';
-  }
-  if (value >= 9) {
-    return 'Expert';
-  }
-  return 'Hard';
-};
-
-const formatLeaderboardName = (entry: {
-  username?: string | null;
-  userId: string;
-}): string => {
-  if (entry.username && entry.username.trim().length > 0) {
-    return entry.username;
-  }
-  return entry.userId.startsWith('t2_') ? entry.userId.slice(3) : entry.userId;
-};
-
-const formatStatDuration = (seconds: number | null | undefined): string => {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
-    return '--';
-  }
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
-};
-
-const formatRankLabel = (rank: number | null | undefined): string =>
-  typeof rank === 'number' && Number.isFinite(rank) && rank > 0 ? `#${rank}` : '--';
-
 export const GameApp = () => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -714,6 +304,9 @@ export const GameApp = () => {
   );
   const [profile, setProfile] = useState<Profile | null>(null);
   const [inventory, setInventory] = useState<Inventory | null>(null);
+  const [subredditName, setSubredditName] = useState<string | null>(null);
+  const [endlessCatalogStatus, setEndlessCatalogStatus] =
+    useState<EndlessCatalogStatus | null>(null);
   const [puzzle, setPuzzle] = useState<Puzzle | null>(null);
   const [levelId, setLevelId] = useState('');
   const [mode, setMode] = useState<'daily' | 'endless'>('daily');
@@ -750,6 +343,9 @@ export const GameApp = () => {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [headerNowTs, setHeaderNowTs] = useState(() => Date.now());
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => isSfxEnabled());
+  const [audioPreferenceBusy, setAudioPreferenceBusy] = useState(false);
   const [questStatus, setQuestStatus] = useState<QuestStatus | null>(null);
   const [questLoading, setQuestLoading] = useState(false);
   const [questError, setQuestError] = useState<string | null>(null);
@@ -766,6 +362,7 @@ export const GameApp = () => {
     });
   }, [questStatus]);
   const [claimingQuestId, setClaimingQuestId] = useState<string | null>(null);
+  const [joiningCommunity, setJoiningCommunity] = useState(false);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [dailyLeaderboardEntries, setDailyLeaderboardEntries] = useState<DailyLeaderboardEntry[]>([]);
   const [endlessLeaderboardEntries, setEndlessLeaderboardEntries] = useState<AllTimeLeaderboardEntry[]>([]);
@@ -784,12 +381,15 @@ export const GameApp = () => {
   const inlineInputRef = useRef<HTMLInputElement | null>(null);
   const helpCardRef = useRef<HTMLElement | null>(null);
   const infoButtonRef = useRef<HTMLButtonElement | null>(null);
+  const settingsCardRef = useRef<HTMLElement | null>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const wrongGuessTimeoutsRef = useRef<Map<number, number>>(new Map());
   const guessQueueRef = useRef<
     Array<{ levelId: string; tileIndex: number; letter: string }>
   >([]);
   const processingGuessRef = useRef(false);
   const puzzleRef = useRef<Puzzle | null>(null);
+  const heartbeatInFlightRef = useRef(false);
 
   const tokens = useMemo(() => (puzzle ? tokenizePuzzleTiles(puzzle.tiles) : []), [puzzle]);
   const formattedLevel = useMemo(() => formatLevelNumber(levelId), [levelId]);
@@ -797,6 +397,7 @@ export const GameApp = () => {
     () => formatChallengeType(puzzle?.challengeType),
     [puzzle?.challengeType]
   );
+  const endlessCatalogAvailable = endlessCatalogStatus?.available === true;
   const difficultyLabel = useMemo(
     () => formatDifficultyLabel(puzzle?.difficulty),
     [puzzle?.difficulty]
@@ -824,7 +425,7 @@ export const GameApp = () => {
       if (!bubble) {
         return;
       }
-      node.style.transform = `translate3d(${bubble.x}px, ${bubble.y}px, 0) translate(-50%, -50%)`;
+      syncOutcomeCrowdNodePosition(node, bubble);
     },
     []
   );
@@ -845,15 +446,33 @@ export const GameApp = () => {
       if (!node) {
         return;
       }
+      if (!canInitializeConfettiCanvas(node)) {
+        return;
+      }
       void (async () => {
-        const module = await loadConfettiModule();
-        if (confettiCanvasRef.current !== node) {
-          return;
+        try {
+          const module = await loadConfettiModule();
+          if (confettiCanvasRef.current !== node) {
+            return;
+          }
+          confettiLauncherRef.current = module.default.create(node, {
+            resize: true,
+            useWorker: true,
+          });
+        } catch (_error) {
+          try {
+            const module = await loadConfettiModule();
+            if (confettiCanvasRef.current !== node) {
+              return;
+            }
+            confettiLauncherRef.current = module.default.create(node, {
+              resize: true,
+              useWorker: false,
+            });
+          } catch (_fallbackError) {
+            confettiLauncherRef.current = null;
+          }
         }
-        confettiLauncherRef.current = module.default.create(node, {
-          resize: true,
-          useWorker: true,
-        });
       })();
     },
     [loadConfettiModule]
@@ -918,6 +537,13 @@ export const GameApp = () => {
   }, [puzzle]);
 
   useEffect(() => {
+    if (!profile) {
+      return;
+    }
+    setSfxEnabled(persistSfxEnabled(profile.audioEnabled));
+  }, [profile]);
+
+  useEffect(() => {
     guessQueueRef.current = [];
     processingGuessRef.current = false;
     setGuessInFlight(false);
@@ -929,6 +555,8 @@ export const GameApp = () => {
     const bootstrap = await trpc.game.bootstrap.query();
     setProfile(bootstrap.profile);
     setInventory(bootstrap.inventory);
+    setSubredditName(bootstrap.subredditName);
+    setEndlessCatalogStatus(bootstrap.endlessCatalog);
   }, []);
 
   const loadCompletionSolveSecondsFromDatabase = useCallback(async (
@@ -969,19 +597,32 @@ export const GameApp = () => {
   const loadLeaderboardData = useCallback(async () => {
     setLeaderboardLoading(true);
     try {
-      const [daily, allTime] = await Promise.all([
+      const rankSummaryPromise = trpc.leaderboard.getRankSummary
+        .query({})
+        .catch(() => null);
+      const [daily, allTime, summary] = await Promise.all([
         trpc.leaderboard.getDaily.query({
-          limit: 12,
+          limit: 20,
         }),
         trpc.leaderboard.getAllTime.query({
-          limit: 12,
+          limit: 20,
         }),
+        rankSummaryPromise,
       ]);
+      const leaderboardAvatarUrls = [
+        ...daily.entries.map((entry) => entry.snoovatarUrl ?? ''),
+        ...allTime.levels.map((entry) => entry.snoovatarUrl ?? ''),
+      ].filter((entry): entry is string => entry.length > 0);
+      warmImagePreloads(leaderboardAvatarUrls, {
+        fetchPriority: 'high',
+      });
       setDailyLeaderboardEntries(daily.entries);
       setEndlessLeaderboardEntries(allTime.levels);
+      setRankSummary(summary);
     } catch (_error) {
       setDailyLeaderboardEntries([]);
       setEndlessLeaderboardEntries([]);
+      setRankSummary(null);
       showToast('Unable to load leaderboard.');
     } finally {
       setLeaderboardLoading(false);
@@ -1008,9 +649,28 @@ export const GameApp = () => {
     }
   }, []);
 
+  const restoreCorrectGuessFeedback = useCallback(
+    (activeLevelId: string, view: Puzzle) => {
+      const storedIndices = readCorrectGuessIndices(activeLevelId);
+      if (storedIndices.length === 0) {
+        setCorrectGuessTileIndices(new Set());
+        return;
+      }
+      const validIndices = storedIndices.filter((index) => {
+        const tile = view.tiles[index];
+        return Boolean(tile && tile.isLetter && tile.displayChar !== '_');
+      });
+      const restored = new Set(validIndices);
+      setCorrectGuessTileIndices(restored);
+      persistCorrectGuessIndices(activeLevelId, restored);
+    },
+    []
+  );
+
   const refreshCurrentView = async (activeLevelId: string): Promise<Puzzle> => {
     const view = await trpc.game.getCurrentView.query({ levelId: activeLevelId });
     setPuzzle(view);
+    restoreCorrectGuessFeedback(activeLevelId, view);
     setSelectedTile((previous) => {
       if (previous === null) {
         return null;
@@ -1043,6 +703,7 @@ export const GameApp = () => {
       return {
         ...tile,
         displayChar: letter,
+        isSessionRevealed: true,
       };
     });
     return { ...currentPuzzle, tiles: nextTiles };
@@ -1096,6 +757,13 @@ export const GameApp = () => {
         levelId: activeLevelId,
         mode: activeMode,
       });
+      const isFreshSession =
+        session.session.guessCount === 0 &&
+        session.session.usedPowerups === 0 &&
+        session.session.mistakesMade === 0;
+      if (isFreshSession) {
+        clearCorrectGuessIndices(activeLevelId);
+      }
       setHeartsRemaining(session.heartsRemaining);
       setIsGameOver(false);
       setIsComplete(false);
@@ -1150,7 +818,7 @@ export const GameApp = () => {
         : null;
     try {
       const result = await trpc.game.completeSession.mutate({ levelId, mode });
-      const completed = result.ok;
+      const completed = result.ok && result.accepted;
       setProfile(result.profile);
       setInventory(result.inventory);
       setIsComplete(completed);
@@ -1172,6 +840,9 @@ export const GameApp = () => {
         });
       } else {
         persistOutcomeState(null);
+        showToast('Run not accepted. Starting a fresh attempt.');
+        await startLevel(levelId, mode);
+        await refreshCurrentView(levelId);
       }
       if (completed) {
         setCompletionCelebrationId((previous) => previous + 1);
@@ -1206,21 +877,25 @@ export const GameApp = () => {
 
   useEffect(() => {
     let cancelled = false;
+    let cancelDeferredNonCritical: () => void = () => undefined;
     const run = async () => {
       setLoading(true);
       setBusy(true);
       try {
-        const loadPromise = trpc.game.loadLevel.query({ mode: 'daily' });
-        await Promise.all([
+        const [loaded] = await Promise.all([
+          trpc.game.loadLevel.query({ mode: 'daily' }),
           refreshBootstrapState(),
-          loadFeaturedOffer(),
-          loadQuestStatus(),
-          loadPromise,
         ]);
-        const loaded = await loadPromise;
         if (cancelled) {
           return;
         }
+        cancelDeferredNonCritical = scheduleNonCriticalWarmup(() => {
+          if (cancelled) {
+            return;
+          }
+          void loadFeaturedOffer();
+          void loadQuestStatus();
+        });
         setMode('daily');
         setLevelId(loaded.levelId);
         setPuzzle(loaded.puzzle);
@@ -1249,6 +924,7 @@ export const GameApp = () => {
           setHeartsRemaining(loaded.puzzle.heartsMax);
           clearTileFeedback();
         } else if (loaded.alreadyCompleted) {
+          clearCorrectGuessIndices(loaded.levelId);
           setIsComplete(true);
           setIsGameOver(false);
           setCompletionResult(null);
@@ -1268,6 +944,7 @@ export const GameApp = () => {
           return;
         }
         setPuzzle(view);
+        restoreCorrectGuessFeedback(loaded.levelId, view);
         setSelectedTile(null);
       } catch (_error) {
         if (!cancelled) {
@@ -1283,6 +960,7 @@ export const GameApp = () => {
     void run();
     return () => {
       cancelled = true;
+      cancelDeferredNonCritical();
     };
   }, [
     clearTileFeedback,
@@ -1290,6 +968,7 @@ export const GameApp = () => {
     loadFeaturedOffer,
     loadQuestStatus,
     refreshBootstrapState,
+    restoreCorrectGuessFeedback,
     startLevel,
   ]);
 
@@ -1307,6 +986,64 @@ export const GameApp = () => {
   }, []);
 
   useEffect(() => {
+    if (
+      activeScreen !== 'challenge' ||
+      levelId.length === 0 ||
+      isComplete ||
+      isGameOver ||
+      busy ||
+      guessInFlight ||
+      queuedGuessCount > 0
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const sendHeartbeat = async () => {
+      if (cancelled || heartbeatInFlightRef.current) {
+        return;
+      }
+      heartbeatInFlightRef.current = true;
+      try {
+        await trpc.game.heartbeat.mutate({
+          levelId,
+          mode,
+        });
+      } catch (_error) {
+        // Ignore transient heartbeat failures; scoring still advances on actions.
+      } finally {
+        heartbeatInFlightRef.current = false;
+      }
+    };
+    void sendHeartbeat();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      void sendHeartbeat();
+    }, challengeHeartbeatIntervalMs);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void sendHeartbeat();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeScreen,
+    busy,
+    guessInFlight,
+    isComplete,
+    isGameOver,
+    levelId,
+    mode,
+    queuedGuessCount,
+  ]);
+
+  useEffect(() => {
     if (webViewMode !== 'expanded') {
       return;
     }
@@ -1316,8 +1053,15 @@ export const GameApp = () => {
 
   useEffect(() => {
     primeSfx();
+    let primedAfterInteraction = false;
     const onFirstInteraction = () => {
+      if (primedAfterInteraction) {
+        return;
+      }
+      primedAfterInteraction = true;
       primeSfx();
+      window.removeEventListener('pointerdown', onFirstInteraction);
+      window.removeEventListener('keydown', onFirstInteraction, true);
     };
     window.addEventListener('pointerdown', onFirstInteraction, { passive: true });
     window.addEventListener('keydown', onFirstInteraction, true);
@@ -1328,30 +1072,32 @@ export const GameApp = () => {
   }, []);
 
   useEffect(() => {
-    const preload = (src: string) => {
-      const img = new Image();
-      img.decoding = 'async';
-      img.src = src;
+    void preloadImageBatch(criticalUiImageAssets, {
+      fetchPriority: 'high',
+      timeoutMs: 2200,
+    });
+    const deferredPreloadTimer = window.setTimeout(() => {
+      warmImagePreloads(deferredUiImageAssets, {
+        fetchPriority: 'low',
+        timeoutMs: 2600,
+      });
+    }, 120);
+    return () => {
+      window.clearTimeout(deferredPreloadTimer);
     };
-    preload('/logo.png');
-    preload('/snoo.png');
-    preload('/background.jpg');
-    preload('/result.jpg');
-  }, [
-    clearTileFeedback,
-    loadCompletionSolveSecondsFromDatabase,
-    loadFeaturedOffer,
-    loadQuestStatus,
-    refreshBootstrapState,
-    startLevel,
-  ]);
+  }, []);
 
   useEffect(() => {
-    void import('../screens/ShopScreen');
-    void import('../screens/QuestScreen');
-    void import('../screens/StatsScreen');
-    void import('../screens/LeaderboardScreen');
-    void loadConfettiModule();
+    const cancelWarmup = scheduleNonCriticalWarmup(() => {
+      void import('../screens/ShopScreen');
+      void import('../screens/QuestScreen');
+      void import('../screens/StatsScreen');
+      void import('../screens/LeaderboardScreen');
+      void loadConfettiModule();
+    });
+    return () => {
+      cancelWarmup();
+    };
   }, [loadConfettiModule]);
 
   useEffect(() => {
@@ -1372,17 +1118,18 @@ export const GameApp = () => {
   }, []);
 
   useEffect(() => {
-    if (!isHelpOpen) {
+    if (!isHelpOpen && !isSettingsOpen) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsHelpOpen(false);
+        setIsSettingsOpen(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isHelpOpen]);
+  }, [isHelpOpen, isSettingsOpen]);
 
   useEffect(() => {
     if (!isHelpOpen) {
@@ -1408,6 +1155,31 @@ export const GameApp = () => {
       document.removeEventListener('touchstart', closeWhenOutside);
     };
   }, [isHelpOpen]);
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return;
+    }
+    const closeWhenOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (settingsCardRef.current?.contains(target)) {
+        return;
+      }
+      if (settingsButtonRef.current?.contains(target)) {
+        return;
+      }
+      setIsSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', closeWhenOutside);
+    document.addEventListener('touchstart', closeWhenOutside, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', closeWhenOutside);
+      document.removeEventListener('touchstart', closeWhenOutside);
+    };
+  }, [isSettingsOpen]);
 
   useEffect(() => {
     const fitPuzzle = () => {
@@ -1467,6 +1239,9 @@ export const GameApp = () => {
         const avatars = leaderboard.entries
           .map((entry) => entry.snoovatarUrl ?? null)
           .filter((entry): entry is string => Boolean(entry));
+        warmImagePreloads(avatars, {
+          fetchPriority: 'high',
+        });
         setCompletionCrowdAvatarUrls(avatars);
       } catch (_error) {
         if (!cancelled) {
@@ -1478,7 +1253,7 @@ export const GameApp = () => {
     return () => {
       cancelled = true;
     };
-  }, [isComplete, levelId]);
+  }, [isComplete, levelId, subredditName]);
 
   useEffect(() => {
     if (activeScreen !== 'challenge' || !isComplete) {
@@ -1533,68 +1308,42 @@ export const GameApp = () => {
     let bubbles = buildOutcomeCrowdBubbles(completionCrowdAvatarUrls, viewport);
     outcomeCrowdBubblesRef.current = bubbles;
     setOutcomeCrowdBubbles(bubbles);
+
     let frameId = 0;
     let lastFrameTs = performance.now();
-
     const tick = (frameTs: number) => {
-      const dt = Math.min(22, frameTs - lastFrameTs);
+      const dt = Math.min(1.5, (frameTs - lastFrameTs) / 16.6667 || 1);
       lastFrameTs = frameTs;
       const next = bubbles.map((bubble) => ({ ...bubble }));
 
       for (const bubble of next) {
-        if (bubble.isPodium) {
-          const driftX = Math.sin(frameTs / 2600 + bubble.driftPhase) * 9;
-          const driftY = Math.cos(frameTs / 3200 + bubble.driftPhase) * 6;
-          const targetX = bubble.anchorX + driftX;
-          const targetY = bubble.anchorY + driftY;
-          bubble.vx += (targetX - bubble.x) * 0.0015 * dt;
-          bubble.vy += (targetY - bubble.y) * 0.0015 * dt;
-          bubble.vx *= 0.92;
-          bubble.vy *= 0.92;
-        } else {
-          bubble.vx += Math.sin(frameTs / 4000 + bubble.driftPhase) * 0.0007 * dt;
-          bubble.vy += Math.cos(frameTs / 4300 + bubble.driftPhase) * 0.0006 * dt;
-          bubble.vx *= 0.998;
-          bubble.vy *= 0.998;
-        }
-
+        bubble.vx += (bubble.anchorX - bubble.x) * bubble.springStrength * dt;
+        bubble.vy += outcomeCrowdGravity * dt;
+        bubble.vx *= bubble.velocityDamping;
+        bubble.vy *= 0.992;
         bubble.x += bubble.vx * dt;
         bubble.y += bubble.vy * dt;
       }
 
       for (let pass = 0; pass < outcomeCrowdCollisionPasses; pass += 1) {
-        for (let i = 0; i < next.length; i += 1) {
-          for (let j = i + 1; j < next.length; j += 1) {
-            const first = next[i];
-            const second = next[j];
+        for (let firstIndex = 0; firstIndex < next.length; firstIndex += 1) {
+          for (
+            let secondIndex = firstIndex + 1;
+            secondIndex < next.length;
+            secondIndex += 1
+          ) {
+            const first = next[firstIndex];
+            const second = next[secondIndex];
             if (!first || !second) {
               continue;
             }
-            const dx = second.x - first.x;
-            const dy = second.y - first.y;
-            const distance = Math.hypot(dx, dy) || 0.0001;
-            const minDistance =
-              first.radius + second.radius + outcomeCrowdCollisionPadding;
-            if (distance >= minDistance) {
-              continue;
-            }
-
-            const normalX = dx / distance;
-            const normalY = dy / distance;
-            const overlap = minDistance - distance;
-            settleOutcomeBubbleCollision(
-              first,
-              second,
-              normalX,
-              normalY,
-              overlap
-            );
+            resolveOutcomeCrowdCollision(first, second);
           }
         }
-      }
 
-      for (const bubble of next) {
-        settleOutcomeBubbleBoundary(bubble);
+        for (const bubble of next) {
+          settleOutcomeCrowdBoundary(bubble);
+        }
       }
 
       bubbles = next;
@@ -1605,8 +1354,9 @@ export const GameApp = () => {
         if (!node) {
           continue;
         }
-        node.style.transform = `translate3d(${bubble.x}px, ${bubble.y}px, 0) translate(-50%, -50%)`;
+        syncOutcomeCrowdNodePosition(node, bubble);
       }
+
       frameId = window.requestAnimationFrame(tick);
     };
 
@@ -1623,22 +1373,21 @@ export const GameApp = () => {
     }
     let cancelled = false;
     const urls = completionCrowdAvatarUrls.slice(0, maxOutcomeCrowdAvatars);
-    const preloadPromises = urls.map(
-      (url) =>
-        new Promise<void>((resolve) => {
-          const img = new Image();
-          img.decoding = 'async';
-          img.onload = () => resolve();
-          img.onerror = () => resolve();
-          img.src = url;
-        })
-    );
+    const criticalUrls = urls.slice(0, Math.min(criticalOutcomeAvatarCount, urls.length));
+    warmImagePreloads(urls, {
+      fetchPriority: 'high',
+      timeoutMs: 1900,
+    });
     const fallback = window.setTimeout(() => {
       if (!cancelled) {
         setCompletionCrowdReady(true);
       }
-    }, 1200);
-    void Promise.all(preloadPromises).then(() => {
+    }, outcomeCrowdFallbackReadyMs);
+    void Promise.all(
+      criticalUrls.map((url) =>
+        preloadImageAsset(url, { fetchPriority: 'high', timeoutMs: 1300 })
+      )
+    ).then(() => {
       if (!cancelled) {
         window.clearTimeout(fallback);
         setCompletionCrowdReady(true);
@@ -1701,6 +1450,7 @@ export const GameApp = () => {
         for (const index of revealedIndicesForAnimation) {
           next.add(index);
         }
+        persistCorrectGuessIndices(levelId, next);
         return next;
       });
       setSelectedTile((previous) => (previous === tileIndex ? null : previous));
@@ -1747,21 +1497,24 @@ export const GameApp = () => {
     return nextPuzzle;
   };
 
-  const submitLetterForTile = async (letter: string, tileIndex: number) => {
+  const submitLetterForTile = async (
+    letter: string,
+    tileIndex: number
+  ): Promise<{ isLevelComplete: boolean; isGameOver: boolean } | null> => {
     if (busy || isComplete || isGameOver) {
-      return;
+      return null;
     }
     const currentPuzzle = puzzleRef.current;
     if (!currentPuzzle) {
-      return;
+      return null;
     }
     const selected = currentPuzzle.tiles[tileIndex];
     if (!selected || !selected.isLetter || selected.isLocked || selected.displayChar !== '_') {
-      return;
+      return null;
     }
     if (!canUseLifeForChallenge) {
       showToast('No lives left. Wait for refill.');
-      return;
+      return null;
     }
     try {
       const result = await trpc.game.submitGuess.mutate({
@@ -1770,8 +1523,13 @@ export const GameApp = () => {
         guessedLetter: letter,
       });
       await applyGuessResult(result, tileIndex, puzzleRef.current);
+      return {
+        isLevelComplete: result.isLevelComplete,
+        isGameOver: result.isGameOver,
+      };
     } catch (_error) {
       showToast('Guess failed.');
+      return null;
     }
   };
 
@@ -1782,6 +1540,7 @@ export const GameApp = () => {
     processingGuessRef.current = true;
     setGuessInFlight(true);
     try {
+      let stopProcessing = false;
       while (guessQueueRef.current.length > 0) {
         const batch = guessQueueRef.current.splice(0, guessQueueRef.current.length);
         setQueuedGuessCount(guessQueueRef.current.length);
@@ -1795,35 +1554,98 @@ export const GameApp = () => {
         if (filtered.length === 1) {
           const entry = filtered[0];
           if (entry) {
-            await submitLetterForTile(entry.letter, entry.tileIndex);
+            const singleResult = await submitLetterForTile(
+              entry.letter,
+              entry.tileIndex
+            );
+            if (
+              singleResult?.isGameOver === true ||
+              singleResult?.isLevelComplete === true
+            ) {
+              guessQueueRef.current = [];
+              setQueuedGuessCount(0);
+              stopProcessing = true;
+            }
+          }
+          if (stopProcessing) {
+            break;
           }
           continue;
         }
-        const result = await trpc.game.submitGuesses.mutate({
-          levelId,
-          guesses: filtered.map((entry) => ({
-            tileIndex: entry.tileIndex,
-            guessedLetter: entry.letter,
-          })),
-        });
-        let optimisticPuzzle = puzzleRef.current;
-        for (let index = 0; index < result.results.length; index += 1) {
-          const entry = filtered[index];
-          const guessResult = result.results[index];
-          if (!entry || !guessResult) {
+        for (let offset = 0; offset < filtered.length; offset += 20) {
+          const chunk = filtered.slice(offset, offset + 20);
+          if (chunk.length === 1) {
+            const single = chunk[0];
+            if (single) {
+              const singleResult = await submitLetterForTile(
+                single.letter,
+                single.tileIndex
+              );
+              if (
+                singleResult?.isGameOver === true ||
+                singleResult?.isLevelComplete === true
+              ) {
+                guessQueueRef.current = [];
+                setQueuedGuessCount(0);
+                stopProcessing = true;
+              }
+            }
+            if (stopProcessing) {
+              break;
+            }
             continue;
           }
-          optimisticPuzzle = await applyGuessResult(
-            guessResult,
-            entry.tileIndex,
-            optimisticPuzzle
-          );
-          puzzleRef.current = optimisticPuzzle;
-          if (guessResult.isGameOver || guessResult.isLevelComplete) {
-            guessQueueRef.current = [];
-            setQueuedGuessCount(0);
+          try {
+            const result = await trpc.game.submitGuesses.mutate({
+              levelId,
+              guesses: chunk.map((entry) => ({
+                tileIndex: entry.tileIndex,
+                guessedLetter: entry.letter,
+              })),
+            });
+            let optimisticPuzzle = puzzleRef.current;
+            for (let index = 0; index < result.results.length; index += 1) {
+              const entry = chunk[index];
+              const guessResult = result.results[index];
+              if (!entry || !guessResult) {
+                continue;
+              }
+              optimisticPuzzle = await applyGuessResult(
+                guessResult,
+                entry.tileIndex,
+                optimisticPuzzle
+              );
+              puzzleRef.current = optimisticPuzzle;
+              if (guessResult.isGameOver || guessResult.isLevelComplete) {
+                guessQueueRef.current = [];
+                setQueuedGuessCount(0);
+                stopProcessing = true;
+                break;
+              }
+            }
+          } catch (_error) {
+            for (const entry of chunk) {
+              const singleResult = await submitLetterForTile(
+                entry.letter,
+                entry.tileIndex
+              );
+              if (
+                singleResult?.isGameOver === true ||
+                singleResult?.isLevelComplete === true
+              ) {
+                guessQueueRef.current = [];
+                setQueuedGuessCount(0);
+                stopProcessing = true;
+                break;
+              }
+            }
+          }
+          if (stopProcessing) {
             break;
           }
+        }
+        if (stopProcessing) {
+          break;
         }
       }
     } finally {
@@ -1939,12 +1761,20 @@ export const GameApp = () => {
     setBuyDialog({ item, quantity: 1 });
   };
 
+  const showMissingPowerupToast = (item: PowerupType) => {
+    showToast(`No ${powerupLabel[item].toLowerCase()} available.`);
+  };
+
   const handleQuickPowerupTap = (item: PowerupType) => {
     if (!inventory || busy || guessInFlight || queuedGuessCount > 0 || isGameOver || isComplete) {
       return;
     }
     if (inventory[item] > 0) {
       void handleUsePowerup(item);
+      return;
+    }
+    if (maxPurchasableQuantity(item) < 1) {
+      showMissingPowerupToast(item);
       return;
     }
     openBuyDialog(item);
@@ -2066,27 +1896,72 @@ export const GameApp = () => {
   };
 
   const loadModeAndOpenChallenge = async (nextMode: 'daily' | 'endless') => {
-    if (nextMode === 'endless') {
-      showToast('Endless mode is coming soon.');
+    if (nextMode === 'endless' && !endlessCatalogAvailable) {
+      showToast('Endless mode is not available yet.');
       return;
     }
-    await loadLevel(nextMode);
-    setActiveScreen('challenge');
+    try {
+      await loadLevel(nextMode);
+      setActiveScreen('challenge');
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : 'Unable to load level.';
+      if (message.toLowerCase().includes('endless catalog unavailable')) {
+        await refreshBootstrapState();
+        showToast('Endless mode is not available yet.');
+        return;
+      }
+      showToast(message);
+    }
   };
 
   const handleHomeTabSelect = (nextTab: HomeTab) => {
     setHomeTab(nextTab);
-    if (nextTab === 'endless') {
+    if (nextTab === 'endless' && !endlessCatalogAvailable) {
       showToast('Endless mode is coming soon.');
+    }
+  };
+
+  const handleAudioToggle = async () => {
+    if (!profile || audioPreferenceBusy) {
+      return;
+    }
+    const previousEnabled = profile.audioEnabled;
+    const nextEnabled = !previousEnabled;
+    setAudioPreferenceBusy(true);
+    setSfxEnabled(persistSfxEnabled(nextEnabled));
+    setProfile((previous) =>
+      previous ? { ...previous, audioEnabled: nextEnabled } : previous
+    );
+    try {
+      const result = await trpc.profile.setAudioEnabled.mutate({
+        enabled: nextEnabled,
+      });
+      setProfile(result.profile);
+      setSfxEnabled(persistSfxEnabled(result.profile.audioEnabled));
+    } catch (_error) {
+      setProfile((previous) =>
+        previous ? { ...previous, audioEnabled: previousEnabled } : previous
+      );
+      setSfxEnabled(persistSfxEnabled(previousEnabled));
+      showToast('Unable to save audio preference.');
+    } finally {
+      setAudioPreferenceBusy(false);
     }
   };
 
   const handleHomePlay = () => {
     if (homeTab === 'endless') {
-      showToast('Endless mode is coming soon.');
-      return;
+      void loadModeAndOpenChallenge('endless');
+    } else {
+      void loadModeAndOpenChallenge('daily');
     }
-    void loadModeAndOpenChallenge('daily');
+  };
+
+  const handleHomePlayEndless = () => {
+    void loadModeAndOpenChallenge('endless');
   };
 
   const handleQuestClaim = async (questId: string) => {
@@ -2137,6 +2012,35 @@ export const GameApp = () => {
     }
   };
 
+  const handleJoinCommunity = async () => {
+    if (!subredditName) {
+      showToast('Community link is unavailable right now.');
+      return;
+    }
+    if (!isPrimaryCommunitySubreddit(subredditName)) {
+      showToast(`Community join is only available in r/${primaryCommunitySubreddit}.`);
+      return;
+    }
+    setJoiningCommunity(true);
+    try {
+      const result = await trpc.profile.joinCommunity.mutate();
+      if (!result.success) {
+        showToast(result.reason ?? 'Unable to join the community right now.');
+        return;
+      }
+      setProfile(result.profile);
+      showToast(
+        result.rewardCoins > 0
+          ? `Community joined. ${coinEmoji} +${result.rewardCoins}`
+          : 'Community opened.'
+      );
+    } catch (_error) {
+      showToast('Unable to join the community right now.');
+    } finally {
+      setJoiningCommunity(false);
+    }
+  };
+
   const retry = async () => {
     if (!levelId) {
       return;
@@ -2155,10 +2059,14 @@ export const GameApp = () => {
     if (!isComplete) {
       return;
     }
-    const result = await trpc.social.shareResult.mutate({
-      levelId,
-    });
-    showToast(result.success ? 'Result shared.' : result.reason ?? 'Share failed.');
+    try {
+      const result = await trpc.social.shareResult.mutate({
+        levelId,
+      });
+      showToast(result.success ? 'Result shared.' : result.reason ?? 'Share failed.');
+    } catch (_error) {
+      showToast('Share failed.');
+    }
   };
 
   useEffect(() => {
@@ -2219,19 +2127,21 @@ export const GameApp = () => {
   const headerIconClass = isInlineMode ? 'h-[18px] w-[18px]' : 'h-[20px] w-[20px]';
   const helpCardWidthClass = deviceTier === 'mobile' ? 'max-w-[300px]' : 'max-w-[360px]';
   const puzzleMarkClass = isInlineMode
-    ? 'text-[clamp(13px,3.8vw,18px)]'
-    : 'text-[clamp(18px,2.5vw,24px)]';
+    ? 'text-[clamp(11px,3.5vw,16px)]'
+    : 'text-[clamp(16px,2.3vw,22px)]';
   const puzzleCipherClass = isInlineMode
-    ? 'text-[clamp(12px,2.6vw,14px)]'
-    : 'text-[clamp(15px,2.1vw,17px)]';
+    ? 'text-[clamp(10px,2.4vw,12px)]'
+    : 'text-[clamp(13px,1.9vw,15px)]';
   const separatorGlyphClass = isInlineMode
-    ? 'text-[clamp(11px,3vw,15px)]'
-    : 'text-[clamp(16px,2.3vw,20px)]';
+    ? 'text-[clamp(9px,2.7vw,13px)]'
+    : 'text-[clamp(14px,2.1vw,18px)]';
   const punctuationMarkClass = isInlineMode
-    ? 'text-[clamp(15px,4.1vw,19px)]'
-    : 'text-[clamp(20px,2.7vw,25px)]';
-  const punctuationTopHeightClass = isInlineMode ? 'min-h-[8px]' : 'min-h-[10px]';
-  const punctuationBottomHeightClass = isInlineMode ? 'min-h-[25px]' : 'min-h-[24px]';
+    ? 'text-[clamp(13px,3.7vw,17px)]'
+    : 'text-[clamp(18px,2.4vw,23px)]';
+  const puzzleTileUnderlineWidthClass = isInlineMode
+    ? 'w-[clamp(14px,4.2vw,20px)]'
+    : 'w-[clamp(18px,5vw,24px)]';
+  const punctuationTileMinWidthClass = isInlineMode ? 'min-w-[2px]' : 'min-w-[4px]';
   const offerPromotionLabel = featuredOffer ? getOfferPromotionLabel(featuredOffer.sku) : '';
   const featuredPerks = featuredOffer
     ? [
@@ -2251,6 +2161,7 @@ export const GameApp = () => {
   const isStatsScreen = activeScreen === 'stats';
   const isLeaderboardScreen = activeScreen === 'leaderboard';
   const showOutcomeOverlay = isChallengeScreen && (isGameOver || isComplete);
+  const hasJoinedCommunity = profile?.communityJoinRewardClaimed === true;
   const showSuccessOverlay = isComplete;
   const isDailyComplete = mode === 'daily' && isComplete;
   const maxLives = 3;
@@ -2359,14 +2270,18 @@ export const GameApp = () => {
     : [tokens];
   const activeLeaderboardEntries =
     leaderboardTab === 'daily' ? dailyLeaderboardEntries : endlessLeaderboardEntries;
-  const dailyAvgSolveSeconds =
-    profile.dailyModeClears > 0
-      ? Math.round(profile.dailySolveTimeTotalSec / profile.dailyModeClears)
-      : null;
-  const endlessAvgSolveSeconds =
-    profile.endlessModeClears > 0
-      ? Math.round(profile.endlessSolveTimeTotalSec / profile.endlessModeClears)
-      : null;
+  const activeLeaderboardRank =
+    leaderboardTab === 'daily'
+      ? rankSummary?.dailyRank ?? null
+      : rankSummary?.endlessRank ?? null;
+  const dailyAvgSolveSeconds = computeAverageSolveSeconds(
+    profile.dailySolveTimeTotalSec,
+    profile.dailyModeClears
+  );
+  const endlessAvgSolveSeconds = computeAverageSolveSeconds(
+    profile.endlessSolveTimeTotalSec,
+    profile.endlessModeClears
+  );
   const dailyStatCards = [
     { label: 'Levels Cleared', value: profile.dailyModeClears.toLocaleString() },
     { label: 'Avg Solve Time', value: formatStatDuration(dailyAvgSolveSeconds) },
@@ -2459,7 +2374,6 @@ export const GameApp = () => {
     if (!(button instanceof HTMLButtonElement) || button.disabled) {
       return;
     }
-    primeSfx();
     playSfx('button');
   };
 
@@ -2477,9 +2391,41 @@ export const GameApp = () => {
     if (!(button instanceof HTMLButtonElement) || button.disabled) {
       return;
     }
-    primeSfx();
     playSfx('button');
   };
+
+  const punctuationVerticalClass = (displayChar: string): string => {
+    if (["'", '\u2019', '`', '"'].includes(displayChar)) {
+      return 'top-0';
+    }
+    if (['.', ',', '?', '!', ';', ':'].includes(displayChar)) {
+      return 'bottom-0';
+    }
+    return 'top-1/2 -translate-y-1/2';
+  };
+
+  const punctuationGridHeightClass = isInlineMode ? 'h-[38px]' : 'h-[40px]';
+
+  const renderPunctuationTile = (key: string | number, displayChar: string) => (
+    <span
+      key={key}
+      className={cn(
+        'relative inline-flex items-center justify-center px-0 py-0 leading-none',
+        punctuationGridHeightClass,
+        punctuationTileMinWidthClass
+      )}
+    >
+      <span
+        className={cn(
+          'puzzle-punctuation-mark pointer-events-none absolute leading-none',
+          punctuationVerticalClass(displayChar),
+          punctuationMarkClass
+        )}
+      >
+        {displayChar}
+      </span>
+    </span>
+  );
 
   return (
     <div
@@ -2541,12 +2487,38 @@ export const GameApp = () => {
                     </>
                   )}
                 </div>
-                <div className="flex items-center">
+                <div className="flex items-center gap-2">
+                  <button
+                    data-testid="settings-button"
+                    ref={settingsButtonRef}
+                    className={`${helpButtonClass} btn-3d btn-neutral btn-info-soft btn-round flex items-center justify-center font-black`}
+                    onClick={() => {
+                      setIsSettingsOpen((previous) => {
+                        const next = !previous;
+                        if (next) {
+                          setIsHelpOpen(false);
+                        }
+                        return next;
+                      });
+                    }}
+                    aria-label="Settings"
+                    title="Settings"
+                  >
+                    <SettingsIcon className={headerIconClass} />
+                  </button>
                   <button
                     data-testid="info-button"
                     ref={infoButtonRef}
                     className={`${helpButtonClass} btn-3d btn-neutral btn-info-soft btn-round flex items-center justify-center font-black`}
-                    onClick={() => setIsHelpOpen((previous) => !previous)}
+                    onClick={() =>
+                      setIsHelpOpen((previous) => {
+                        const next = !previous;
+                        if (next) {
+                          setIsSettingsOpen(false);
+                        }
+                        return next;
+                      })
+                    }
                     aria-label="How to play"
                     title="How to play"
                   >
@@ -2559,11 +2531,13 @@ export const GameApp = () => {
 
           {isChallengeScreen && !showOutcomeOverlay && (
             <div className="app-surface-subtle app-text border-y app-border px-3 py-2">
-              <div className="flex items-center justify-between gap-2 text-[14px] font-bold uppercase sm:text-[15px] md:text-[16px]">
-                <span>Plays: {challengeMetrics.plays.toLocaleString()}</span>
-                <span>{challengeTypeLabel} lines ({difficultyLabel})</span>
-                <span>Win: {challengeMetrics.winRatePct}%</span>
-              </div>
+	              <div className="flex items-center justify-between gap-2 text-[14px] font-bold uppercase sm:text-[15px] md:text-[16px]">
+	                <span>Plays: {challengeMetrics.plays.toLocaleString()}</span>
+	                <span className="text-[8px] sm:text-[15px] md:text-[16px]">
+	                  {challengeTypeLabel} lines ({difficultyLabel})
+	                </span>
+	                <span>Win: {challengeMetrics.winRatePct}%</span>
+	              </div>
             </div>
           )}
 
@@ -2582,25 +2556,20 @@ export const GameApp = () => {
                   <div ref={contentRef} className="inline-block max-w-full">
                     <div
                       data-testid="puzzle-token-wrap"
-                      className="flex flex-col items-center gap-y-[6px]"
+                      className="flex flex-col items-center gap-y-[4px]"
                     >
                       {puzzleTokenLines.map((lineTokens, lineIndex) => (
                         <div key={`line-${lineIndex}`} className="flex flex-wrap items-end justify-center">
                           {lineTokens.map((token) => {
                             if (token.type === 'separator') {
                               return token.tile.displayChar === ' ' ? (
-                                <span key={token.key} className={`inline-flex h-[1px] ${isInlineMode ? 'w-[20px]' : 'w-[22px]'}`} aria-hidden="true" />
+                                <span key={token.key} className={`inline-flex h-[1px] ${isInlineMode ? 'w-[18px]' : 'w-[20px]'}`} aria-hidden="true" />
                               ) : (
                                 <div
                                   key={token.key}
-                                  className={`${isInlineMode ? 'mr-0.5 min-w-[14px]' : 'mr-1 min-w-[16px]'} app-text flex flex-col items-center`}
+                                  className={isInlineMode ? 'mr-[2px]' : 'mr-[4px]'}
                                 >
-                                  <span className={`${punctuationTopHeightClass} ${punctuationMarkClass} inline-flex -translate-y-[3px] items-start leading-none`}>
-                                    {token.tile.displayChar}
-                                  </span>
-                                  <span className={`${punctuationBottomHeightClass} ${puzzleCipherClass} leading-none opacity-0 select-none`}>
-                                    {'\u00A0'}
-                                  </span>
+                                  {renderPunctuationTile(token.key, token.tile.displayChar)}
                                 </div>
                               );
                             }
@@ -2615,28 +2584,21 @@ export const GameApp = () => {
                                 key={token.key}
                                 className={`${isBridgeWord
                                   ? `${isInlineMode ? 'mr-0.5' : 'mr-1'} inline-flex flex-col gap-0`
-                                  : `${isInlineMode ? 'mr-0.5 gap-[2px]' : 'mr-1 gap-1'} inline-flex items-end whitespace-nowrap`
+                                  : `${isInlineMode ? 'mr-0.5 gap-[1px]' : 'mr-1 gap-[2px]'} inline-flex items-end whitespace-nowrap`
                                   } ${highlightBridgeWord ? 'app-surface-subtle rounded-md px-1 py-0.5' : ''}`}
                               >
                                 {wordRows.map((rowTiles, rowIndex) => (
                                   <div
                                     key={`${token.key}-row-${rowIndex}`}
-                                    className={`inline-flex items-end ${isInlineMode ? 'gap-[2px]' : 'gap-1'}`}
+                                    className={`inline-flex items-end ${isInlineMode ? 'gap-[1px]' : 'gap-[2px]'}`}
                                   >
                                     {rowTiles.map((tile) => {
                                       if (!tile.isLetter) {
                                         return (
-                                          <div
-                                            key={tile.index}
-                                            className={`app-text flex ${isInlineMode ? 'min-w-[15px]' : 'min-w-[18px]'} flex-col items-center`}
-                                          >
-                                            <span className={`${punctuationTopHeightClass} ${punctuationMarkClass} inline-flex -translate-y-[3px] items-start leading-none`}>
-                                              {tile.displayChar}
-                                            </span>
-                                            <span className={`${punctuationBottomHeightClass} ${puzzleCipherClass} leading-none opacity-0 select-none`}>
-                                              {'\u00A0'}
-                                            </span>
-                                          </div>
+                                          renderPunctuationTile(
+                                            tile.index,
+                                            tile.displayChar
+                                          )
                                         );
                                       }
                                       const disabled = tile.isLocked || busy || isComplete || isGameOver;
@@ -2646,7 +2608,12 @@ export const GameApp = () => {
                                           : null;
                                       const displayChar = pendingLetter ?? tile.displayChar;
                                       const lockDotCount = tile.isLocked
-                                        ? Math.min(3, tile.lockRemainingKeys ?? 0)
+                                        ? Math.min(
+                                            2,
+                                            tile.lockTotalKeys ??
+                                              tile.lockRemainingKeys ??
+                                              0
+                                          )
                                         : 0;
                                       const lockDots =
                                         lockDotCount > 0
@@ -2659,7 +2626,8 @@ export const GameApp = () => {
                                       const tileState = letterTileState(
                                         selectedTile === tile.index,
                                         tile.isLocked,
-                                        correctGuessTileIndices.has(tile.index),
+                                        correctGuessTileIndices.has(tile.index) ||
+                                          tile.isSessionRevealed === true,
                                         wrongGuessTileIndices.has(tile.index)
                                       );
                                       return (
@@ -2673,7 +2641,8 @@ export const GameApp = () => {
                                             disabled,
                                             tile.isGold,
                                             tile.isLocked,
-                                            correctGuessTileIndices.has(tile.index),
+                                            correctGuessTileIndices.has(tile.index) ||
+                                              tile.isSessionRevealed === true,
                                             wrongGuessTileIndices.has(tile.index)
                                           )}
                                         >
@@ -2689,7 +2658,7 @@ export const GameApp = () => {
                                           )}
                                           <span
                                             className={cn(
-                                              `flex h-[18px] items-center justify-center font-black leading-none ${puzzleMarkClass}`,
+                                              `flex h-[16px] items-center justify-center font-black leading-none ${puzzleMarkClass}`,
                                               pendingLetter ? 'opacity-60' : ''
                                             )}
                                           >
@@ -2699,8 +2668,15 @@ export const GameApp = () => {
                                                 ? '\u00A0'
                                                 : displayChar}
                                           </span>
-                                          <span className={`app-surface-subtle block h-[2px] rounded-full ${isInlineMode ? 'mt-0.5 w-[clamp(16px,4.6vw,22px)]' : 'mt-1 w-[clamp(20px,5.4vw,26px)]'}`} />
-                                          <span className={`app-text-soft block min-h-[12px] ${isInlineMode ? 'mt-0.5' : 'mt-1'} ${puzzleCipherClass}`}>
+                                          <span
+                                            className={cn(
+                                              'app-surface-subtle block h-[2px] rounded-full',
+                                              tile.isLocked ? 'opacity-0' : 'opacity-100',
+                                              isInlineMode ? 'mt-0.5' : 'mt-1',
+                                              puzzleTileUnderlineWidthClass
+                                            )}
+                                          />
+                                          <span className={`app-text-soft block min-h-[10px] ${isInlineMode ? 'mt-0.5' : 'mt-1'} ${puzzleCipherClass}`}>
                                             {tile.isLocked ? (
                                               '\u00A0'
                                             ) : tile.isBlind ? (
@@ -2713,7 +2689,7 @@ export const GameApp = () => {
                                       );
                                     })}
                                     {isBridgeWord && rowIndex < wordRows.length - 1 && (
-                                      <div className={`app-text-soft flex min-w-[14px] items-center justify-center ${isInlineMode ? 'mb-[9px]' : 'mb-[12px]'}`}>
+                                      <div className={`app-text-soft flex min-w-[12px] items-center justify-center ${isInlineMode ? 'mb-[7px]' : 'mb-[10px]'}`}>
                                         <span className={`${separatorGlyphClass} leading-none`}>{wordContinuationGlyph}</span>
                                       </div>
                                     )}
@@ -2746,50 +2722,59 @@ export const GameApp = () => {
                 completionCrowdReady && (
                 <section
                   data-testid="outcome-overlay-crowd"
-                  className="pointer-events-none absolute inset-0 z-0"
-                  ref={handleOutcomeCrowdRef}
+                  className="pointer-events-none absolute bottom-0 left-1/2 top-[66%] z-0 w-screen max-w-none -translate-x-1/2"
                 >
-                  {outcomeCrowdBubbles.map((bubble) => {
-                    return (
-                      <div
-                        key={bubble.id}
-                        ref={(node) => {
-                          setOutcomeCrowdBubbleNode(bubble.id, node);
-                        }}
-                        className={cn(
-                          'result-crowd-avatar absolute',
-                          bubble.isPodium ? 'result-crowd-avatar-podium' : ''
-                        )}
-                        style={{
-                          left: 0,
-                          top: 0,
-                          width: `${bubble.size}px`,
-                          height: `${bubble.size}px`,
-                          zIndex: bubble.z,
-                          transform: `translate3d(${bubble.x}px, ${bubble.y}px, 0) translate(-50%, -50%)`,
-                        }}
-                      >
+                  <div
+                    className="relative h-full w-full overflow-hidden"
+                    ref={handleOutcomeCrowdRef}
+                  >
+                    {outcomeCrowdBubbles.map((bubble) => {
+                      return (
                         <div
-                          className="result-crowd-avatar-frame"
+                          key={bubble.id}
+                          ref={(node) => {
+                            setOutcomeCrowdBubbleNode(bubble.id, node);
+                          }}
+                          className={cn(
+                            'result-crowd-avatar absolute',
+                            bubble.isPodium ? 'result-crowd-avatar-podium' : ''
+                          )}
                           style={{
-                            backgroundColor: bubble.backgroundColor,
-                            boxShadow: bubble.isPodium
-                              ? '0 12px 24px rgba(0, 0, 0, 0.28)'
-                              : '0 8px 16px rgba(0, 0, 0, 0.18)',
+                            left: 0,
+                            top: 0,
+                            width: `${bubble.size}px`,
+                            height: `${bubble.size}px`,
+                            zIndex: bubble.z,
+                            transform: `translate3d(${bubble.x}px, ${bubble.y}px, 0) translate(-50%, -50%)`,
                           }}
                         >
-                          <img
-                            src={bubble.avatarUrl}
-                            alt="Player avatar"
-                            className="result-crowd-avatar-image"
-                            onError={(event) => {
-                              event.currentTarget.style.display = 'none';
+                          <div
+                            className="result-crowd-avatar-frame"
+                            style={{
+                              background: `radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.42) 22%, rgba(255, 255, 255, 0.08) 38%), linear-gradient(165deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.2)), ${bubble.backgroundColor}`,
+                              boxShadow: bubble.isPodium
+                                ? '0 12px 24px rgba(0, 0, 0, 0.28)'
+                                : '0 8px 16px rgba(0, 0, 0, 0.18)',
                             }}
-                          />
+                          >
+                            <img
+                              src={bubble.avatarUrl}
+                              alt="Player avatar"
+                              className="result-crowd-avatar-image"
+                              loading="eager"
+                              decoding="async"
+                              fetchPriority={
+                                bubble.rank <= criticalOutcomeAvatarCount ? 'high' : 'low'
+                              }
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </section>
               )}
 
@@ -2799,9 +2784,74 @@ export const GameApp = () => {
               />
 
               <main className="relative z-20 flex min-h-0 flex-1 flex-col px-2 py-2 sm:px-3 sm:py-3">
-                <div className="mx-auto h-full min-h-0 w-full max-w-[680px] overflow-hidden bg-transparent">
-                  <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-                    <header className="shrink-0 px-3 pt-3 text-center sm:px-4 sm:pt-4" data-testid="outcome-overlay-header">
+                <div className="pointer-events-none absolute inset-x-0 top-0 z-30 px-3 pt-3 sm:px-4 sm:pt-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
+                      {showSuccessOverlay && (
+                        <button
+                          data-testid="overlay-share-comment"
+                          className="btn-3d btn-primary btn-share-result btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
+                          onClick={share}
+                          disabled={busy}
+                          aria-label="Share as comment"
+                          title="Share as comment"
+                        >
+                          <ShareIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
+                        </button>
+                      )}
+                      {!isDailyComplete && (
+                        <button
+                          data-testid="overlay-play-again"
+                          className="btn-3d btn-retry btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
+                          onClick={retry}
+                          disabled={busy}
+                          aria-label="Play again"
+                          title="Play again"
+                        >
+                          <ReplayIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
+                        </button>
+                      )}
+                      <button
+                        data-testid="overlay-go-home"
+                        className="btn-3d btn-home btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
+                        onClick={openHome}
+                        disabled={busy}
+                        aria-label="Go home"
+                        title="Go home"
+                      >
+                        <HomeIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
+                      </button>
+                    </div>
+                    {subredditName && (
+                      <div className="pointer-events-auto flex justify-end">
+                        <button
+                          data-testid="join-community-button"
+                          className={cn(
+                            'btn-3d btn-neutral app-text flex min-h-[38px] min-w-[148px] max-w-[188px] items-center justify-center rounded-2xl px-3 text-center text-[10px] font-black uppercase tracking-[0.03em] sm:min-h-[42px] sm:min-w-[176px] sm:max-w-[220px] sm:px-4 sm:text-[12px] md:min-h-[46px] md:min-w-[200px] md:px-5 md:text-[13px]',
+                            hasJoinedCommunity ? 'opacity-90' : ''
+                          )}
+                          onClick={handleJoinCommunity}
+                          disabled={joiningCommunity}
+                          aria-label="Join the community"
+                          title="Join the community"
+                        >
+                          {joiningCommunity
+                            ? 'Joining...'
+                            : hasJoinedCommunity
+                              ? 'Community Joined'
+                              : 'Join the Community'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col justify-center overflow-y-auto bg-transparent px-3 pb-20 pt-16 sm:px-4 sm:pb-24 sm:pt-20">
+                  <div className="mx-auto flex w-full max-w-[500px] flex-col items-center text-center">
+                    <header
+                      className="shrink-0"
+                      data-testid="outcome-overlay-header"
+                    >
                       <h2 className="text-white text-[clamp(24px,5vw,36px)] font-black uppercase tracking-[0.05em]">
                         {outcomeTitle}
                       </h2>
@@ -2813,7 +2863,18 @@ export const GameApp = () => {
                     </header>
 
                     {showSuccessOverlay && (
-                      <div className="relative mx-3 mt-2 mb-7 shrink-0 sm:mx-4 sm:mb-8">
+                      <div className="relative mt-10 w-full max-w-[500px] shrink-0 sm:mt-12">
+                        <div
+                          data-testid="outcome-time-pill"
+                          className="absolute bottom-[calc(100%-1px)] left-1/2 flex -translate-x-1/2 translate-y-0 items-center gap-2 rounded-t-2xl border-x border-t border-white bg-transparent px-4 py-1.5"
+                        >
+                          <span className="text-[11px] font-black uppercase tracking-[0.03em] text-white sm:text-[12px]">
+                            Time:
+                          </span>
+                          <span className="text-[clamp(17px,3.4vw,24px)] leading-none font-black tabular-nums text-white">
+                            {completionSolveLabel}
+                          </span>
+                        </div>
                         <section
                           data-testid="outcome-overlay-quote"
                           className="rounded-2xl border border-white bg-transparent px-3 py-3 text-center sm:px-5 sm:py-4"
@@ -2826,60 +2887,8 @@ export const GameApp = () => {
                             — {puzzle.author}
                           </p>
                         </section>
-                        <div
-                          data-testid="outcome-time-pill"
-                          className="absolute top-full left-1/2 flex -translate-x-1/2 translate-y-0 items-center gap-2 rounded-b-2xl border-x border-b border-white bg-transparent px-4 py-1.5"
-                        >
-                          <span className="text-[12px] font-black uppercase tracking-[0.03em] text-white">
-                            Time:
-                          </span>
-                          <span className="text-[clamp(17px,3.4vw,24px)] leading-none font-black tabular-nums text-white">
-                            {completionSolveLabel}
-                          </span>
-                        </div>
                       </div>
                     )}
-
-                    <div className="min-h-0 flex-1" />
-
-                    <footer className="shrink-0 px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
-                      <div className="flex items-center justify-center gap-3">
-                        {showSuccessOverlay && (
-                          <button
-                            data-testid="overlay-share-comment"
-                            className="btn-3d btn-primary btn-share-result btn-round flex h-14 w-14 items-center justify-center"
-                            onClick={share}
-                            disabled={busy}
-                            aria-label="Share as comment"
-                            title="Share as comment"
-                          >
-                            <ShareIcon className="h-6 w-6" />
-                          </button>
-                        )}
-                        {!isDailyComplete && (
-                          <button
-                            data-testid="overlay-play-again"
-                            className="btn-3d btn-retry btn-round flex h-14 w-14 items-center justify-center"
-                            onClick={retry}
-                            disabled={busy}
-                            aria-label="Play again"
-                            title="Play again"
-                          >
-                            <ReplayIcon className="h-6 w-6" />
-                          </button>
-                        )}
-                        <button
-                          data-testid="overlay-go-home"
-                          className="btn-3d btn-home btn-round flex h-14 w-14 items-center justify-center"
-                          onClick={openHome}
-                          disabled={busy}
-                          aria-label="Go home"
-                          title="Go home"
-                        >
-                          <HomeIcon className="h-6 w-6" />
-                        </button>
-                      </div>
-                    </footer>
                   </div>
                 </div>
               </main>
@@ -2894,6 +2903,9 @@ export const GameApp = () => {
                     data-testid="snoo-presenter"
                     src="/snoo.png"
                     alt="Snoo"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                     className={`pointer-events-none absolute bottom-0 left-0 z-10 object-contain ${inlineSnooClass}`}
                   />
 	                  {featuredOffer && (
@@ -2946,7 +2958,6 @@ export const GameApp = () => {
                   >
                     {powerupTypes.map((item) => {
                       const count = inventory[item];
-                      const maxQuantity = maxPurchasableQuantity(item);
                       return (
                         <div key={item} className="flex flex-col items-center gap-1">
                           <div className={`relative shrink-0 ${powerupWrapSizeClass}`}>
@@ -2968,7 +2979,7 @@ export const GameApp = () => {
                             <button
                               data-testid={`powerup-buy-${item}`}
                               className={`btn-3d btn-static btn-primary btn-powerup-add btn-round absolute right-0 bottom-[8px] translate-x-[20%] translate-y-[20%] font-extrabold leading-none ${inlineTight ? 'h-[16px] w-[16px] text-[11px]' : deviceTier === 'desktop' ? 'h-[20px] w-[20px] text-[13px]' : 'h-[18px] w-[18px] text-[12px]'}`}
-                              disabled={busy || guessBusy || maxQuantity < 1}
+                              disabled={busy || guessBusy || isGameOver || isComplete}
                               onClick={() => openBuyDialog(item)}
                               title={`Buy ${powerupLabel[item]}`}
                             >
@@ -2994,7 +3005,15 @@ export const GameApp = () => {
               challengeMetrics={challengeMetrics}
               challengeTypeLabel={challengeTypeLabel}
               onPlay={handleHomePlay}
+              onPlayEndless={handleHomePlayEndless}
               homePanelClass={homePanelClass}
+              endlessCatalogAvailable={endlessCatalogAvailable}
+              endlessPublishedLevelCount={
+                endlessCatalogStatus?.publishedLevelCount ?? 0
+              }
+              endlessActiveCatalogVersion={
+                endlessCatalogStatus?.activeCatalogVersion ?? null
+              }
             />
           )}
 
@@ -3056,6 +3075,7 @@ export const GameApp = () => {
                 onRefresh={() => void loadLeaderboardData()}
                 leaderboardLoading={leaderboardLoading}
                 activeLeaderboardEntries={activeLeaderboardEntries}
+                currentUserRank={activeLeaderboardRank}
                 formatLeaderboardName={formatLeaderboardName}
                 formatStatDuration={formatStatDuration}
               />
@@ -3103,6 +3123,18 @@ export const GameApp = () => {
           helpCardWidthClass={helpCardWidthClass}
           helpCardRef={helpCardRef}
           onClose={() => setIsHelpOpen(false)}
+        />
+      )}
+
+      {isSettingsOpen && (
+        <SettingsOverlay
+          deviceTier={deviceTier}
+          helpCardWidthClass={helpCardWidthClass}
+          settingsCardRef={settingsCardRef}
+          audioEnabled={sfxEnabled}
+          audioBusy={audioPreferenceBusy}
+          onToggleAudio={handleAudioToggle}
+          onClose={() => setIsSettingsOpen(false)}
         />
       )}
 

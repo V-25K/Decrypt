@@ -6,8 +6,8 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <link rel="preload" as="image" href="/background.jpg" fetchpriority="high" />
-    <link rel="preload" as="image" href="/result.jpg" fetchpriority="high" />
+    <link rel="preload" as="image" href="/background.webp" type="image/webp" fetchpriority="high" />
+    <link rel="preload" as="image" href="/result.webp" type="image/webp" fetchpriority="high" />
     <link rel="preload" as="image" href="/snoo.png" fetchpriority="high" />
     <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
     <link rel="preload" as="audio" href="/sounds/buttonClick.wav" type="audio/wav" />
@@ -33,6 +33,12 @@
         background:
           linear-gradient(rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.44)),
           url('/background.jpg') center / cover no-repeat;
+        background:
+          linear-gradient(rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.44)),
+          image-set(
+            url('/background.webp') type('image/webp'),
+            url('/background.jpg') type('image/jpeg')
+          ) center / cover no-repeat;
       }
 
       #root {

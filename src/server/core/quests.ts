@@ -104,6 +104,14 @@ export const updateQuestProgressOnPurchase = async (params: {
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 
+export const updateQuestProgressOnRefund = async (params: {
+  userId: string;
+}): Promise<void> => {
+  const lifetime = await getLifetimeQuestProgress(params.userId);
+  lifetime.lifetimePurchases = Math.max(0, lifetime.lifetimePurchases - 1);
+  await saveLifetimeQuestProgress(params.userId, lifetime);
+};
+
 export const updateQuestProgressOnDailyTopRank = async (params: {
   userId: string;
 }): Promise<void> => {

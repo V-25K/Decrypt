@@ -4,6 +4,7 @@ import type { ChallengeType } from '../../shared/game';
 
 const {
   clearUsedSignatureMock,
+  getBundledEndlessReservationOwnerMock,
   generatePuzzlePhraseMock,
   getDecryptSettingsMock,
   computeGlobalDailyBiasMock,
@@ -25,6 +26,7 @@ const {
   redisSetMock,
 } = vi.hoisted(() => ({
   clearUsedSignatureMock: vi.fn(),
+  getBundledEndlessReservationOwnerMock: vi.fn(),
   generatePuzzlePhraseMock: vi.fn(),
   getDecryptSettingsMock: vi.fn(),
   computeGlobalDailyBiasMock: vi.fn(),
@@ -89,6 +91,10 @@ vi.mock('./difficulty-calibration', () => ({
   computeGlobalDailyBias: computeGlobalDailyBiasMock,
 }));
 
+vi.mock('./endless-reservations', () => ({
+  getBundledEndlessReservationOwner: getBundledEndlessReservationOwnerMock,
+}));
+
 vi.mock('./puzzle-store', () => ({
   clearUsedSignature: clearUsedSignatureMock,
   clearStagedLevelId: clearStagedLevelIdMock,
@@ -128,6 +134,7 @@ const validPhrase = {
 
 afterEach(() => {
   clearUsedSignatureMock.mockReset();
+  getBundledEndlessReservationOwnerMock.mockReset();
   generatePuzzlePhraseMock.mockReset();
   getDecryptSettingsMock.mockReset();
   computeGlobalDailyBiasMock.mockReset();
@@ -167,6 +174,7 @@ describe('generatePuzzleForDate', () => {
     getNextLevelIdMock.mockResolvedValue('lvl_0010');
     getPuzzlePrivateMock.mockResolvedValue(null);
     reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
     redisIncrByMock.mockResolvedValue(1);
     redisGetMock.mockImplementation((key) => {
       if (String(key).includes('daily_challenge_type_seed')) {
@@ -224,6 +232,7 @@ describe('generatePuzzleForDate', () => {
     computeGlobalDailyBiasMock.mockResolvedValue(0);
     getNextLevelIdMock.mockResolvedValue('lvl_0010');
     generatePuzzlePhraseMock.mockRejectedValue(new Error('api down'));
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
     redisIncrByMock.mockResolvedValue(1);
     redisGetMock.mockImplementation((key) => {
       const keyText = String(key);
@@ -248,6 +257,65 @@ describe('generatePuzzleForDate', () => {
     expect(savePuzzleMock).not.toHaveBeenCalled();
     expect(setDailyPointerMock).not.toHaveBeenCalled();
   });
+
+  it('rejects phrases reserved by staged endless candidates before reserving the daily signature', async () => {
+    const challengeTypeSeed = 123456789;
+    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
+    const baseType = expectedQueue[0] ?? 'QUOTE';
+
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 2,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    getNextLevelIdMock.mockResolvedValue('lvl_0011');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    getBundledEndlessReservationOwnerMock
+      .mockReturnValueOnce('endless_0010')
+      .mockReturnValueOnce(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    redisIncrByMock.mockResolvedValue(1);
+    redisGetMock.mockImplementation((key) => {
+      if (String(key).includes('daily_challenge_type_seed')) {
+        return `${challengeTypeSeed}`;
+      }
+      return null;
+    });
+    redisSetMock.mockResolvedValue(false);
+
+    generatePuzzlePhraseMock
+      .mockResolvedValueOnce({
+        text: validPhrase.text,
+        author: 'AUTHOR',
+        challengeType: baseType,
+      })
+      .mockResolvedValueOnce({
+        text: 'HOW VEXINGLY QUICK DAFT ZEBRAS JUMP AT DAWN TODAY',
+        author: 'AUTHOR',
+        challengeType: baseType,
+      });
+
+    buildPuzzleMock.mockReturnValue({
+      puzzlePrivate: {
+        targetText: 'HOW VEXINGLY QUICK DAFT ZEBRAS JUMP AT DAWN TODAY',
+      },
+      puzzlePublic: {},
+    });
+    validatePuzzleMock.mockReturnValue({ valid: true, reasons: [] });
+
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(result.levelId).toBe('lvl_0011');
+    expect(getBundledEndlessReservationOwnerMock).toHaveBeenCalledWith(
+      'THEQUICKBROWNFOXJUMPSOVERLAZYDOGSATNOON'
+    );
+    expect(reserveUsedSignatureMock).toHaveBeenCalledTimes(1);
+    expect(generatePuzzlePhraseMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('injectManualPuzzle', () => {
@@ -261,6 +329,7 @@ describe('injectManualPuzzle', () => {
       timezone: 'UTC',
     });
     getNextLevelIdMock.mockResolvedValue('lvl_0042');
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
     reserveUsedSignatureMock.mockResolvedValue(false);
 
     await expect(
@@ -285,6 +354,7 @@ describe('injectManualPuzzle', () => {
       timezone: 'UTC',
     });
     getNextLevelIdMock.mockResolvedValue('lvl_0043');
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
     getPuzzlePrivateMock.mockResolvedValue(null);
     reserveUsedSignatureMock.mockResolvedValue(true);
     buildPuzzleMock.mockReturnValue({
@@ -309,6 +379,31 @@ describe('injectManualPuzzle', () => {
       'THEQUICKBROWNFOXJUMPSOVERLAZYDOGSATNOON',
       'lvl_0043'
     );
+  });
+
+  it('rejects a manual puzzle when its normalized phrase is reserved by endless staging', async () => {
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 3,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    getNextLevelIdMock.mockResolvedValue('lvl_0044');
+    getBundledEndlessReservationOwnerMock.mockReturnValue('endless_0010');
+
+    await expect(
+      injectManualPuzzle({
+        text: validPhrase.text,
+        author: 'MODERATOR',
+        difficulty: 8,
+        challengeType: 'QUOTE',
+      })
+    ).rejects.toThrow('reserved by endless level endless_0010');
+
+    expect(reserveUsedSignatureMock).not.toHaveBeenCalled();
+    expect(savePuzzleMock).not.toHaveBeenCalled();
   });
 });
 

@@ -85,3 +85,15 @@ export const keySharedLevels = (userId: string) =>
 
 export const keyProcessedOrder = (orderId: string) =>
   `decrypt:payments:processed_order:${orderId}`;
+
+export const keyRefundProcessedOrder = (orderId: string) =>
+  `decrypt:payments:refund_processed_order:${orderId}`;
+
+export const keyGrantedOrderSkus = (orderId: string) =>
+  `decrypt:payments:granted_order_skus:${orderId}`;
+
+export const keyEndlessActiveCatalogVersion =
+  'decrypt:endless:active_catalog_version';
+
+export const keyEndlessCatalogSequence = (catalogVersion: string) =>
+  `decrypt:endless:catalog:${catalogVersion}:sequence`;

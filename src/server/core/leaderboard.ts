@@ -55,15 +55,27 @@ export const computeScore = (params: {
   solveSeconds: number;
   mistakes: number;
   usedPowerups: number;
+}): number => {
+  const safeSolveSeconds = Math.max(0, Math.floor(params.solveSeconds));
+  const safeMistakes = Math.max(0, Math.floor(params.mistakes));
+  const safePowerups = Math.max(0, Math.floor(params.usedPowerups));
+  const speedPoints = Math.round(1200 / (1 + safeSolveSeconds / 120));
+  const mistakeFactor = Math.pow(0.9, safeMistakes);
+  const powerupFactor = Math.pow(0.95, safePowerups);
+  const score = Math.round((100 + speedPoints) * mistakeFactor * powerupFactor);
+  return Math.max(25, score);
+};
+
+const scoreFromReceipt = (receipt: {
+  solveSeconds: number;
+  mistakes: number;
+  usedPowerups: number;
 }): number =>
-  params.solveSeconds + params.mistakes * 30 + params.usedPowerups * 10;
-
-const dailyScoreBasePoints = 1000;
-
-const computeDailyPointsFromSolveIndex = (
-  solveIndex: number,
-  basePoints: number = dailyScoreBasePoints
-): number => Math.max(0, basePoints - solveIndex);
+  computeScore({
+    solveSeconds: receipt.solveSeconds,
+    mistakes: receipt.mistakes,
+    usedPowerups: receipt.usedPowerups,
+  });
 
 const dailyStatsField = (
   userId: string,
@@ -95,6 +107,24 @@ const expireDailyLeaderboardKeys = async (
   ]);
 };
 
+const clearDailyLeaderboardEntry = async (
+  dateKey: string,
+  userId: string
+): Promise<void> => {
+  const statsKey = keyDailyLeaderboardStats(dateKey);
+  await Promise.all([
+    redis.zRem(keyDailyLeaderboard(dateKey), [userId]),
+    redis.hDel(statsKey, [
+      userId,
+      dailyStatsField(userId, 'solveSeconds'),
+      dailyStatsField(userId, 'mistakes'),
+      dailyStatsField(userId, 'usedPowerups'),
+      dailyStatsField(userId, 'runs'),
+    ]),
+  ]);
+  await expireDailyLeaderboardKeys(dateKey, statsKey);
+};
+
 const recomputeDailyStatsFromReceipts = async (params: {
   userId: string;
   dateKey: string;
@@ -104,6 +134,7 @@ const recomputeDailyStatsFromReceipts = async (params: {
   mistakes: number;
   usedPowerups: number;
   runs: number;
+  score: number;
 } | null> => {
   const completed = await redis.hGetAll(keyUserCompleted(params.userId));
   const entries = Object.entries(completed)
@@ -118,6 +149,7 @@ const recomputeDailyStatsFromReceipts = async (params: {
     mistakes: 0,
     usedPowerups: 0,
     runs: 0,
+    score: 0,
   };
   const maxRuns =
     typeof params.targetRuns === 'number' && params.targetRuns > 0
@@ -139,23 +171,31 @@ const recomputeDailyStatsFromReceipts = async (params: {
       mistakes: totals.mistakes + receipt.mistakes,
       usedPowerups: totals.usedPowerups + receipt.usedPowerups,
       runs: totals.runs + 1,
+      score: totals.score + scoreFromReceipt(receipt),
     };
   }
   if (totals.runs === 0) {
+    await clearDailyLeaderboardEntry(params.dateKey, params.userId);
     return null;
   }
   const statsKey = keyDailyLeaderboardStats(params.dateKey);
-  await redis.hSet(statsKey, {
-    [dailyStatsField(params.userId, 'solveSeconds')]: String(
-      totals.solveSeconds
-    ),
-    [dailyStatsField(params.userId, 'mistakes')]: String(totals.mistakes),
-    [dailyStatsField(params.userId, 'usedPowerups')]: String(
-      totals.usedPowerups
-    ),
-    [dailyStatsField(params.userId, 'runs')]: String(totals.runs),
-    [params.userId]: JSON.stringify(totals),
-  });
+  await Promise.all([
+    redis.zAdd(keyDailyLeaderboard(params.dateKey), {
+      member: params.userId,
+      score: totals.score,
+    }),
+    redis.hSet(statsKey, {
+      [dailyStatsField(params.userId, 'solveSeconds')]: String(
+        totals.solveSeconds
+      ),
+      [dailyStatsField(params.userId, 'mistakes')]: String(totals.mistakes),
+      [dailyStatsField(params.userId, 'usedPowerups')]: String(
+        totals.usedPowerups
+      ),
+      [dailyStatsField(params.userId, 'runs')]: String(totals.runs),
+      [params.userId]: JSON.stringify(totals),
+    }),
+  ]);
   await expireDailyLeaderboardKeys(params.dateKey, statsKey);
   return totals;
 };
@@ -175,6 +215,46 @@ const readDailyPlayCount = async (
   return Number.isFinite(parsed) ? Math.floor(parsed) : null;
 };
 
+const numberFromHashField = (
+  raw: string | null | undefined
+): number | null => {
+  if (raw === null || raw === undefined || raw === '') {
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+};
+
+const normalizeDailyRuns = (
+  runs: number | null,
+  hasLegacyStats: boolean
+): number | null => {
+  if (typeof runs !== 'number' || !Number.isFinite(runs)) {
+    return hasLegacyStats ? 1 : null;
+  }
+  const normalized = Math.floor(runs);
+  if (normalized > 0) {
+    return normalized;
+  }
+  return hasLegacyStats ? 1 : null;
+};
+
+const averageDailyStat = (
+  total: number | null,
+  runs: number | null
+): number | null => {
+  if (typeof total !== 'number' || !Number.isFinite(total)) {
+    return null;
+  }
+  if (typeof runs !== 'number' || !Number.isFinite(runs) || runs <= 0) {
+    return Math.round(total);
+  }
+  return Math.round(total / runs);
+};
+
 export const recordDailyScore = async (params: {
   dateKey: string;
   userId: string;
@@ -183,7 +263,9 @@ export const recordDailyScore = async (params: {
   mistakes: number;
   usedPowerups: number;
 }): Promise<void> => {
-  const dailyPoints = computeDailyPointsFromSolveIndex(params.score);
+  const roundScore = Number.isFinite(params.score)
+    ? Math.max(0, Math.round(params.score))
+    : 0;
   const statsKey = keyDailyLeaderboardStats(params.dateKey);
   const runsField = dailyStatsField(params.userId, 'runs');
   const existingRuns = await redis.hGet(statsKey, runsField);
@@ -243,7 +325,7 @@ export const recordDailyScore = async (params: {
     nextUsedPowerups,
     nextRuns,
   ] = await Promise.all([
-    redis.zIncrBy(keyDailyLeaderboard(params.dateKey), params.userId, dailyPoints),
+    redis.zIncrBy(keyDailyLeaderboard(params.dateKey), params.userId, roundScore),
     redis.hIncrBy(
       statsKey,
       dailyStatsField(params.userId, 'solveSeconds'),
@@ -282,9 +364,11 @@ export const incrementAllTimeLevels = async (
 export const recordAllTimeLevelScore = async (params: {
   userId: string;
   levelId: string;
-  solveIndex: number;
+  solveScore: number;
 }): Promise<void> => {
-  const levelScore = computeDailyPointsFromSolveIndex(params.solveIndex);
+  const levelScore = Number.isFinite(params.solveScore)
+    ? Math.max(0, Math.round(params.solveScore))
+    : 0;
   const scoreKey = keyUserEndlessLevelScores(params.userId);
   const initFlag = await redis.hGet(scoreKey, '__initialized');
   if (!initFlag) {
@@ -336,10 +420,16 @@ export const getDailyTop = async (
   mistakes: number | null;
   usedPowerups: number | null;
 }[]> => {
-  const entries = await redis.zRange(keyDailyLeaderboard(dateKey), 0, limit - 1, {
-    by: 'rank',
-    reverse: true,
-  });
+  const fetchLimit = Math.max(limit * 3, limit);
+  const entries = await redis.zRange(
+    keyDailyLeaderboard(dateKey),
+    0,
+    fetchLimit - 1,
+    {
+      by: 'rank',
+      reverse: true,
+    }
+  );
   const entriesWithSnoovatar = await Promise.all(
     entries.map(async (entry) => {
       const rawStats = await redis.hGet(
@@ -373,36 +463,20 @@ export const getDailyTop = async (
           dailyStatsField(entry.member, 'runs')
         ),
       ]);
-      const parsedSolveField =
-        solveField !== null ? Number(solveField) : null;
-      const parsedMistakesField =
-        mistakesField !== null ? Number(mistakesField) : null;
-      const parsedPowerupsField =
-        powerupsField !== null ? Number(powerupsField) : null;
-      const parsedRunsField =
-        runsField !== null ? Number(runsField) : null;
-      if (
-        typeof parsedSolveField === 'number' &&
-        Number.isFinite(parsedSolveField)
-      ) {
+      const parsedSolveField = numberFromHashField(solveField);
+      const parsedMistakesField = numberFromHashField(mistakesField);
+      const parsedPowerupsField = numberFromHashField(powerupsField);
+      const parsedRunsField = numberFromHashField(runsField);
+      if (parsedSolveField !== null) {
         solveSeconds = parsedSolveField;
       }
-      if (
-        typeof parsedMistakesField === 'number' &&
-        Number.isFinite(parsedMistakesField)
-      ) {
+      if (parsedMistakesField !== null) {
         mistakes = parsedMistakesField;
       }
-      if (
-        typeof parsedPowerupsField === 'number' &&
-        Number.isFinite(parsedPowerupsField)
-      ) {
+      if (parsedPowerupsField !== null) {
         usedPowerups = parsedPowerupsField;
       }
-      if (
-        typeof parsedRunsField === 'number' &&
-        Number.isFinite(parsedRunsField)
-      ) {
+      if (parsedRunsField !== null) {
         runs = parsedRunsField;
       }
       if (rawStats) {
@@ -448,17 +522,24 @@ export const getDailyTop = async (
         typeof solveSeconds === 'number' ||
         typeof mistakes === 'number' ||
         typeof usedPowerups === 'number';
-      let normalizedRuns =
-        runs === null && hasLegacyStats ? 1 : runs;
-      const dailyPlayCount = await readDailyPlayCount(entry.member, dateKey);
-      const shouldRepair =
+      let normalizedRuns = normalizeDailyRuns(runs, hasLegacyStats);
+      const needsRepair =
         normalizedRuns === null ||
-        (typeof dailyPlayCount === 'number' &&
-          Number.isFinite(dailyPlayCount) &&
-          normalizedRuns !== null &&
-          normalizedRuns < dailyPlayCount);
-      if (shouldRepair) {
-        const repaired = await recomputeDailyStatsFromReceipts({
+        solveSeconds === null ||
+        mistakes === null ||
+        usedPowerups === null;
+      let repaired:
+        | {
+            solveSeconds: number;
+            mistakes: number;
+            usedPowerups: number;
+            runs: number;
+            score: number;
+          }
+        | null = null;
+      if (needsRepair) {
+        const dailyPlayCount = await readDailyPlayCount(entry.member, dateKey);
+        repaired = await recomputeDailyStatsFromReceipts({
           userId: entry.member,
           dateKey,
           targetRuns: dailyPlayCount,
@@ -468,35 +549,23 @@ export const getDailyTop = async (
           mistakes = repaired.mistakes;
           usedPowerups = repaired.usedPowerups;
           runs = repaired.runs;
+          normalizedRuns = repaired.runs;
         }
-        const repairedHasLegacyStats =
-          typeof solveSeconds === 'number' ||
-          typeof mistakes === 'number' ||
-          typeof usedPowerups === 'number';
-        normalizedRuns =
-          runs === null && repairedHasLegacyStats ? 1 : runs;
       }
-      const averageSolveSeconds =
-        normalizedRuns && typeof solveSeconds === 'number'
-          ? Math.round(solveSeconds / normalizedRuns)
-          : solveSeconds;
-      const averageMistakes =
-        normalizedRuns && typeof mistakes === 'number'
-          ? Math.round(mistakes / normalizedRuns)
-          : mistakes;
-      const averagePowerups =
-        normalizedRuns && typeof usedPowerups === 'number'
-          ? Math.round(usedPowerups / normalizedRuns)
-          : usedPowerups;
-      const usesLegacyScore =
-        normalizedRuns === null && entry.score <= dailyScoreBasePoints;
+      if (normalizedRuns === null) {
+        return null;
+      }
+      const averageSolveSeconds = averageDailyStat(
+        solveSeconds,
+        normalizedRuns
+      );
+      const averageMistakes = averageDailyStat(mistakes, normalizedRuns);
+      const averagePowerups = averageDailyStat(usedPowerups, normalizedRuns);
       const userMeta = await resolveLeaderboardUserMeta(entry.member);
       return {
         userId: entry.member,
         username: userMeta.username,
-        score: usesLegacyScore
-          ? computeDailyPointsFromSolveIndex(entry.score)
-          : entry.score,
+        score: repaired?.score ?? entry.score,
         snoovatarUrl: userMeta.snoovatarUrl,
         solveSeconds: averageSolveSeconds,
         mistakes: averageMistakes,
@@ -504,7 +573,22 @@ export const getDailyTop = async (
       };
     })
   );
-  return entriesWithSnoovatar;
+  return entriesWithSnoovatar
+    .filter(
+      (
+        entry
+      ): entry is {
+        userId: string;
+        username: string | null;
+        score: number;
+        snoovatarUrl: string | null;
+        solveSeconds: number | null;
+        mistakes: number | null;
+        usedPowerups: number | null;
+      } => entry !== null
+    )
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
 };
 
 export const getLevelTop = async (
@@ -531,19 +615,12 @@ export const getLevelTop = async (
       }
 
       const userMeta = await resolveLeaderboardUserMeta(entry.member);
-      const solveIndex =
-        typeof receipt.score === 'number'
-          ? receipt.score
-          : computeScore({
-              solveSeconds: receipt.solveSeconds,
-              mistakes: receipt.mistakes,
-              usedPowerups: receipt.usedPowerups,
-            });
+      const levelScore = scoreFromReceipt(receipt);
 
       return {
         userId: entry.member,
         username: userMeta.username,
-        score: computeDailyPointsFromSolveIndex(solveIndex),
+        score: levelScore,
         snoovatarUrl: userMeta.snoovatarUrl,
         solveSeconds: receipt.solveSeconds,
         mistakes: receipt.mistakes,

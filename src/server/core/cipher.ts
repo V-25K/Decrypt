@@ -1,5 +1,5 @@
-import { alphabet, type CipherType } from '../../shared/game';
-import { randInt, shuffleWithRng, type Rng } from './rng';
+import { alphabet, type CipherType } from '../../shared/game.ts';
+import { randInt, shuffleWithRng, type Rng } from './rng.ts';
 
 const alphabetLetters = alphabet.split('');
 const commonLetters = ['E', 'T', 'A', 'O', 'I', 'N', 'S'] as const;

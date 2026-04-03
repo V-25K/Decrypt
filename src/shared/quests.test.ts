@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { QuestProgress } from './game';
 import {
   isQuestDefinitionComplete,
+  questCatalog,
   questCatalogById,
   questProgressionGroups,
 } from './quests';
@@ -51,6 +52,14 @@ describe('quest catalog', () => {
     ).toBe(false);
   });
 
+  it('keeps the total daily coin rewards capped at 100', () => {
+    const totalDailyCoins = questCatalog
+      .filter((quest) => quest.category === 'daily')
+      .reduce((sum, quest) => sum + quest.reward.coins, 0);
+
+    expect(totalDailyCoins).toBe(100);
+  });
+
   it('evaluates milestone quests from the shared reward catalog', () => {
     const progress = baseProgress();
     progress.lifetimeCoinsSpent = 10000;
@@ -62,7 +71,7 @@ describe('quest catalog', () => {
       isQuestDefinitionComplete(requireQuest('milestone_spent_50000'), progress)
     ).toBe(false);
     const milestoneReward = requireQuest('milestone_spent_10000').reward;
-    expect(milestoneReward.coins).toBe(300);
+    expect(milestoneReward.coins).toBe(125);
     expect(milestoneReward.flair).toBe('Treasure Room');
   });
 });

@@ -9,7 +9,6 @@ import type {
 import { buildPublicPuzzle } from './puzzle';
 import {
   getDailyPointer,
-  getOldestUnplayedLevelId,
   getPuzzlePrivate,
   getPuzzlePublic,
 } from './puzzle-store';
@@ -24,7 +23,14 @@ import {
   saveInventory,
   saveUserProfile,
 } from './state';
-import { clearSessionState, createSessionState, getSessionState, heartsRemaining, saveSessionState } from './session';
+import {
+  clearSessionState,
+  createSessionState,
+  getSessionState,
+  heartsRemaining,
+  saveSessionState,
+  saveSessionTimingState,
+} from './session';
 import {
   applyHammer,
   applyRocket,
@@ -41,6 +47,7 @@ import {
   flawlessBonusCoins,
   heartsPerRun,
   minSolveSeconds,
+  sessionInactivityThresholdMs,
 } from './constants';
 import {
   computeScore,
@@ -64,7 +71,7 @@ import { consumePowerup } from './economy';
 import { z } from 'zod';
 import { canStartChallenge, consumeHeartOnFailure } from './hearts';
 import { saveShareCompletionReceipt } from './share-receipts';
-import { formatDateKey } from './serde';
+import { getEndlessCatalogStatus, getNextEndlessCatalogLevelId } from './endless-catalog';
 
 const assertUserId = (): string => {
   const userId = context.userId;
@@ -156,6 +163,32 @@ const hasLockProgressChanged = (
     }
   }
   return false;
+};
+
+const withTrackedSessionActivity = (
+  session: SessionState,
+  now = Date.now()
+): SessionState => {
+  const safeNow = Math.max(0, Math.floor(now));
+  const previousSeenAt = session.lastSeenAt;
+  if (previousSeenAt <= 0 || safeNow <= previousSeenAt) {
+    return {
+      ...session,
+      lastSeenAt: safeNow,
+    };
+  }
+  const deltaMs = safeNow - previousSeenAt;
+  if (deltaMs > sessionInactivityThresholdMs) {
+    return {
+      ...session,
+      lastSeenAt: safeNow,
+    };
+  }
+  return {
+    ...session,
+    activeMs: session.activeMs + deltaMs,
+    lastSeenAt: safeNow,
+  };
 };
 
 export const updateProfileOnCompletion = (params: {
@@ -272,15 +305,18 @@ export const bootstrapGame = async () => {
     getInventory(userId),
     getDailyPointer(),
   ]);
+  const endlessCatalog = await getEndlessCatalogStatus();
 
   return {
     userId,
     username: context.username ?? null,
+    subredditName: context.subredditName ?? null,
     postId: context.postId ?? null,
     currentDailyLevelId: dailyPointer,
     todayDateKey: new Date().toISOString().slice(0, 10),
     profile,
     inventory,
+    endlessCatalog,
   };
 };
 
@@ -298,10 +334,13 @@ export const loadLevelForUser = async (params: {
   } else if (params.requestedLevelId) {
     levelId = params.requestedLevelId;
   } else {
-    levelId = await getOldestUnplayedLevelId(completed);
+    levelId = await getNextEndlessCatalogLevelId(completed);
   }
 
   if (!levelId) {
+    if (params.mode === 'endless') {
+      throw new Error('Endless catalog unavailable.');
+    }
     throw new Error('No level available.');
   }
 
@@ -326,18 +365,31 @@ export const startSessionForLevel = async (
 ) => {
   const userId = assertUserId();
   const postId = assertPostId();
-  const profile = await getUserProfile(userId);
+  const [profile, activeSession] = await Promise.all([
+    getUserProfile(userId),
+    getSessionState(userId, postId),
+  ]);
   if (mode === 'daily') {
     const completed = await getCompletedLevels(userId);
     if (completed.has(levelId)) {
       throw new Error('Daily challenge already completed.');
     }
   }
+  if (
+    activeSession &&
+    activeSession.activeLevelId === levelId &&
+    activeSession.mode === mode
+  ) {
+    return {
+      ok: true,
+      session: activeSession,
+      heartsRemaining: heartsRemaining(activeSession),
+    };
+  }
   if (!canStartChallenge(profile)) {
     throw new Error('No lives left. Wait for refill.');
   }
   const puzzle = await loadPuzzlePrivate(levelId);
-  await recordLevelPlay(levelId, userId);
   const session = await createSessionState({
     userId,
     postId,
@@ -345,14 +397,6 @@ export const startSessionForLevel = async (
     mode,
     prefilledIndices: puzzle.prefilledIndices,
   });
-  const playedProfile: UserProfile = {
-    ...profile,
-    dailyChallengesPlayed:
-      profile.dailyChallengesPlayed + (mode === 'daily' ? 1 : 0),
-    endlessChallengesPlayed:
-      profile.endlessChallengesPlayed + (mode === 'endless' ? 1 : 0),
-  };
-  await saveUserProfile(userId, playedProfile);
   return {
     ok: true,
     session,
@@ -374,6 +418,20 @@ export const submitGuessForSession = async (params: {
   }
   if (session.activeLevelId !== params.levelId) {
     throw new Error('Session level mismatch.');
+  }
+  if (session.guessCount === 0) {
+    const profile = await getUserProfile(userId);
+    const playedProfile: UserProfile = {
+      ...profile,
+      dailyChallengesPlayed:
+        profile.dailyChallengesPlayed + (session.mode === 'daily' ? 1 : 0),
+      endlessChallengesPlayed:
+        profile.endlessChallengesPlayed + (session.mode === 'endless' ? 1 : 0),
+    };
+    await Promise.all([
+      recordLevelPlay(params.levelId, userId),
+      saveUserProfile(userId, playedProfile),
+    ]);
   }
   await recordQualifiedLevelPlay(params.levelId, userId);
 
@@ -398,8 +456,12 @@ export const submitGuessForSession = async (params: {
     };
   }
 
+  const now = Date.now();
+  const sessionWithActivity = withTrackedSessionActivity(session, now);
   let nextSession = {
-    ...session,
+    ...sessionWithActivity,
+    startTimestamp:
+      session.guessCount === 0 ? now : sessionWithActivity.startTimestamp,
     guessCount: session.guessCount + 1,
   };
 
@@ -544,10 +606,17 @@ export const completeSessionForLevel = async (params: {
     throw new Error('Puzzle is not complete.');
   }
 
-  const solveSeconds = Math.max(
+  const trackedSession = withTrackedSessionActivity(session, Date.now());
+  const activeSolveSeconds = Math.max(
     0,
-    Math.floor((Date.now() - session.startTimestamp) / 1000)
+    Math.floor(trackedSession.activeMs / 1000)
   );
+  const fallbackWallClockSolveSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - trackedSession.startTimestamp) / 1000)
+  );
+  const solveSeconds =
+    activeSolveSeconds > 0 ? activeSolveSeconds : fallbackWallClockSolveSeconds;
   if (solveSeconds < minSolveSeconds) {
     await clearSessionState(userId, postId);
     return {
@@ -556,8 +625,8 @@ export const completeSessionForLevel = async (params: {
       solveSeconds,
       score: 0,
       rewardCoins: 0,
-      mistakes: session.mistakesMade,
-      usedPowerups: session.usedPowerups,
+      mistakes: trackedSession.mistakesMade,
+      usedPowerups: trackedSession.usedPowerups,
       profile,
       inventory,
     };
@@ -571,15 +640,15 @@ export const completeSessionForLevel = async (params: {
       solveSeconds,
       score: 0,
       rewardCoins: 0,
-      mistakes: session.mistakesMade,
-      usedPowerups: session.usedPowerups,
+      mistakes: trackedSession.mistakesMade,
+      usedPowerups: trackedSession.usedPowerups,
       profile,
       inventory,
     };
   }
 
   let rewardCoins = defaultCoinsReward;
-  if (session.mistakesMade === 0) {
+  if (trackedSession.mistakesMade === 0) {
     rewardCoins += flawlessBonusCoins;
   }
   if (solveSeconds <= fastSolveSeconds) {
@@ -588,8 +657,8 @@ export const completeSessionForLevel = async (params: {
 
   const score = computeScore({
     solveSeconds,
-    mistakes: session.mistakesMade,
-    usedPowerups: session.usedPowerups,
+    mistakes: trackedSession.mistakesMade,
+    usedPowerups: trackedSession.usedPowerups,
   });
   const priorFailure = await hasFailedLevel(userId, params.levelId);
 
@@ -598,7 +667,7 @@ export const completeSessionForLevel = async (params: {
     puzzle,
     mode: params.mode,
     solveSeconds,
-    mistakes: session.mistakesMade,
+    mistakes: trackedSession.mistakesMade,
     rewardCoins,
     dateKey: puzzle.dateKey,
     hadPriorFailure: priorFailure,
@@ -607,33 +676,33 @@ export const completeSessionForLevel = async (params: {
   await markLevelCompleted(userId, params.levelId);
   await saveInventory(userId, inventory);
   if (params.mode === 'daily') {
-    const todayDateKey = formatDateKey(new Date());
     await recordDailyScore({
-      dateKey: todayDateKey,
+      dateKey: puzzle.dateKey,
       userId,
       score,
       solveSeconds,
-      mistakes: session.mistakesMade,
-      usedPowerups: session.usedPowerups,
+      mistakes: trackedSession.mistakesMade,
+      usedPowerups: trackedSession.usedPowerups,
     });
   }
-  await recordLevelWin(params.levelId, userId);
-  const hasMeaningfulInteraction = session.guessCount >= 1 || session.usedPowerups > 0;
-  if (session.usedPowerups <= 1 && hasMeaningfulInteraction) {
+  const hasMeaningfulInteraction = trackedSession.guessCount >= 1;
+  if (hasMeaningfulInteraction) {
+    await recordLevelWin(params.levelId, userId);
+  }
+  if (trackedSession.usedPowerups <= 1 && hasMeaningfulInteraction) {
     await recordQualifiedLevelWin(params.levelId, userId);
   }
   if (params.mode === 'endless') {
     await recordAllTimeLevelScore({
       userId,
       levelId: params.levelId,
-      solveIndex: score,
+      solveScore: score,
     });
   }
   if (puzzle.isLogical) {
     await incrementAllTimeLogic(userId, 1);
   }
-  const rankDateKey =
-    params.mode === 'daily' ? formatDateKey(new Date()) : puzzle.dateKey;
+  const rankDateKey = puzzle.dateKey;
   const rankSummary = await getUserRankSummary({
     userId,
     dateKey: rankDateKey,
@@ -654,8 +723,8 @@ export const completeSessionForLevel = async (params: {
     dateKey: puzzle.dateKey,
     solvedWords: puzzle.words.length,
     solveSeconds,
-    mistakes: session.mistakesMade,
-    usedPowerups: session.usedPowerups,
+    mistakes: trackedSession.mistakesMade,
+    usedPowerups: trackedSession.usedPowerups,
     isLogical: puzzle.isLogical,
     mode: params.mode,
   });
@@ -664,9 +733,9 @@ export const completeSessionForLevel = async (params: {
     levelId: params.levelId,
     dateKey: puzzle.dateKey,
     solveSeconds,
-    mistakes: session.mistakesMade,
-    heartsRemaining: heartsRemaining(session),
-    usedPowerups: session.usedPowerups,
+    mistakes: trackedSession.mistakesMade,
+    heartsRemaining: heartsRemaining(trackedSession),
+    usedPowerups: trackedSession.usedPowerups,
     score,
   });
   await clearSessionState(userId, postId);
@@ -677,11 +746,35 @@ export const completeSessionForLevel = async (params: {
     solveSeconds,
     score,
     rewardCoins,
-    mistakes: session.mistakesMade,
-    usedPowerups: session.usedPowerups,
+    mistakes: trackedSession.mistakesMade,
+    usedPowerups: trackedSession.usedPowerups,
     profile: profileWithBestRank,
     inventory,
   };
+};
+
+export const heartbeatSessionForLevel = async (params: {
+  levelId: string;
+  mode: 'daily' | 'endless';
+}) => {
+  const userId = assertUserId();
+  const postId = assertPostId();
+  const session = await getSessionState(userId, postId);
+  if (!session) {
+    return { ok: false };
+  }
+  if (
+    session.activeLevelId !== params.levelId ||
+    session.mode !== params.mode
+  ) {
+    return { ok: false };
+  }
+  const nextSession = withTrackedSessionActivity(session, Date.now());
+  await saveSessionTimingState(userId, postId, {
+    activeMs: nextSession.activeMs,
+    lastSeenAt: nextSession.lastSeenAt,
+  });
+  return { ok: true };
 };
 
 export const usePowerupForSession = async (params: {
@@ -713,6 +806,8 @@ export const usePowerupForSession = async (params: {
         activeLevelId: params.levelId,
         mode: 'daily',
         startTimestamp: Date.now(),
+        activeMs: 0,
+        lastSeenAt: 0,
         mistakesMade: 0,
         shieldIsActive: false,
         revealedIndices: puzzle.prefilledIndices,
@@ -740,7 +835,8 @@ export const usePowerupForSession = async (params: {
   const existingRevealedSet = new Set(existingSession.revealedIndices);
   const beforePadlockStatus = checkPadlockStatus(puzzle, existingRevealedSet);
   const beforeRemainingKeys = remainingKeysByChain(puzzle, existingRevealedSet);
-  let nextSession = existingSession;
+  const now = Date.now();
+  let nextSession = withTrackedSessionActivity(existingSession, now);
 
   let revealedTiles: RevealedTile[] = [];
   let failureReason: string | null = null;
@@ -879,10 +975,13 @@ export const usePowerupForSession = async (params: {
       session: existingSession,
     };
   }
-  await recordQualifiedLevelPlay(params.levelId, userId);
 
   nextSession = {
     ...nextSession,
+    startTimestamp:
+      existingSession.guessCount === 0 && existingSession.usedPowerups === 0
+        ? now
+        : nextSession.startTimestamp,
     usedPowerups: existingSession.usedPowerups + 1,
   };
   const afterPadlockStatus = checkPadlockStatus(
@@ -925,19 +1024,27 @@ export const getCurrentPuzzleView = async (params: {
 }) => {
   const puzzle = await loadPuzzlePrivate(params.levelId);
   if (params.revealedIndices && params.revealedIndices.length > 0) {
-    return buildPublicPuzzle(puzzle, params.revealedIndices);
+    return buildPublicPuzzle(
+      puzzle,
+      params.revealedIndices,
+      params.revealedIndices
+    );
   }
 
   const userId = context.userId;
   const postId = context.postId;
   if (!userId || !postId) {
-    return buildPublicPuzzle(puzzle, []);
+    return buildPublicPuzzle(puzzle, [], []);
   }
   const session = await getSessionState(userId, postId);
   if (!session || session.activeLevelId !== params.levelId) {
-    return buildPublicPuzzle(puzzle, []);
+    return buildPublicPuzzle(puzzle, [], []);
   }
-  return buildPublicPuzzle(puzzle, session.revealedIndices);
+  return buildPublicPuzzle(
+    puzzle,
+    session.revealedIndices,
+    session.revealedIndices
+  );
 };
 
 export const trackShareQuest = async (params: {

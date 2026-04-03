@@ -19,8 +19,7 @@ export const ShopScreen = ({
       <div data-testid="shop-product-list" className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {shopProducts.length === 0 ? (
           <div className="app-surface rounded-lg border app-border p-3 text-center text-xs font-semibold app-text-muted">
-            No bundles available right now. For payment sandbox testing, run upload +
-            playtest so products sync.
+            No bundles are available right now. Please check back soon.
           </div>
         ) : (
           shopProducts.map((product) => {

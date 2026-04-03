@@ -8,7 +8,7 @@ import { awardDailyTopRank } from '../core/leaderboard';
 import { getDailyAutomationEnabled } from '../core/config';
 
 export const schedulerRoutes = new Hono();
-const expectedDailyPosts = 3;
+const expectedDailyPosts = 2;
 
 schedulerRoutes.post('/generate-daily', async (c) => {
   const tomorrow = new Date();
@@ -16,11 +16,11 @@ schedulerRoutes.post('/generate-daily', async (c) => {
   const dateKey = formatDateKey(tomorrow);
   const automationEnabled = await getDailyAutomationEnabled();
   if (!automationEnabled) {
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   }
   try {
     await stagePuzzleForTomorrow();
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   } catch (error) {
     await reportAutomatedGenerationFailure({
       source: 'scheduler.generate-daily',
@@ -35,14 +35,14 @@ schedulerRoutes.post('/publish-daily', async (c) => {
   const dateKey = formatDateKey(new Date());
   const automationEnabled = await getDailyAutomationEnabled();
   if (!automationEnabled) {
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   }
   try {
     await publishStagedPuzzle();
     const yesterday = new Date();
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     await awardDailyTopRank(formatDateKey(yesterday));
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   } catch (error) {
     await reportAutomatedGenerationFailure({
       source: 'scheduler.publish-daily',
@@ -57,12 +57,12 @@ schedulerRoutes.post('/verify-daily', async (c) => {
   const dateKey = formatDateKey(new Date());
   const automationEnabled = await getDailyAutomationEnabled();
   if (!automationEnabled) {
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   }
   try {
     const count = await countPuzzlesForDate(dateKey);
     if (count >= expectedDailyPosts) {
-      return c.json<TaskResponse>({}, 200);
+      return c.json<TaskResponse>({ status: 'ok' }, 200);
     }
 
     await reportAutomatedGenerationFailure({
@@ -73,7 +73,7 @@ schedulerRoutes.post('/verify-daily', async (c) => {
       },
     });
 
-    return c.json<TaskResponse>({}, 200);
+    return c.json<TaskResponse>({ status: 'ok' }, 200);
   } catch (error) {
     await reportAutomatedGenerationFailure({
       source: 'scheduler.verify-daily',

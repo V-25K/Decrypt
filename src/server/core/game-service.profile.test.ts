@@ -31,6 +31,8 @@ const profileFixture = (): UserProfile => ({
   dailySolveTimeTotalSec: 0,
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
+  audioEnabled: true,
+  communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',
 });

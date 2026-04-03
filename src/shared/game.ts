@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  adminActivateEndlessCatalogInputSchema,
+  adminActivateEndlessCatalogResponseSchema,
+  endlessCatalogStatusSchema,
+} from './endless.ts';
 
 export const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -57,6 +62,7 @@ export type ChallengeType = z.infer<typeof challengeTypeSchema>;
 
 export const puzzleSourceSchema = z.union([
   z.literal('AUTO_DAILY'),
+  z.literal('AUTO_ENDLESS'),
   z.literal('MANUAL_INJECTED'),
   z.literal('UNKNOWN_LEGACY'),
 ]);
@@ -112,6 +118,7 @@ export const puzzlePublicTileSchema = z.object({
   isBlind: z.boolean(),
   isGold: z.boolean(),
   isLocked: z.boolean(),
+  isSessionRevealed: z.boolean().optional(),
   hasLock: z.boolean().optional(),
   lockChainId: z.number().int().positive().nullable().optional(),
   lockRemainingKeys: z.number().int().nonnegative().optional(),
@@ -170,6 +177,8 @@ export const userProfileSchema = z.object({
   dailySolveTimeTotalSec: z.number().int().nonnegative(),
   endlessSolveTimeTotalSec: z.number().int().nonnegative(),
   bestOverallRank: z.number().int().nonnegative(),
+  audioEnabled: z.boolean().default(true),
+  communityJoinRewardClaimed: z.boolean(),
   unlockedFlairs: z.array(z.string().min(1)),
   activeFlair: z.string(),
 });
@@ -180,6 +189,8 @@ export const sessionSchema = z.object({
   activeLevelId: z.string().min(1),
   mode: z.union([z.literal('daily'), z.literal('endless')]).default('daily'),
   startTimestamp: z.number().int().nonnegative(),
+  activeMs: z.number().int().nonnegative().default(0),
+  lastSeenAt: z.number().int().nonnegative().default(0),
   mistakesMade: z.number().int().nonnegative(),
   shieldIsActive: z.boolean(),
   revealedIndices: z.array(z.number().int().nonnegative()),
@@ -248,11 +259,13 @@ export type QuestProgress = z.infer<typeof questProgressSchema>;
 export const gameBootstrapResponseSchema = z.object({
   userId: z.string().min(1),
   username: z.string().nullable(),
+  subredditName: z.string().nullable(),
   postId: z.string().nullable(),
   currentDailyLevelId: z.string().nullable(),
   todayDateKey: z.string().min(1),
   profile: userProfileSchema,
   inventory: inventorySchema,
+  endlessCatalog: endlessCatalogStatusSchema,
 });
 
 export const gameLoadLevelInputSchema = z.object({
@@ -275,6 +288,15 @@ export const gameLoadLevelResponseSchema = z.object({
 export const gameStartSessionInputSchema = z.object({
   levelId: z.string().min(1),
   mode: z.union([z.literal('daily'), z.literal('endless')]),
+});
+
+export const gameHeartbeatInputSchema = z.object({
+  levelId: z.string().min(1),
+  mode: z.union([z.literal('daily'), z.literal('endless')]),
+});
+
+export const gameHeartbeatResponseSchema = z.object({
+  ok: z.boolean(),
 });
 
 export const gameStartSessionResponseSchema = z.object({
@@ -415,9 +437,24 @@ export const profileSetActiveFlairInputSchema = z.object({
   flair: z.string(),
 });
 
+export const profileSetAudioEnabledInputSchema = z.object({
+  enabled: z.boolean(),
+});
+
 export const profileSetActiveFlairResponseSchema = z.object({
   success: z.boolean(),
   reason: z.string().nullable(),
+  profile: userProfileSchema,
+});
+
+export const profileSetAudioEnabledResponseSchema =
+  profileSetActiveFlairResponseSchema;
+
+export const profileJoinCommunityResponseSchema = z.object({
+  success: z.boolean(),
+  reason: z.string().nullable(),
+  joined: z.boolean(),
+  rewardCoins: z.number().int().nonnegative(),
   profile: userProfileSchema,
 });
 
@@ -461,6 +498,11 @@ export const adminDifficultyCalibrationResponseSchema = z.object({
     observedHardThreshold: z.number().nonnegative(),
   }),
 });
+
+export {
+  adminActivateEndlessCatalogInputSchema,
+  adminActivateEndlessCatalogResponseSchema,
+};
 
 export const storeProductsResponseSchema = z.object({
   products: z.array(

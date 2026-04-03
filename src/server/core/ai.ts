@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   type ChallengeType,
   challengeTypeSchema,
-} from '../../shared/game';
+} from '../../shared/game.ts';
 import {
   difficultyToTier,
   exceedsPuzzleTotalLength,
@@ -10,9 +10,10 @@ import {
   maxPuzzleTotalLength,
   looksLikeAllowedPhrase,
   maxPuzzleWordLength,
+  quotePromptProfileForDifficulty,
   sanitizePhrase,
   validateQuoteForPhase1,
-} from './content';
+} from './content.ts';
 
 const geminiResponseSchema = z.object({
   candidates: z.array(
@@ -134,6 +135,7 @@ export const generatePuzzlePhrase = async (params: {
 
   const bounds = difficultyLengthBounds(params.difficulty);
   const tier = difficultyToTier(params.difficulty);
+  const promptProfile = quotePromptProfileForDifficulty(params.difficulty);
   const challengeTypeList = aiChallengeTypePool.join(', ');
 
   const promptRules = {
@@ -158,7 +160,16 @@ export const generatePuzzlePhrase = async (params: {
       banned_words: bannedWords,
       max_total_length: maxPuzzleTotalLength,
       max_token_length: maxPuzzleWordLength,
-      min_unique_words: 2,
+      recommended_word_count_range: [
+        promptProfile.wordCountBounds.min,
+        promptProfile.wordCountBounds.max,
+      ],
+      recommended_letter_count_range: [
+        promptProfile.letterBounds.min,
+        promptProfile.letterBounds.max,
+      ],
+      recommended_min_unique_words: promptProfile.recommendedMinUniqueWords,
+      repeated_whole_words: 'avoid',
       requires_repeated_letter: true,
     },
     hints: {
@@ -166,24 +177,32 @@ export const generatePuzzlePhrase = async (params: {
       preferred_type_mode: 'strict_required',
       safety_mode: params.safetyMode,
       level_id: params.levelId,
+      style_guidance:
+        tier === 'easy'
+          ? 'Prefer a short, punchy saying or quote fragment. Avoid long clauses.'
+          : tier === 'medium'
+            ? 'Prefer a compact full thought with strong word variety.'
+            : 'Prefer a dense but still natural line with high word variety.',
     },
   };
   const endpoint = new URL(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
   );
   endpoint.searchParams.set('key', params.apiKey);
-  const safeEndpoint = new URL(endpoint.toString());
-  safeEndpoint.searchParams.set('key', 'REDACTED');
   const instruction =
     'Return JSON only. No markdown or prose. ' +
     'Output keys: target_string, author, challenge_type. ' +
     `challenge_type must be one of: ${challengeTypeList}. ` +
     'challenge_type must equal preferred_challenge_type. ' +
+    `Target ${promptProfile.wordCountBounds.min}-${promptProfile.wordCountBounds.max} words, ` +
+    `${promptProfile.letterBounds.min}-${promptProfile.letterBounds.max} letters, and ` +
+    `${bounds.min}-${bounds.max} total characters. ` +
+    `Use at least ${promptProfile.recommendedMinUniqueWords} unique words and avoid repeating whole words. ` +
+    'Every word should be short enough for mobile and the phrase must contain at least one repeated letter overall. ' +
     `RULES=${JSON.stringify(promptRules)}`;
 
   let response: Response;
   try {
-    console.log(`[generatePuzzlePhrase] request=${safeEndpoint.toString()}`);
     response = await fetch(endpoint.toString(), {
       method: 'POST',
       headers: {
@@ -196,7 +215,7 @@ export const generatePuzzlePhrase = async (params: {
           },
         ],
         generationConfig: {
-          temperature: 0.7,
+          temperature: 0.45,
           responseMimeType: 'application/json',
         },
       }),

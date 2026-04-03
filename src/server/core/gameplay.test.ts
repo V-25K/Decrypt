@@ -53,6 +53,8 @@ const buildSession = (
   activeLevelId: levelId,
   mode: 'daily',
   startTimestamp: 0,
+  activeMs: 0,
+  lastSeenAt: 0,
   mistakesMade: 0,
   shieldIsActive: false,
   revealedIndices,

@@ -28,3 +28,15 @@ devvit_logs_capture*.txt
 # Local workspace instructions / tooling
 AGENTS.md
 tools/
+
+# Local one-off debugging scripts (keep production/admin debug endpoints versioned)
+scripts/debug-local/
+
+# Local release exclusions for not-yet-shipped server tooling/catalog work
+scripts/
+src/server/catalog/
+src/server/core/debug/
+src/server/core/endless-*.ts
+src/server/core/endless-*.test.ts
+src/shared/endless.ts
+src/server/trpc/routers/admin.debug.ts

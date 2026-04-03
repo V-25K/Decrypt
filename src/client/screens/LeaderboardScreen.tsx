@@ -19,6 +19,7 @@ type LeaderboardScreenProps = {
   onRefresh: () => void;
   leaderboardLoading: boolean;
   activeLeaderboardEntries: LeaderboardEntry[];
+  currentUserRank: number | null;
   formatLeaderboardName: (entry: { username?: string | null; userId: string }) => string;
   formatStatDuration: (seconds: number | null | undefined) => string;
 };
@@ -29,6 +30,7 @@ export const LeaderboardScreen = ({
   onRefresh,
   leaderboardLoading,
   activeLeaderboardEntries,
+  currentUserRank,
   formatLeaderboardName,
   formatStatDuration,
 }: LeaderboardScreenProps) => (
@@ -83,7 +85,7 @@ export const LeaderboardScreen = ({
             <div className="app-text-muted text-[9px] font-black uppercase">Player</div>
             <div className="app-text-muted text-right text-[9px] font-black uppercase">Score</div>
             <div className="app-text-muted text-right text-[9px] font-black uppercase">
-              {leaderboardTab === 'daily' ? 'Time' : 'Levels'}
+              {leaderboardTab === 'daily' ? 'Avg. Time' : 'Levels'}
             </div>
           </div>
         )}
@@ -106,6 +108,11 @@ export const LeaderboardScreen = ({
                       <img
                         src={entry.snoovatarUrl}
                         alt="Player snoovatar"
+                        loading={index < 4 ? 'eager' : 'lazy'}
+                        decoding="async"
+                        fetchPriority={index < 4 ? 'high' : 'low'}
+                        width={32}
+                        height={32}
                         className="h-full w-full object-cover"
                         onError={(event) => {
                           event.currentTarget.style.display = 'none';
@@ -128,6 +135,18 @@ export const LeaderboardScreen = ({
           </div>
         )}
       </div>
+      <footer className="app-surface-subtle mt-2 shrink-0 rounded-lg border app-border px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="app-text-muted text-[10px] font-black uppercase tracking-[0.03em]">
+            Your {leaderboardTab === 'daily' ? 'Daily' : 'Endless'} Rank
+          </span>
+          <span className="app-text text-sm font-black">
+            {typeof currentUserRank === 'number' && currentUserRank > 0
+              ? `#${currentUserRank}`
+              : '--'}
+          </span>
+        </div>
+      </footer>
     </main>
   </section>
 );

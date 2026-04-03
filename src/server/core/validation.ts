@@ -1,10 +1,10 @@
-import type { PuzzlePrivate } from '../../shared/game';
+import type { PuzzlePrivate } from '../../shared/game.ts';
 import {
   exceedsPuzzleTotalLength,
   hasWordLongerThan,
   maxPuzzleTotalLength,
   maxPuzzleWordLength,
-} from './content';
+} from './content.ts';
 
 const uniqueLetters = (text: string): Set<string> => {
   const set = new Set<string>();

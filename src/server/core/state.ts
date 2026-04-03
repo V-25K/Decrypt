@@ -114,6 +114,8 @@ export const defaultUserProfile = (): UserProfile =>
     dailySolveTimeTotalSec: 0,
     endlessSolveTimeTotalSec: 0,
     bestOverallRank: 0,
+    audioEnabled: true,
+    communityJoinRewardClaimed: false,
     unlockedFlairs: [],
     activeFlair: '',
   });
@@ -185,6 +187,8 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
       dailySolveTimeTotalSec: `${profile.dailySolveTimeTotalSec}`,
       endlessSolveTimeTotalSec: `${profile.endlessSolveTimeTotalSec}`,
       bestOverallRank: `${profile.bestOverallRank}`,
+      audioEnabled: profile.audioEnabled ? '1' : '0',
+      communityJoinRewardClaimed: profile.communityJoinRewardClaimed ? '1' : '0',
       unlockedFlairs: JSON.stringify(profile.unlockedFlairs),
       activeFlair: profile.activeFlair,
     });
@@ -219,6 +223,9 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
     dailySolveTimeTotalSec: numberFromHash(hash, 'dailySolveTimeTotalSec', 0),
     endlessSolveTimeTotalSec: numberFromHash(hash, 'endlessSolveTimeTotalSec', 0),
     bestOverallRank: numberFromHash(hash, 'bestOverallRank', 0),
+    audioEnabled: stringFromHash(hash, 'audioEnabled', '1') === '1',
+    communityJoinRewardClaimed:
+      stringFromHash(hash, 'communityJoinRewardClaimed', '0') === '1',
     unlockedFlairs: stringArrayFromHash(hash, 'unlockedFlairs'),
     activeFlair: stringFromHash(hash, 'activeFlair', ''),
   });
@@ -267,6 +274,10 @@ export const saveUserProfile = async (
     dailySolveTimeTotalSec: `${normalizedProfile.dailySolveTimeTotalSec}`,
     endlessSolveTimeTotalSec: `${normalizedProfile.endlessSolveTimeTotalSec}`,
     bestOverallRank: `${normalizedProfile.bestOverallRank}`,
+    audioEnabled: normalizedProfile.audioEnabled ? '1' : '0',
+    communityJoinRewardClaimed: normalizedProfile.communityJoinRewardClaimed
+      ? '1'
+      : '0',
     unlockedFlairs: JSON.stringify(normalizedProfile.unlockedFlairs),
     activeFlair: normalizedProfile.activeFlair,
   });
@@ -327,8 +338,20 @@ export const markSkuPurchased = async (
   });
 };
 
+export const unmarkSkuPurchased = async (
+  userId: string,
+  sku: string
+): Promise<void> => {
+  await redis.hDel(keyUserPurchases(userId), [sku]);
+};
+
 export const getCompletedLevels = async (userId: string): Promise<Set<string>> => {
   const fields = await redis.hKeys(keyUserCompleted(userId));
+  return new Set(fields);
+};
+
+export const getFailedLevels = async (userId: string): Promise<Set<string>> => {
+  const fields = await redis.hKeys(keyUserFailedLevels(userId));
   return new Set(fields);
 };
 

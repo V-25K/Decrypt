@@ -8,6 +8,7 @@ export const heartEmoji = '\u{2764}\u{FE0F}';
 export const emptyHeartGlyph = '\u2661';
 
 export const heartRefillIntervalMs = 30 * 60 * 1000;
+export const challengeHeartbeatIntervalMs = 10 * 1000;
 export const inlineMaxWordsPerLine = 8;
 export const maxWordTileColumns = 12;
 
@@ -32,35 +33,40 @@ export const powerupIcon: Record<PowerupType, string> = {
   rocket: '\u{1F680}',
 };
 
-export const helpSections = [
+export const helpSlides = [
   {
-    title: 'How Decrypt Works',
-    lines: [
-      'Tap a blank tile, then type a letter using your device keyboard.',
-      'Matching numbers always map to the same letter.',
-    ],
+    id: 'guess',
+    stepLabel: 'Step 1',
+    title: 'Pick a tile and type',
+    description:
+      'Tap a blank tile, then enter a letter. The highlighted tile is where your next guess goes.',
+    hint: 'You can play this way in both inline and expanded mode.',
   },
   {
-    title: 'Goal',
-    lines: ['Solve the full phrase before all mistakes are used.'],
+    id: 'match',
+    stepLabel: 'Step 2',
+    title: 'Match repeated numbers',
+    description:
+      'The same number always stands for the same letter, so one good guess helps across the whole phrase.',
+    hint: 'If 12 becomes S once, every 12 should be S.',
   },
   {
-    title: 'Powerups',
-    lines: [
-      '\u{1F528} Hammer: Reveal one selected tile.',
-      '\u{1FA84} Wand: Reveal a helpful letter.',
-      '\u{1F6E1}\u{FE0F} Shield: Blocks one wrong guess.',
-      '\u{1F680} Rocket: Reveals multiple tiles.',
-    ],
+    id: 'survive',
+    stepLabel: 'Step 3',
+    title: 'Protect your mistakes',
+    description:
+      'Solve the phrase before your mistakes run out. Powerups can reveal tiles or save a risky move.',
+    hint: `${powerupIcon.hammer} Hammer targets one tile. ${powerupIcon.wand} Wand reveals a letter. ${powerupIcon.shield} Shield blocks one miss. ${powerupIcon.rocket} Rocket reveals multiple tiles.`,
   },
   {
-    title: 'Bundle + Shop',
-    lines: [
-      'Bundles give value packs for coins and powerups.',
-      'Cart opens the shop.',
-    ],
+    id: 'finish',
+    stepLabel: 'Step 4',
+    title: 'Finish and climb',
+    description:
+      'Complete the challenge to lock in your result, earn coins, and move up the leaderboard.',
+    hint: 'Cleaner and faster solves rank better.',
   },
-];
+] as const;
 
 export const endlessPreviewLevels = Array.from(
   { length: 12 },

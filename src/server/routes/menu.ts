@@ -6,7 +6,6 @@ import {
   getLastGeneratedChallengeDetails,
   publishLastGeneratedChallenge,
   rerollAndPublish,
-  resetAllStoredData,
 } from '../core/admin';
 import type { MenuItemRequest } from '@devvit/web/shared';
 import { hasAdminAccess } from '../core/admin-auth';
@@ -173,30 +172,4 @@ menu.post('/mod-inject', async (c) => {
     },
     200
   );
-});
-
-menu.post('/mod-reset-data', async (c) => {
-  await c.req.json<MenuItemRequest>();
-  const deny = await requireAdmin();
-  if (deny) {
-    return c.json<UiResponse>(deny, 200);
-  }
-  try {
-    const summary = await resetAllStoredData();
-    return c.json<UiResponse>(
-      {
-        showToast: `Reset complete. Deleted ${summary.deletedKeys} keys.`,
-      },
-      200
-    );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Error resetting stored data: ${reason}`);
-    return c.json<UiResponse>(
-      {
-        showToast: `Failed to reset stored data: ${reason}`,
-      },
-      200
-    );
-  }
 });
