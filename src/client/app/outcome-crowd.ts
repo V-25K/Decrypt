@@ -23,13 +23,6 @@ export type OutcomeCrowdBubble = {
   minY: number;
   maxY: number;
   backgroundColor: string;
-  driftPhase: number;
-  driftAmplitudeX: number;
-  driftAmplitudeY: number;
-  driftPeriodX: number;
-  driftPeriodY: number;
-  springStrength: number;
-  velocityDamping: number;
   isPodium: boolean;
 };
 
@@ -38,7 +31,6 @@ export type OutcomeCrowdViewport = {
   height: number;
 };
 
-export const outcomeCrowdGravity = 0.18;
 export const outcomeCrowdCollisionPasses = 5;
 const outcomeCrowdCollisionPadding = 1;
 
@@ -254,12 +246,9 @@ const layoutOutcomeCrowdBubbles = (
         continue;
       }
 
-      const supportedAboveAnotherBall =
-        candidateY < floorY - bubble.radius - 1;
       const score =
         candidateY -
-        Math.abs(candidateX - preferredX) * (compactViewport ? 0.18 : 0.14) +
-        (supportedAboveAnotherBall ? 18 : 0);
+        Math.abs(candidateX - preferredX) * (compactViewport ? 0.18 : 0.14);
 
       if (score > bestScore) {
         bestScore = score;
@@ -328,31 +317,15 @@ export const buildOutcomeCrowdBubbles = (
       minY: radius,
       maxY: viewport.height - radius,
       backgroundColor,
-      driftPhase: 0,
-      driftAmplitudeX: Math.min(26, viewport.width * 0.03),
-      driftAmplitudeY: 0,
-      driftPeriodX: 0,
-      driftPeriodY: 0,
-      springStrength: isPodium ? 0.0032 : 0.0024,
-      velocityDamping: isPodium ? 0.986 : 0.982,
       isPodium,
     };
   });
 
-  return layoutOutcomeCrowdBubbles(crowdBubbles, viewport).map(
-    (bubble, index) => {
-      const jitter =
-        Math.sin((index + 1) * 1.41) *
-        Math.min(bubble.driftAmplitudeX, viewport.width * 0.025);
-      return {
-        ...bubble,
-        x: clampNumber(bubble.anchorX + jitter, bubble.minX, bubble.maxX),
-        y:
-          bubble.radius +
-          Math.min(viewport.height * 0.16, 12 + (index % 4) * 10),
-        vx: Math.cos((index + 1) * 1.27) * 0.35,
-        vy: 0,
-      };
-    }
-  );
+  return layoutOutcomeCrowdBubbles(crowdBubbles, viewport).map((bubble) => ({
+    ...bubble,
+    x: bubble.anchorX,
+    y: bubble.anchorY,
+    vx: 0,
+    vy: 0,
+  }));
 };

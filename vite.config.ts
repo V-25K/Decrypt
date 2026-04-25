@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 import { devvit } from '@devvit/start/vite';
 
+const isRollupWatchMode = process.env.ROLLUP_WATCH === 'true';
+
 const normalizeChunkPath = (id: string): string => id.replaceAll('\\', '/');
 
 const manualChunks = (id: string): string | undefined => {
@@ -42,12 +44,18 @@ export default defineConfig({
     devvit({
       client: {
         build: {
+          ...(isRollupWatchMode ? { sourcemap: false } : {}),
           rollupOptions: {
             output: {
               manualChunks,
               sourcemapFileNames: '[name]-[hash].js.map',
             },
           },
+        },
+      },
+      server: {
+        build: {
+          ...(isRollupWatchMode ? { sourcemap: false, minify: false } : {}),
         },
       },
     }),

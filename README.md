@@ -24,6 +24,14 @@ Daily cryptogram-style puzzle game built for Reddit using Devvit Web.
 - Terms: `TERMS_AND_CONDITIONS.md`
 - Privacy: `PRIVACY_POLICY.md`
 
+## Latest Patch
+- Better scoring so completed challenges always earn points.
+- More reliable leaderboard behavior, including top-player focus and clearer rank visibility.
+- Visual step-by-step help overlay instead of a text-only instructions card.
+- Persistent audio setting saved per player profile.
+- Stronger challenge/session persistence and result-screen reliability fixes.
+- Improved daily automation and publish safeguards for scheduled challenge posting.
+
 ## Versions
 - 0.1.0
   - Modularized client architecture and improved inline performance.

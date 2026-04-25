@@ -24,4 +24,11 @@ describe('parseDailyAutomationSetting', () => {
     expect(parseDailyAutomationSetting('0')).toBe(false);
     expect(parseDailyAutomationSetting('off')).toBe(false);
   });
+
+  it('parses wrapped select-style values from app settings', () => {
+    expect(parseDailyAutomationSetting(['disabled'])).toBe(false);
+    expect(parseDailyAutomationSetting({ value: 'disabled' })).toBe(false);
+    expect(parseDailyAutomationSetting({ value: ['disabled'] })).toBe(false);
+    expect(parseDailyAutomationSetting({ value: 'enabled' })).toBe(true);
+  });
 });

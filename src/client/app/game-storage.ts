@@ -10,7 +10,7 @@ export type PersistedOutcomeState = {
 };
 
 const expandedScreenIntentKey = 'decrypt-expanded-screen-intent';
-const expandedScreenIntentTtlMs = 15000;
+const expandedScreenIntentTtlMs = 5000;
 const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
 const correctGuessStateStorageKeyPrefix = 'decrypt-correct-guess-tiles-v1:';
 

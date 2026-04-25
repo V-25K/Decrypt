@@ -96,7 +96,7 @@ describe('generatePuzzlePhrase', () => {
         JSON.stringify(
           geminiResponseWithText(
             JSON.stringify({
-              target_string: 'THE QUICK BROWN FOX JUMPS OVER LAZY DOGS',
+              target_string: 'NEVER SETTLE FOR LESS THAN YOUR BEST TODAY',
               author: 'TEST AUTHOR',
               challenge_type: 'MOVIE_LINE',
             })
@@ -110,9 +110,211 @@ describe('generatePuzzlePhrase', () => {
     const phrase = await generatePuzzlePhrase(baseParams());
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(phrase).toEqual({
-      text: 'THE QUICK BROWN FOX JUMPS OVER LAZY DOGS',
+      text: 'NEVER SETTLE FOR LESS THAN YOUR BEST TODAY',
       author: 'TEST AUTHOR',
       challengeType: 'MOVIE_LINE',
     });
+  });
+
+  it('uses a lower temperature for easy difficulty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'SEE THE TREE BY THE SEA',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generatePuzzlePhrase({
+      ...baseParams(),
+      difficulty: 2,
+      difficultyLabel: 'difficulty 2 of 10',
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body ? JSON.parse(String(request.body)) : null;
+    expect(body?.generationConfig?.temperature).toBe(0.3);
+  });
+
+  it('uses a higher temperature for expert difficulty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'BOLD THINKERS NAVIGATE UNCERTAIN WORLDS WITH GRIT',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generatePuzzlePhrase({
+      ...baseParams(),
+      difficulty: 9,
+      difficultyLabel: 'difficulty 9 of 10',
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body ? JSON.parse(String(request.body)) : null;
+    expect(body?.generationConfig?.temperature).toBe(0.65);
+  });
+
+  it('uses flexible prompt guidance instead of forcing the old hard length bands', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'CRYPTIC JAZZ PHANTOMS VEX BRIGHT MINDS AT MIDNIGHT',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generatePuzzlePhrase({
+      ...baseParams(),
+      difficulty: 8,
+      difficultyLabel: 'difficulty 8 of 10',
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body ? JSON.parse(String(request.body)) : null;
+    const instruction = body?.contents?.[0]?.parts?.[0]?.text ?? '';
+
+    expect(instruction).toContain('usually 28-48 total characters');
+    expect(instruction).toContain('Anything within 20-');
+    expect(instruction).toContain('Do not force hard or expert lines to be long');
+    expect(instruction).toContain('"length_policy":"soft_recommendation_not_hard_gate"');
+  });
+
+  it('passes Gemini safety settings derived from the requested safety mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'NEVER SETTLE FOR LESS THAN YOUR BEST TODAY',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generatePuzzlePhrase(baseParams());
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body ? JSON.parse(String(request.body)) : null;
+    expect(body?.safetySettings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'HARM_CATEGORY_HATE_SPEECH',
+          threshold: 'BLOCK_LOW_AND_ABOVE',
+        }),
+        expect.objectContaining({
+          category: 'HARM_CATEGORY_HARASSMENT',
+          threshold: 'BLOCK_LOW_AND_ABOVE',
+        }),
+      ])
+    );
+  });
+
+  it('normalizes object-shaped safety modes before building safety settings', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'NEVER SETTLE FOR LESS THAN YOUR BEST TODAY',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generatePuzzlePhrase({
+      ...baseParams(),
+      safetyMode: { value: 'strict' } as unknown as string,
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    const body = request?.body ? JSON.parse(String(request.body)) : null;
+    expect(body?.safetySettings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'HARM_CATEGORY_HATE_SPEECH',
+          threshold: 'BLOCK_LOW_AND_ABOVE',
+        }),
+      ])
+    );
+  });
+
+  it('rejects candidates containing banned exact words', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'NEVER KILL THE VIBE TONIGHT',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generatePuzzlePhrase(baseParams())).rejects.toThrow(
+      'missing candidate in single-item batch'
+    );
+  });
+
+  it('rejects candidates containing banned substrings', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          geminiResponseWithText(
+            JSON.stringify({
+              target_string: 'BRIGHT CUNTFISH COMETS GLOW',
+              author: 'TEST AUTHOR',
+              challenge_type: 'MOVIE_LINE',
+            })
+          )
+        ),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generatePuzzlePhrase(baseParams())).rejects.toThrow(
+      'missing candidate in single-item batch'
+    );
   });
 });

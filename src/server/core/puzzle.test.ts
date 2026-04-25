@@ -4,6 +4,14 @@ import {
   buildPuzzle,
   chooseGoldIndex,
   normalizePadlockChains,
+  computeObstructionBudget,
+  spendBudget,
+  remainingBudget,
+  ObstructionCosts,
+  BLIND_TILE_COST,
+  PADLOCK_CHAIN_COST,
+  PADLOCK_KEY_EASY_DISCOUNT,
+  PREFILL_REMOVAL_COST,
 } from './puzzle';
 
 describe('puzzle', () => {
@@ -39,6 +47,36 @@ describe('puzzle', () => {
     ).length;
 
     expect(visibleLetterCount).toBeGreaterThan(0);
+  });
+
+  it('does not reveal blind tiles in fallback starter selection', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_0100_blind_fallback',
+      dateKey: '2026-02-26',
+      text: 'SOLVE THIS IF YOU CAN',
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+
+    generated.puzzlePrivate.prefilledIndices = [];
+    const firstLetterIndex = generated.puzzlePrivate.tiles.find(
+      (tile) => tile.isLetter
+    )?.index;
+    if (firstLetterIndex === undefined) {
+      throw new Error('Expected at least one letter tile in generated puzzle');
+    }
+    generated.puzzlePrivate.blindIndices = [firstLetterIndex];
+    const view = buildPublicPuzzle(generated.puzzlePrivate, []);
+    const revealedLetterTiles = view.tiles.filter(
+      (tile) => tile.isLetter && tile.displayChar !== '_'
+    );
+
+    expect(revealedLetterTiles.length).toBeGreaterThan(0);
+    expect(revealedLetterTiles.some((tile) => tile.index === firstLetterIndex)).toBe(
+      false
+    );
   });
 
   it('normalizes legacy word-index padlock chains into tile-index chains', () => {
@@ -138,7 +176,7 @@ describe('puzzle', () => {
     expect(new Set(blindLetters).size).toBe(blindLetters.length);
   });
 
-  it('chooses gold index using rng across candidate pool', () => {
+  it('chooses gold index from medium-frequency letters when available', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0107',
       dateKey: '2026-02-26',
@@ -149,10 +187,16 @@ describe('puzzle', () => {
       skipSolvabilityCheck: true,
     });
     const tiles = generated.puzzlePrivate.tiles;
-    const candidates = tiles.filter((tile) => tile.isLetter).map((tile) => tile.index);
     const picked = chooseGoldIndex(tiles, [], [], () => 0.9999);
-    const lastCandidate = candidates[candidates.length - 1];
-    expect(picked).toBe(lastCandidate);
+    expect(picked).not.toBeNull();
+    const pickedTile = tiles.find((tile) => tile.index === picked);
+    if (!pickedTile || !pickedTile.isLetter) {
+      throw new Error('Expected a picked gold letter tile');
+    }
+    const pickedFrequency = tiles.filter(
+      (tile) => tile.isLetter && tile.char === pickedTile.char
+    ).length;
+    expect(Math.abs(pickedFrequency - 3)).toBeLessThanOrEqual(1);
   });
 
   it('returns null gold index when all letters are blocked', () => {
@@ -202,5 +246,207 @@ describe('puzzle', () => {
       source: 'AUTO_DAILY',
     });
     expect(generated.puzzlePrivate.source).toBe('AUTO_DAILY');
+  });
+});
+
+describe('obstruction budget system', () => {
+  it('computes budget for warmup tier with low crypto hardness', () => {
+    const budget = computeObstructionBudget({
+      tier: 'warmup',
+      difficulty: 2,
+      cipherType: 'shift',
+      phraseUniqueLetters: 8,
+      phraseOneLetterWords: 1,
+      phraseSuffixCount: 2,
+      cryptoHardness: 0.3,
+    });
+
+    // Easier/helper-rich text now earns more obstruction room instead of less.
+    expect(budget.total).toBe(14);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('computes budget for medium tier with moderate crypto hardness', () => {
+    const budget = computeObstructionBudget({
+      tier: 'medium',
+      difficulty: 5,
+      cipherType: 'random',
+      phraseUniqueLetters: 12,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 1,
+      cryptoHardness: 0.5,
+    });
+
+    expect(budget.total).toBe(40);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('computes budget for hard tier with high crypto hardness', () => {
+    const budget = computeObstructionBudget({
+      tier: 'hard',
+      difficulty: 9,
+      cipherType: 'random',
+      phraseUniqueLetters: 18,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 0,
+      cryptoHardness: 0.8,
+    });
+
+    expect(budget.total).toBe(75);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('ensures budget never goes negative', () => {
+    const budget = computeObstructionBudget({
+      tier: 'warmup',
+      difficulty: 1,
+      cipherType: 'shift',
+      phraseUniqueLetters: 6,
+      phraseOneLetterWords: 3,
+      phraseSuffixCount: 5,
+      cryptoHardness: 0.9,
+    });
+
+    expect(budget.total).toBe(11);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('spends budget correctly', () => {
+    const budget = computeObstructionBudget({
+      tier: 'medium',
+      difficulty: 5,
+      cipherType: 'random',
+      phraseUniqueLetters: 10,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 0,
+      cryptoHardness: 0.4,
+    });
+
+    expect(budget.total).toBe(37);
+    expect(budget.spent).toBe(0);
+
+    spendBudget(budget, BLIND_TILE_COST);
+    expect(budget.spent).toBe(8);
+    expect(remainingBudget(budget)).toBe(29);
+
+    spendBudget(budget, PADLOCK_CHAIN_COST);
+    expect(budget.spent).toBe(26);
+    expect(remainingBudget(budget)).toBe(11);
+  });
+
+  it('does not exceed total budget when spending', () => {
+    const budget = computeObstructionBudget({
+      tier: 'warmup',
+      difficulty: 2,
+      cipherType: 'shift',
+      phraseUniqueLetters: 8,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 0,
+      cryptoHardness: 0.2,
+    });
+
+    expect(budget.total).toBe(9);
+
+    spendBudget(budget, 10);
+    expect(budget.spent).toBe(9);
+
+    spendBudget(budget, 10);
+    expect(budget.spent).toBe(9); // Clamped to total
+    expect(remainingBudget(budget)).toBe(0);
+  });
+
+  it('ignores negative or zero spend amounts', () => {
+    const budget = computeObstructionBudget({
+      tier: 'medium',
+      difficulty: 5,
+      cipherType: 'random',
+      phraseUniqueLetters: 10,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 0,
+      cryptoHardness: 0.4,
+    });
+
+    expect(budget.spent).toBe(0);
+
+    spendBudget(budget, 0);
+    expect(budget.spent).toBe(0);
+
+    spendBudget(budget, -5);
+    expect(budget.spent).toBe(0);
+  });
+
+  it('exports correct cost constants', () => {
+    expect(BLIND_TILE_COST).toBe(8);
+    expect(PADLOCK_CHAIN_COST).toBe(18);
+    expect(PADLOCK_KEY_EASY_DISCOUNT).toBe(4);
+    expect(PREFILL_REMOVAL_COST).toBe(5);
+  });
+
+  it('exports ObstructionCosts object with all constants', () => {
+    expect(ObstructionCosts.BLIND_TILE).toBe(8);
+    expect(ObstructionCosts.PADLOCK_CHAIN).toBe(18);
+    expect(ObstructionCosts.PADLOCK_KEY_EASY_DISCOUNT).toBe(4);
+    expect(ObstructionCosts.PREFILL_REMOVAL).toBe(5);
+  });
+
+  it('tracks budget correctly across multiple spends', () => {
+    const budget = computeObstructionBudget({
+      tier: 'hard',
+      difficulty: 8,
+      cipherType: 'random',
+      phraseUniqueLetters: 15,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 1,
+      cryptoHardness: 0.6,
+    });
+
+    expect(budget.total).toBe(77);
+
+    // Add 2 padlocks
+    spendBudget(budget, PADLOCK_CHAIN_COST);
+    spendBudget(budget, PADLOCK_CHAIN_COST);
+    expect(budget.spent).toBe(36);
+    expect(remainingBudget(budget)).toBe(41);
+
+    // Add 3 blind tiles
+    spendBudget(budget, BLIND_TILE_COST);
+    spendBudget(budget, BLIND_TILE_COST);
+    spendBudget(budget, BLIND_TILE_COST);
+    expect(budget.spent).toBe(60);
+    expect(remainingBudget(budget)).toBe(17);
+
+    // Try to add another padlock (should only spend remaining 8)
+    spendBudget(budget, PADLOCK_CHAIN_COST);
+    expect(budget.spent).toBe(77);
+    expect(remainingBudget(budget)).toBe(0);
+  });
+
+  it('gives easier repetitive text more obstruction budget than harder text in the same tier', () => {
+    const easierTextBudget = computeObstructionBudget({
+      tier: 'hard',
+      difficulty: 8,
+      cipherType: 'random',
+      totalLetters: 42,
+      uniqueWordRatio: 0.5,
+      repeatedWordRatio: 0.5,
+      phraseUniqueLetters: 10,
+      phraseOneLetterWords: 1,
+      phraseSuffixCount: 2,
+      cryptoHardness: 0.3,
+    });
+    const harderTextBudget = computeObstructionBudget({
+      tier: 'hard',
+      difficulty: 8,
+      cipherType: 'random',
+      totalLetters: 42,
+      uniqueWordRatio: 1,
+      repeatedWordRatio: 0,
+      phraseUniqueLetters: 20,
+      phraseOneLetterWords: 0,
+      phraseSuffixCount: 0,
+      cryptoHardness: 0.82,
+    });
+
+    expect(easierTextBudget.total).toBeGreaterThan(harderTextBudget.total);
   });
 });

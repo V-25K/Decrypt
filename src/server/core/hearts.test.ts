@@ -32,6 +32,7 @@ const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
   audioEnabled: true,
+  communityJoinRecorded: false,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',

@@ -6,7 +6,9 @@ const startSessionMutation = vi.fn();
 const heartbeatMutation = vi.fn().mockResolvedValue({ ok: true });
 const getCurrentViewQuery = vi.fn();
 const submitGuessMutation = vi.fn();
+const submitGuessesMutation = vi.fn();
 const completeSessionMutation = vi.fn();
+const purchaseDailyRetryMutation = vi.fn();
 const powerupPurchaseMutation = vi.fn();
 const powerupUseMutation = vi.fn();
 const storeProductsQuery = vi.fn();
@@ -18,7 +20,14 @@ const profileSetAudioEnabledMutation = vi.fn();
 const leaderboardDailyQuery = vi.fn();
 const leaderboardLevelQuery = vi.fn();
 const leaderboardAllTimeQuery = vi.fn();
+const leaderboardDailyPageQuery = vi.fn();
+const leaderboardAllTimeLevelsPageQuery = vi.fn();
+const leaderboardNavigateDailyNextQuery = vi.fn();
+const leaderboardNavigateDailyPreviousQuery = vi.fn();
+const leaderboardNavigateAllTimeLevelsNextQuery = vi.fn();
+const leaderboardNavigateAllTimeLevelsPreviousQuery = vi.fn();
 const leaderboardRankSummaryQuery = vi.fn();
+const getCompletionReceiptQuery = vi.fn();
 const shareResultMutation = vi.fn();
 const purchaseMock = vi.fn();
 const navigateToMock = vi.fn();
@@ -58,8 +67,10 @@ vi.mock('./trpc', () => ({
       heartbeat: { mutate: heartbeatMutation },
       getCurrentView: { query: getCurrentViewQuery },
       submitGuess: { mutate: submitGuessMutation },
+      submitGuesses: { mutate: submitGuessesMutation },
       completeSession: { mutate: completeSessionMutation },
-      getCompletionReceipt: { query: vi.fn() },
+      purchaseDailyRetry: { mutate: purchaseDailyRetryMutation },
+      getCompletionReceipt: { query: getCompletionReceiptQuery },
     },
     powerup: {
       purchase: { mutate: powerupPurchaseMutation },
@@ -69,6 +80,12 @@ vi.mock('./trpc', () => ({
       getDaily: { query: leaderboardDailyQuery },
       getLevel: { query: leaderboardLevelQuery },
       getAllTime: { query: leaderboardAllTimeQuery },
+      getDailyPage: { query: leaderboardDailyPageQuery },
+      getAllTimeLevelsPage: { query: leaderboardAllTimeLevelsPageQuery },
+      navigateDailyNext: { query: leaderboardNavigateDailyNextQuery },
+      navigateDailyPrevious: { query: leaderboardNavigateDailyPreviousQuery },
+      navigateAllTimeLevelsNext: { query: leaderboardNavigateAllTimeLevelsNextQuery },
+      navigateAllTimeLevelsPrevious: { query: leaderboardNavigateAllTimeLevelsPreviousQuery },
       getRankSummary: { query: leaderboardRankSummaryQuery },
     },
     social: {
@@ -108,6 +125,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+  console.log('DEBUG: waitFor TIMEOUT');
+  console.log('DEBUG: DOM Body:', document.body.innerHTML.substring(0, 100000));
   throw new Error('Timed out waiting for condition');
 };
 
@@ -173,7 +192,7 @@ const puzzleFixture = () => ({
 });
 
 const primeMocks = () => {
-  bootstrapQuery.mockResolvedValue({
+  getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
     userId: 't2_test',
     username: 'tester',
     subredditName: 'decrypttest_dev',
@@ -195,6 +214,11 @@ const primeMocks = () => {
     levelId: 'lvl_0001',
     puzzle: puzzleFixture(),
     alreadyCompleted: false,
+    retryCount: 0,
+    nextRetryCost: 35,
+    retryScoreFactor: 1,
+    nextRetryScoreFactor: 1,
+    requiresPaidRetry: false,
     challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
   });
   startSessionMutation.mockResolvedValue({
@@ -236,15 +260,46 @@ const primeMocks = () => {
     rewardCoins: 150,
     mistakes: 0,
     usedPowerups: 0,
+    retryCount: 0,
+    retryScoreFactor: 1,
+    isRecoveryRun: false,
+    isCurrentDaily: true,
+    rewardNotice: null,
     profile: profileFixture(),
     inventory: inventoryFixture(),
+  });
+  purchaseDailyRetryMutation.mockResolvedValue({
+    ok: true,
+    session: {
+      activeLevelId: 'lvl_0001',
+      mode: 'daily',
+      startTimestamp: 0,
+      activeMs: 0,
+      lastSeenAt: 0,
+      mistakesMade: 0,
+      shieldIsActive: false,
+      revealedIndices: [],
+      usedPowerups: 0,
+      wrongGuesses: 0,
+      guessCount: 0,
+    },
+    heartsRemaining: 3,
+    profile: {
+      ...profileFixture(),
+      coins: 420,
+    },
+    inventory: inventoryFixture(),
+    retryCount: 1,
+    nextRetryCost: 70,
+    retryScoreFactor: 1,
+    nextRetryScoreFactor: 0.8923308604816518,
+    requiresPaidRetry: false,
   });
   questsGetStatusQuery.mockResolvedValue({
     dailyDateKey: '2026-03-16',
     progress: {
       dailyPlayCount: 0,
       dailyFastWin: false,
-      dailyUnder5Min: false,
       dailyNoPowerup: false,
       dailyNoMistake: false,
       dailyShareCount: 0,
@@ -275,6 +330,7 @@ const primeMocks = () => {
     profile: {
       ...profileFixture(),
       coins: 600,
+      communityJoinRecorded: true,
       communityJoinRewardClaimed: true,
     },
   });
@@ -321,6 +377,48 @@ const primeMocks = () => {
     ],
     logic: [],
   });
+  leaderboardDailyPageQuery.mockResolvedValue({
+    entries: [
+      {
+        userId: 't2_test',
+        username: 'tester',
+        score: 100,
+        snoovatarUrl: null,
+        solveSeconds: 90,
+      },
+    ],
+    totalCount: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+    pageInfo: {
+      currentPage: 1,
+      pageSize: 50,
+      totalPages: 1,
+    },
+  });
+  leaderboardAllTimeLevelsPageQuery.mockResolvedValue({
+    entries: [
+      {
+        userId: 't2_test',
+        username: 'tester',
+        score: 5,
+        snoovatarUrl: null,
+        levelsCompleted: 5,
+      },
+    ],
+    totalCount: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+    pageInfo: {
+      currentPage: 1,
+      pageSize: 50,
+      totalPages: 1,
+    },
+  });
+  leaderboardNavigateDailyNextQuery.mockResolvedValue(null);
+  leaderboardNavigateDailyPreviousQuery.mockResolvedValue(null);
+  leaderboardNavigateAllTimeLevelsNextQuery.mockResolvedValue(null);
+  leaderboardNavigateAllTimeLevelsPreviousQuery.mockResolvedValue(null);
   leaderboardRankSummaryQuery.mockResolvedValue({
     dailyRank: 3,
     endlessRank: 2,
@@ -365,7 +463,9 @@ afterEach(() => {
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();
   submitGuessMutation.mockReset();
+  submitGuessesMutation.mockReset();
   completeSessionMutation.mockReset();
+  purchaseDailyRetryMutation.mockReset();
   powerupPurchaseMutation.mockReset();
   powerupUseMutation.mockReset();
   storeProductsQuery.mockReset();
@@ -376,6 +476,12 @@ afterEach(() => {
   leaderboardDailyQuery.mockReset();
   leaderboardLevelQuery.mockReset();
   leaderboardAllTimeQuery.mockReset();
+  leaderboardDailyPageQuery.mockReset();
+  leaderboardAllTimeLevelsPageQuery.mockReset();
+  leaderboardNavigateDailyNextQuery.mockReset();
+  leaderboardNavigateDailyPreviousQuery.mockReset();
+  leaderboardNavigateAllTimeLevelsNextQuery.mockReset();
+  leaderboardNavigateAllTimeLevelsPreviousQuery.mockReset();
   leaderboardRankSummaryQuery.mockReset();
   shareResultMutation.mockReset();
   purchaseMock.mockReset();
@@ -384,6 +490,9 @@ afterEach(() => {
   getWebViewModeMock.mockReset();
   getWebViewModeMock.mockReturnValue('expanded');
   localStorageState.clear();
+  // Clear sessionStorage between tests to prevent outcome state from leaking
+  // across tests (persistOutcomeState uses sessionStorage, not localStorage).
+  sessionStorage.clear();
   document.body.innerHTML = '';
 });
 
@@ -391,6 +500,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('uses daily/endless as home toggles and keeps endless as coming-soon', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="home-daily-panel"]')));
 
     const endlessButton = document.querySelector(
@@ -416,6 +526,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     primeMocks();
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="home-play-button"]')));
 
     document
@@ -444,7 +555,7 @@ describe('Game updates', { timeout: 15000 }, () => {
 
   it('renders endless as playable when a catalog is active', async () => {
     primeMocks();
-    bootstrapQuery.mockResolvedValue({
+    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
       subredditName: 'decrypttest_dev',
@@ -470,6 +581,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     }));
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="home-daily-panel"]')));
 
     document
@@ -484,12 +596,14 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('renders leaderboard headers and removes top player label', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-leaderboard"]')));
 
     document
       .querySelector('[data-testid="nav-leaderboard"]')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[data-testid="leaderboard-screen"]')));
+    await waitFor(() => (document.body.textContent ?? '').includes('Player'));
 
     const text = document.body.textContent ?? '';
     expect(text).toContain('Rank');
@@ -502,6 +616,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('renders stats tabs and global cards', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-stats"]')));
 
     document
@@ -522,6 +637,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('renders avg solve time values for daily and endless stats tabs', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-stats"]')));
 
     document
@@ -541,6 +657,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('shows the rank for the selected stats tab', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-stats"]')));
 
     document
@@ -559,6 +676,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('renders avg time in the daily leaderboard row', async () => {
     primeMocks();
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-leaderboard"]')));
 
     document
@@ -577,6 +695,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     });
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await waitFor(() => Boolean(document.querySelector('[data-testid="nav-shop"]')));
 
     document
@@ -594,18 +713,154 @@ describe('Game updates', { timeout: 15000 }, () => {
     );
   });
 
-  it('loads result crowd avatars from the specific level leaderboard', async () => {
+  it('shows a paid retry CTA after a failed daily and buys the retry instead of free replay', async () => {
     primeMocks();
     getWebViewModeMock.mockReturnValue('inline');
     loadLevelQuery.mockResolvedValue({
       mode: 'daily',
       levelId: 'lvl_0001',
       puzzle: puzzleFixture(),
-      alreadyCompleted: true,
+      alreadyCompleted: false,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: true,
       challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
     });
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="overlay-play-again"]')));
+
+    document
+      .querySelector('[data-testid="overlay-play-again"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="retry-buy-dialog"]')));
+    expect(document.body.textContent ?? '').toContain('Buy Retry');
+    expect(document.body.textContent ?? '').toContain('35');
+    expect(document.body.textContent ?? '').toContain('This retry score: No penalty');
+    expect(document.body.textContent ?? '').toContain(
+      'If you fail again, the next retry would be 70'
+    );
+    expect(purchaseDailyRetryMutation).not.toHaveBeenCalled();
+
+    document
+      .querySelector('[data-testid="retry-buy-confirm"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => purchaseDailyRetryMutation.mock.calls.length > 0);
+    expect(purchaseDailyRetryMutation).toHaveBeenCalledWith({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+    expect(startSessionMutation).not.toHaveBeenCalled();
+  });
+
+  it('opens the heart purchase dialog when retrying without hearts', async () => {
+    primeMocks();
+    getWebViewModeMock.mockReturnValue('inline');
+    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+      userId: 't2_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postId: 't3_test',
+      currentDailyLevelId: 'lvl_0001',
+      todayDateKey: '2026-03-16',
+      profile: {
+        ...profileFixture(),
+        hearts: 0,
+        lastHeartRefillTs: Date.now(),
+      },
+      inventory: inventoryFixture(),
+      endlessCatalog: {
+        available: false,
+        activeCatalogVersion: null,
+        runtimeCatalogVersion: null,
+        publishedLevelCount: 0,
+        bundledVersions: [],
+      },
+    });
+    loadLevelQuery.mockResolvedValue({
+      mode: 'daily',
+      levelId: 'lvl_0001',
+      puzzle: puzzleFixture(),
+      alreadyCompleted: false,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: true,
+      challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
+    });
+    startSessionMutation.mockResolvedValue({
+      ok: true,
+      session: {
+        activeLevelId: 'lvl_0001',
+        mode: 'daily',
+        startTimestamp: 0,
+        activeMs: 0,
+        lastSeenAt: 0,
+        mistakesMade: 0,
+        shieldIsActive: false,
+        revealedIndices: [],
+        usedPowerups: 0,
+        wrongGuesses: 0,
+        guessCount: 0,
+      },
+      heartsRemaining: 0,
+    });
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="overlay-play-again"]')));
+    document
+      .querySelector('[data-testid="overlay-play-again"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="heart-purchase-dialog"]')));
+    expect(document.body.textContent ?? '').toContain('Restore Hearts');
+    expect(purchaseDailyRetryMutation).not.toHaveBeenCalled();
+  });
+
+  it('loads result crowd avatars from the specific level leaderboard', async () => {
+    primeMocks();
+    getWebViewModeMock.mockReturnValue('inline');
+    bootstrapQuery.mockResolvedValue({
+      userId: 't2_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postId: 't3_test',
+      currentDailyLevelId: 'lvl_0001',
+      todayDateKey: '2026-03-16',
+      profile: profileFixture(),
+      inventory: inventoryFixture(),
+      endlessCatalog: {
+        available: false,
+        activeCatalogVersion: null,
+        runtimeCatalogVersion: null,
+        publishedLevelCount: 0,
+        bundledVersions: [],
+      },
+    });
+    loadLevelQuery.mockResolvedValue({
+      mode: 'daily',
+      levelId: 'lvl_0001',
+      puzzle: puzzleFixture(),
+      alreadyCompleted: true,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: false,
+      challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
+    });
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
     await waitFor(() => leaderboardLevelQuery.mock.calls.length > 0);
     expect(leaderboardLevelQuery).toHaveBeenCalledWith({
@@ -613,6 +868,7 @@ describe('Game updates', { timeout: 15000 }, () => {
       limit: 20,
     });
     expect(leaderboardDailyQuery).not.toHaveBeenCalled();
+    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
     await waitFor(() => Boolean(document.querySelector('[data-testid="outcome-overlay-crowd"] img')));
     const crowdImages = Array.from(
       document.querySelectorAll('[data-testid="outcome-overlay-crowd"] img')
@@ -623,13 +879,13 @@ describe('Game updates', { timeout: 15000 }, () => {
     );
   });
 
-  it('shows a community join button on the result screen and saves the joined state', async () => {
+  it('renders a username fallback bubble when a leaderboard entry has no snoovatar', async () => {
     primeMocks();
     getWebViewModeMock.mockReturnValue('inline');
     bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
-      subredditName: 'PlayDecrypt',
+      subredditName: 'decrypttest_dev',
       postId: 't3_test',
       currentDailyLevelId: 'lvl_0001',
       todayDateKey: '2026-03-16',
@@ -648,23 +904,97 @@ describe('Game updates', { timeout: 15000 }, () => {
       levelId: 'lvl_0001',
       puzzle: puzzleFixture(),
       alreadyCompleted: true,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: false,
+      challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
+    });
+    leaderboardLevelQuery.mockResolvedValue({
+      entries: [
+        {
+          userId: 't2_test',
+          username: 'tester',
+          score: 900,
+          snoovatarUrl: 'https://example.com/tester.png',
+          solveSeconds: 90,
+        },
+        {
+          userId: 't2_alpha',
+          username: 'alpha',
+          score: 800,
+          snoovatarUrl: null,
+          solveSeconds: 100,
+        },
+      ],
+    });
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
+    await waitFor(
+      () =>
+        document.querySelectorAll('[data-testid="outcome-overlay-crowd"] img')
+          .length >= 1, 10000);
+    const crowdImages = Array.from(
+      document.querySelectorAll('[data-testid="outcome-overlay-crowd"] img')
+    );
+    const urls = crowdImages.map((image) => image.getAttribute('src') ?? '');
+    expect(urls).toContain('https://example.com/tester.png');
+    expect(urls.some((url) => url.startsWith('data:image/svg+xml'))).toBe(true);
+  });
+
+  it('shows a community join button on the result screen and saves the joined state', async () => {
+    primeMocks();
+    getWebViewModeMock.mockReturnValue('inline');
+    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+      userId: 't2_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postId: 't3_test',
+      currentDailyLevelId: 'lvl_0001',
+      todayDateKey: '2026-03-16',
+      profile: profileFixture(),
+      inventory: inventoryFixture(),
+      endlessCatalog: {
+        available: false,
+        activeCatalogVersion: null,
+        runtimeCatalogVersion: null,
+        publishedLevelCount: 0,
+        bundledVersions: [],
+      },
+    });
+    loadLevelQuery.mockResolvedValue({
+      mode: 'daily',
+      levelId: 'lvl_0001',
+      puzzle: puzzleFixture(),
+      alreadyCompleted: true,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: false,
       challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
     });
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
     await waitFor(() => Boolean(document.querySelector('[data-testid="join-community-button"]')));
     const button = document.querySelector(
       '[data-testid="join-community-button"]'
     ) as HTMLButtonElement | null;
-    expect(button?.textContent).toContain('Join the Community');
+    expect(button?.textContent).toContain('Subscribe');
 
+    await new Promise((resolve) => setTimeout(resolve, 300));
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     await waitFor(() => profileJoinCommunityMutation.mock.calls.length > 0);
-    await waitFor(() => profileJoinCommunityMutation.mock.calls.length > 0);
 
     expect(navigateToMock).not.toHaveBeenCalled();
+    expect(shareResultMutation).not.toHaveBeenCalled();
     expect(
       showToastMock.mock.calls.some(
         ([message]) =>
@@ -674,7 +1004,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     await waitFor(
       () =>
         (document.querySelector('[data-testid="join-community-button"]')?.textContent ?? '').includes(
-          'Community Joined'
+          'Joined'
         )
     );
   });
@@ -683,10 +1013,10 @@ describe('Game updates', { timeout: 15000 }, () => {
     primeMocks();
     shareResultMutation.mockRejectedValueOnce(new Error('request aborted'));
     getWebViewModeMock.mockReturnValue('inline');
-    bootstrapQuery.mockResolvedValue({
+    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
-      subredditName: 'PlayDecrypt',
+      subredditName: 'decrypttest_dev',
       postId: 't3_test',
       currentDailyLevelId: 'lvl_0001',
       todayDateKey: '2026-03-16',
@@ -705,16 +1035,24 @@ describe('Game updates', { timeout: 15000 }, () => {
       levelId: 'lvl_0001',
       puzzle: puzzleFixture(),
       alreadyCompleted: true,
+      retryCount: 0,
+      nextRetryCost: 35,
+      retryScoreFactor: 1,
+      nextRetryScoreFactor: 1,
+      requiresPaidRetry: false,
       challengeMetrics: { plays: 10, wins: 5, winRatePct: 50 },
     });
 
     await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
+    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
     await waitFor(() => Boolean(document.querySelector('[data-testid="overlay-share-comment"]')));
     const button = document.querySelector(
       '[data-testid="overlay-share-comment"]'
     ) as HTMLButtonElement | null;
 
+    await new Promise((resolve) => setTimeout(resolve, 300));
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     await waitFor(() => shareResultMutation.mock.calls.length > 0);

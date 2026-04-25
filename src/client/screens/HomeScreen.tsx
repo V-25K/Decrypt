@@ -18,6 +18,7 @@ type HomeScreenProps = {
   endlessCatalogAvailable: boolean;
   endlessPublishedLevelCount: number;
   endlessActiveCatalogVersion: string | null;
+  hasClaimableQuest: boolean;
 };
 
 export const HomeScreen = ({
@@ -34,6 +35,7 @@ export const HomeScreen = ({
   endlessCatalogAvailable,
   endlessPublishedLevelCount,
   endlessActiveCatalogVersion,
+  hasClaimableQuest,
 }: HomeScreenProps) => (
   <section className="flex min-h-0 flex-1 flex-col" data-testid="home-screen">
     <main className="flex min-h-0 flex-1 flex-col px-3 py-3">
@@ -53,26 +55,40 @@ export const HomeScreen = ({
             data-testid="home-mode-endless"
             className={cn(
               tabButtonClass(homeTab === 'endless'),
-              'home-mode-btn w-[96px] px-1',
+              'home-mode-btn relative w-[96px] px-1',
               homeTab === 'endless' ? 'home-mode-active' : ''
             )}
             type="button"
             onClick={() => onHomeTabSelect('endless')}
             disabled={busy && homeTab !== 'endless'}
           >
+            {/* Quest notification badge */}
+            {hasClaimableQuest && (
+              <span className="absolute -right-1 -top-1 flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+              </span>
+            )}
             Endless
           </button>
           <button
             data-testid="home-mode-daily"
             className={cn(
               tabButtonClass(homeTab === 'daily'),
-              'home-mode-btn w-[96px] px-1',
+              'home-mode-btn relative w-[96px] px-1',
               homeTab === 'daily' ? 'home-mode-active' : ''
             )}
             type="button"
             onClick={() => onHomeTabSelect('daily')}
             disabled={busy}
           >
+            {/* Quest notification badge */}
+            {hasClaimableQuest && (
+              <span className="absolute -right-1 -top-1 flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+              </span>
+            )}
             Daily
           </button>
         </section>

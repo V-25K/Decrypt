@@ -5,7 +5,8 @@
   "license": "BSD-3-Clause",
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build",
+    "build:watch": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build --watch",
     "deploy": "npm run type-check && npm run lint && npm run test && devvit upload",
     "dev": "devvit playtest",
     "launch": "npm run deploy && devvit publish",
@@ -15,6 +16,7 @@
     "endless:fill": "node --experimental-strip-types ./scripts/endless-fill-target.ts",
     "endless:publish": "node --experimental-strip-types ./scripts/endless-publish.ts",
     "endless:prune": "node --experimental-strip-types ./scripts/endless-prune.ts",
+    "test:rapid-input": "vitest run src/client/game.test.ts -t stale",
     "prettier": "prettier-package-json --write ./package.json && prettier --write .",
     "test": "vitest run",
     "type-check": "tsc --build"
@@ -23,9 +25,9 @@
     "node": ">=22.2.0"
   },
   "dependencies": {
-    "@devvit/start": "0.12.17",
-    "@devvit/test": "0.12.17",
-    "@devvit/web": "0.12.17",
+    "@devvit/start": "0.12.19",
+    "@devvit/test": "0.12.19",
+    "@devvit/web": "0.12.19",
     "@hono/node-server": "1.19.8",
     "@hono/trpc-server": "0.4.2",
     "@trpc/client": "11.8.1",
@@ -40,14 +42,15 @@
     "zod": "4.3.5"
   },
   "devDependencies": {
-    "@devvit/mcp": "0.0.25",
+    "@devvit/mcp": "0.0.26",
     "@eslint/js": "9.39.2",
+    "fast-check": "^3.22.0",
     "@tailwindcss/vite": "4.1.18",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.2",
     "@vitest/coverage-v8": "4.0.16",
-    "devvit": "0.12.17",
+    "devvit": "0.12.19",
     "eslint": "9.39.2",
     "eslint-plugin-react-hooks": "7.0.1",
     "eslint-plugin-react-refresh": "0.4.26",
@@ -55,7 +58,7 @@
     "prettier-package-json": "2.8.0",
     "prettier-plugin-tailwindcss": "0.7.2",
     "tailwindcss": "4.1.18",
-    "typescript": "5.9.3",
+    "typescript": "5.8.3",
     "typescript-eslint": "8.53.0",
     "vite": "7.3.1",
     "vitest": "4.0.16"

@@ -19,7 +19,10 @@ export const normalizeHearts = (
 
   const hearts = clampHearts(profile.hearts);
   if (hearts >= heartsPerRun) {
-    return hearts === profile.hearts ? profile : { ...profile, hearts };
+    // Fix: Always update lastHeartRefillTs to current time when hearts are full
+    // This prevents timestamp drift for future calculations
+    const needsUpdate = hearts !== profile.hearts || profile.lastHeartRefillTs !== nowTs;
+    return needsUpdate ? { ...profile, hearts, lastHeartRefillTs: nowTs } : profile;
   }
 
   const elapsedMs = Math.max(0, nowTs - profile.lastHeartRefillTs);
@@ -29,10 +32,12 @@ export const normalizeHearts = (
   }
 
   const nextHearts = clampHearts(hearts + refillCount);
+  // Fix: Calculate next refill timestamp based on current time to prevent cumulative drift
+  // Use formula: nowTs - (elapsedMs % heartRefillIntervalMs) for accurate next refill timestamp
   const nextRefillTs =
     nextHearts >= heartsPerRun
       ? nowTs
-      : profile.lastHeartRefillTs + refillCount * heartRefillIntervalMs;
+      : nowTs - (elapsedMs % heartRefillIntervalMs);
 
   return {
     ...profile,

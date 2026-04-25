@@ -119,6 +119,9 @@ export const formatChallengeType = (value: string | undefined): string => {
     .toUpperCase()
     .replace(/[^A-Z_]/g, '')
     .trim();
+  if (normalized.length === 0) {
+    return 'Quote';
+  }
   switch (normalized) {
     case 'LYRIC_LINE':
       return 'Lyric';

@@ -13,14 +13,69 @@ export type DecryptSettings = {
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
+const normalizeSafetyModeSetting = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized.length > 0
+      ? normalized
+      : defaultSubredditSettings.contentSafetyMode;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `${value}`;
+  }
+  if (Array.isArray(value)) {
+    const firstString = value.find((entry): entry is string => typeof entry === 'string');
+    if (firstString) {
+      const normalized = firstString.trim();
+      return normalized.length > 0
+        ? normalized
+        : defaultSubredditSettings.contentSafetyMode;
+    }
+  }
+  if (value && typeof value === 'object') {
+    const candidate = Reflect.get(value, 'value');
+    if (typeof candidate === 'string') {
+      const normalized = candidate.trim();
+      return normalized.length > 0
+        ? normalized
+        : defaultSubredditSettings.contentSafetyMode;
+    }
+  }
+  return defaultSubredditSettings.contentSafetyMode;
+};
+
 const defaultDailyAutomationEnabled = true;
 
-export const parseDailyAutomationSetting = (value: unknown): boolean => {
-  if (typeof value === 'boolean') {
-    return value;
-  }
+const normalizeBooleanLikeSetting = (value: unknown): string | null => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  if (typeof value === 'number') {
+    return `${value}`;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = normalizeBooleanLikeSetting(entry);
+      if (normalized !== null) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    const candidate = Reflect.get(value, 'value');
+    return normalizeBooleanLikeSetting(candidate);
+  }
+  return null;
+};
+
+export const parseDailyAutomationSetting = (value: unknown): boolean => {
+  const normalized = normalizeBooleanLikeSetting(value);
+  if (normalized !== null) {
     if (['disabled', 'false', '0', 'off'].includes(normalized)) {
       return false;
     }
@@ -32,7 +87,7 @@ export const parseDailyAutomationSetting = (value: unknown): boolean => {
 };
 
 export const getDailyAutomationEnabled = async (): Promise<boolean> => {
-  const value = await settings.get<string | boolean>('dailyAutomationEnabled');
+  const value = await settings.get<unknown>('dailyAutomationEnabled');
   return parseDailyAutomationSetting(value);
 };
 
@@ -49,7 +104,7 @@ export const getDecryptSettings = async (): Promise<DecryptSettings> => {
     settings.get<string>('timezone'),
     settings.get<number>('logicalCipherPercent'),
     settings.get<number>('aiMaxRetries'),
-    settings.get<string>('contentSafetyMode'),
+    settings.get<unknown>('contentSafetyMode'),
     settings.get<string>('geminiApiKey'),
   ]);
 
@@ -66,7 +121,7 @@ export const getDecryptSettings = async (): Promise<DecryptSettings> => {
   const aiMaxRetries = clamp(
     retriesValue ?? defaultSubredditSettings.aiMaxRetries,
     1,
-    5
+    8
   );
 
   return {
@@ -74,7 +129,7 @@ export const getDecryptSettings = async (): Promise<DecryptSettings> => {
     timezone: timezoneValue ?? defaultSubredditSettings.timezone,
     logicalCipherPercent,
     aiMaxRetries,
-    contentSafetyMode: safetyValue ?? defaultSubredditSettings.contentSafetyMode,
+    contentSafetyMode: normalizeSafetyModeSetting(safetyValue),
     geminiApiKey: (geminiKeyValue ?? '').trim(),
   };
 };

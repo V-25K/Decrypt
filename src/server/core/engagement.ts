@@ -1,8 +1,10 @@
 import { redis } from '@devvit/web/server';
 import {
+  keyLevelPlayCount,
   keyLevelPlayers,
   keyLevelQualifiedPlayers,
   keyLevelQualifiedWins,
+  keyLevelWinCount,
   keyLevelWinners,
 } from './keys';
 
@@ -28,29 +30,46 @@ export const recordLevelPlay = async (
   levelId: string,
   userId: string
 ): Promise<void> => {
-  await redis.zAdd(keyLevelPlayers(levelId), {
-    member: userId,
-    score: Date.now(),
-  });
+  await Promise.all([
+    redis.zAdd(keyLevelPlayers(levelId), {
+      member: userId,
+      score: Date.now(),
+    }),
+    redis.incrBy(keyLevelPlayCount(levelId), 1),
+  ]);
 };
 
 export const recordLevelWin = async (
   levelId: string,
   userId: string
 ): Promise<void> => {
-  await redis.zAdd(keyLevelWinners(levelId), {
-    member: userId,
-    score: Date.now(),
-  });
+  await Promise.all([
+    redis.zAdd(keyLevelWinners(levelId), {
+      member: userId,
+      score: Date.now(),
+    }),
+    redis.incrBy(keyLevelWinCount(levelId), 1),
+  ]);
 };
 
+// Raw engagement counts all plays and wins, regardless of reward eligibility.
 export const getLevelEngagement = async (
   levelId: string
 ): Promise<LevelEngagement> => {
-  const [plays, wins] = await Promise.all([
+  const [rawPlays, rawWins, uniquePlays, uniqueWins] = await Promise.all([
+    redis.get(keyLevelPlayCount(levelId)),
+    redis.get(keyLevelWinCount(levelId)),
     redis.zCard(keyLevelPlayers(levelId)),
     redis.zCard(keyLevelWinners(levelId)),
   ]);
+  const plays =
+    rawPlays === null || rawPlays === undefined || rawPlays === ''
+      ? uniquePlays
+      : Math.max(0, Math.floor(Number(rawPlays) || 0));
+  const wins =
+    rawWins === null || rawWins === undefined || rawWins === ''
+      ? uniqueWins
+      : Math.max(0, Math.floor(Number(rawWins) || 0));
   return {
     plays,
     wins,
@@ -58,6 +77,8 @@ export const getLevelEngagement = async (
   };
 };
 
+// Qualified telemetry is a stricter subset used by difficulty calibration.
+// Callers emit qualified events only for runs that should influence tuning.
 export const recordQualifiedLevelPlay = async (
   levelId: string,
   userId: string

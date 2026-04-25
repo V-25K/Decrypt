@@ -1,9 +1,11 @@
 import { z } from 'zod';
+
+const maxHearts = 3;
 import {
   adminActivateEndlessCatalogInputSchema,
   adminActivateEndlessCatalogResponseSchema,
   endlessCatalogStatusSchema,
-} from './endless.ts';
+} from './endless';
 
 export const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -90,6 +92,7 @@ export const puzzlePrivateSchema = z.object({
   goldIndex: z.number().int().nonnegative().nullable(),
   padlockChains: z.array(padlockChainSchema),
   difficulty: z.number().int().min(1).max(10),
+  cryptoHardness: z.number().min(0).max(1).optional(),
   targetTimeSeconds: z.number().nonnegative().optional(),
   starThresholds: z
     .object({
@@ -151,7 +154,7 @@ export type Inventory = z.infer<typeof inventorySchema>;
 
 export const userProfileSchema = z.object({
   coins: z.number().int().nonnegative(),
-  hearts: z.number().int().nonnegative().max(3),
+  hearts: z.number().int().nonnegative().max(maxHearts),
   lastHeartRefillTs: z.number().int().nonnegative(),
   infiniteHeartsExpiryTs: z.number().int().nonnegative(),
   currentStreak: z.number().int().nonnegative(),
@@ -178,6 +181,9 @@ export const userProfileSchema = z.object({
   endlessSolveTimeTotalSec: z.number().int().nonnegative(),
   bestOverallRank: z.number().int().nonnegative(),
   audioEnabled: z.boolean().default(true),
+  // Tracks whether the player has ever successfully completed the "join community" user action.
+  // This is separate from reward claiming so we can show "Joined" UI even in dev/playtest subs.
+  communityJoinRecorded: z.boolean().default(false),
   communityJoinRewardClaimed: z.boolean(),
   unlockedFlairs: z.array(z.string().min(1)),
   activeFlair: z.string(),
@@ -240,7 +246,6 @@ export type RevealedTile = z.infer<typeof revealedTileSchema>;
 export const questProgressSchema = z.object({
   dailyPlayCount: z.number().int().nonnegative(),
   dailyFastWin: z.boolean(),
-  dailyUnder5Min: z.boolean(),
   dailyNoPowerup: z.boolean(),
   dailyNoMistake: z.boolean(),
   dailyShareCount: z.number().int().nonnegative(),
@@ -278,6 +283,11 @@ export const gameLoadLevelResponseSchema = z.object({
   levelId: z.string().min(1),
   puzzle: puzzlePublicSchema,
   alreadyCompleted: z.boolean(),
+  retryCount: z.number().int().nonnegative(),
+  nextRetryCost: z.number().int().nonnegative(),
+  retryScoreFactor: z.number().nonnegative(),
+  nextRetryScoreFactor: z.number().nonnegative(),
+  requiresPaidRetry: z.boolean(),
   challengeMetrics: z.object({
     plays: z.number().int().nonnegative(),
     wins: z.number().int().nonnegative(),
@@ -303,6 +313,24 @@ export const gameStartSessionResponseSchema = z.object({
   ok: z.boolean(),
   session: sessionSchema,
   heartsRemaining: z.number().int().nonnegative(),
+});
+
+export const gamePurchaseDailyRetryInputSchema = z.object({
+  levelId: z.string().min(1),
+  mode: z.union([z.literal('daily'), z.literal('endless')]),
+});
+
+export const gamePurchaseDailyRetryResponseSchema = z.object({
+  ok: z.boolean(),
+  session: sessionSchema,
+  heartsRemaining: z.number().int().nonnegative(),
+  profile: userProfileSchema,
+  inventory: inventorySchema,
+  retryCount: z.number().int().nonnegative(),
+  nextRetryCost: z.number().int().nonnegative(),
+  retryScoreFactor: z.number().nonnegative(),
+  nextRetryScoreFactor: z.number().nonnegative(),
+  requiresPaidRetry: z.boolean(),
 });
 
 export const gameSubmitGuessInputSchema = z.object({
@@ -357,11 +385,17 @@ export const gameCompleteSessionResponseSchema = z.object({
   rewardCoins: z.number().int().nonnegative(),
   mistakes: z.number().int().nonnegative(),
   usedPowerups: z.number().int().nonnegative(),
+  retryCount: z.number().int().nonnegative(),
+  retryScoreFactor: z.number().nonnegative(),
+  isRecoveryRun: z.boolean(),
+  isCurrentDaily: z.boolean(),
+  rewardNotice: z.string().nullable(),
   profile: userProfileSchema,
   inventory: inventorySchema,
 });
 
 export const powerupPurchaseInputSchema = z.object({
+  levelId: z.string().min(1),
   itemType: powerupTypeSchema,
   quantity: z.number().int().positive().optional().default(1),
 });
@@ -414,6 +448,39 @@ export const leaderboardRankSummarySchema = z.object({
   bestOverallRank: z.number().int().positive().nullable(),
 });
 
+export const pageInfoSchema = z.object({
+  currentPage: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  totalPages: z.number().int().nonnegative(),
+});
+
+export const leaderboardPageSchema = z.object({
+  entries: z.array(leaderboardEntrySchema),
+  hasNextPage: z.boolean(),
+  hasPreviousPage: z.boolean(),
+  totalCount: z.number().int().nonnegative(),
+  pageInfo: pageInfoSchema,
+});
+
+export const leaderboardPageInputSchema = z.object({
+  page: z.number().int().positive().default(1),
+  pageSize: z.number().int().positive().max(50).optional(),
+});
+
+export const dailyLeaderboardPageInputSchema = leaderboardPageInputSchema.extend({
+  dateKey: z.string().nullable().optional(),
+});
+
+export const levelLeaderboardPageInputSchema = leaderboardPageInputSchema.extend({
+  levelId: z.string().min(1),
+});
+
+export type PageInfo = z.infer<typeof pageInfoSchema>;
+export type LeaderboardPage = z.infer<typeof leaderboardPageSchema>;
+export type LeaderboardPageInput = z.infer<typeof leaderboardPageInputSchema>;
+export type DailyLeaderboardPageInput = z.infer<typeof dailyLeaderboardPageInputSchema>;
+export type LevelLeaderboardPageInput = z.infer<typeof levelLeaderboardPageInputSchema>;
+
 export const questStatusResponseSchema = z.object({
   dailyDateKey: z.string().min(1),
   progress: questProgressSchema,
@@ -458,6 +525,12 @@ export const profileJoinCommunityResponseSchema = z.object({
   profile: userProfileSchema,
 });
 
+export const heartPurchaseResponseSchema = z.object({
+  success: z.boolean(),
+  reason: z.string().nullable(),
+  profile: userProfileSchema,
+});
+
 export const socialShareInputSchema = z.object({
   levelId: z.string().min(1),
 });
@@ -478,6 +551,54 @@ export const adminActionResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().min(1),
   levelId: z.string().nullable(),
+});
+
+export const adminValidateManualChallengeInputSchema = z.object({
+  text: z.string().min(3),
+  targetDifficulty: z.number().int().min(1).max(10),
+});
+
+export const adminValidateManualChallengeResponseSchema = z.object({
+  valid: z.boolean(),
+  textProfile: z.object({
+    cryptoHardness: z.number(),
+    uniqueLetterCount: z.number().int(),
+    oneLetterWordCount: z.number().int(),
+    commonSuffixCount: z.number().int(),
+  }),
+  naturalDifficulty: z.enum(['warmup', 'medium', 'hard', 'expert']),
+  achievableTierRange: z.array(z.enum(['warmup', 'medium', 'hard', 'expert'])),
+  reasons: z.array(z.string()),
+  suggestions: z.array(z.string()),
+});
+
+export const adminInjectManualChallengeWithAdjustmentInputSchema = z.object({
+  text: z.string().min(3),
+  author: z.string().min(1),
+  targetDifficulty: z.number().int().min(1).max(10),
+  challengeType: challengeTypeSchema.default('QUOTE'),
+  allowAdjustment: z.boolean().default(true),
+});
+
+export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
+  success: z.boolean(),
+  levelId: z.string().optional(),
+  postId: z.string().optional(),
+  feedback: z.object({
+    textProfile: z.object({
+      cryptoHardness: z.number(),
+      uniqueLetterCount: z.number().int(),
+      oneLetterWordCount: z.number().int(),
+      commonSuffixCount: z.number().int(),
+    }),
+    naturalDifficulty: z.enum(['warmup', 'medium', 'hard', 'expert']),
+    achievableTierRange: z.array(z.enum(['warmup', 'medium', 'hard', 'expert'])),
+    budgetUsed: z.number().int(),
+    budgetTotal: z.number().int(),
+    adjustmentsMade: z.array(z.string()),
+    suggestions: z.array(z.string()).optional(),
+  }),
+  error: z.string().optional(),
 });
 
 export const adminDifficultyCalibrationResponseSchema = z.object({
@@ -520,7 +641,7 @@ export const storeProductsResponseSchema = z.object({
         wand: z.number().int().nonnegative(),
         shield: z.number().int().nonnegative(),
         rocket: z.number().int().nonnegative(),
-        infiniteHeartsHours: z.number().int().nonnegative(),
+        infiniteHeartsHours: z.number().nonnegative(),
       }),
     })
   ),

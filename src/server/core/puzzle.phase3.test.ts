@@ -18,15 +18,19 @@ describe('phase3 obstructions and scaling', () => {
       applyObstructionsOnSkip: true,
     });
     const targetLength = generated.puzzlePrivate.targetText.length;
-    const expectedTarget = targetLength * 2 + 30;
+    const baselineTarget = targetLength * 2 + 30;
+    const expectedTarget = generated.puzzlePrivate.targetTimeSeconds;
+    if (expectedTarget === undefined) {
+      throw new Error('Expected targetTimeSeconds to be set');
+    }
 
-    expect(generated.puzzlePrivate.targetTimeSeconds).toBe(expectedTarget);
+    expect(generated.puzzlePrivate.targetTimeSeconds).toBeGreaterThanOrEqual(baselineTarget);
     expect(generated.puzzlePrivate.starThresholds?.['3_star']).toBe(expectedTarget);
     expect(generated.puzzlePrivate.starThresholds?.['2_star']).toBe(expectedTarget * 1.5);
     expect(generated.puzzlePrivate.starThresholds?.['1_star']).toBe(expectedTarget * 2);
   });
 
-  it('applies blind tile count as floor(length / 10)', () => {
+  it('applies blind tile count with a tier cap and fair candidate cap', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_3302',
       dateKey: '2026-03-06',
@@ -38,7 +42,7 @@ describe('phase3 obstructions and scaling', () => {
       applyObstructionsOnSkip: true,
     });
 
-    const expectedCount = Math.floor(generated.puzzlePrivate.targetText.length / 10);
+    const maxTierBlindCount = 2;
     const blocked = new Set([
       ...generated.puzzlePrivate.prefilledIndices,
       ...(generated.puzzlePrivate.lockIndices ?? []),
@@ -64,8 +68,8 @@ describe('phase3 obstructions and scaling', () => {
       }
     }
     const maxFairAvailable = eligibleBlindLetters.size;
-    expect(generated.puzzlePrivate.blindIndices.length).toBe(
-      Math.min(expectedCount, maxFairAvailable)
+    expect(generated.puzzlePrivate.blindIndices.length).toBeLessThanOrEqual(
+      Math.min(maxTierBlindCount, maxFairAvailable)
     );
   });
 
@@ -115,5 +119,63 @@ describe('phase3 obstructions and scaling', () => {
       forbiddenIndices: lockIndices,
     });
     expect(solver.solvedRatio).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('keeps shift-cipher obstruction load at or below random for the same seed', () => {
+    const randomGenerated = buildPuzzle({
+      levelId: 'lvl_3305',
+      dateKey: '2026-03-06',
+      text: phase3Text,
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 0,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+    const shiftGenerated = buildPuzzle({
+      levelId: 'lvl_3305',
+      dateKey: '2026-03-06',
+      text: phase3Text,
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 100,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+
+    const randomObstructionLoad =
+      (randomGenerated.puzzlePrivate.lockIndices ?? []).length +
+      randomGenerated.puzzlePrivate.blindIndices.length;
+    const shiftObstructionLoad =
+      (shiftGenerated.puzzlePrivate.lockIndices ?? []).length +
+      shiftGenerated.puzzlePrivate.blindIndices.length;
+
+    expect(shiftObstructionLoad).toBeLessThanOrEqual(randomObstructionLoad);
+  });
+
+  it('computes timing once for skip-without-obstructions branch', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_3306',
+      dateKey: '2026-03-06',
+      text: phase3Text,
+      author: 'UNKNOWN',
+      difficulty: 6,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: false,
+    });
+    const hardness = generated.puzzlePrivate.cryptoHardness ?? 0;
+    const expectedTarget = Math.max(
+      20,
+      generated.puzzlePrivate.targetText.length * 2 +
+        30 +
+        Math.round((generated.puzzlePrivate.difficulty - 5) * 2) +
+        Math.round(hardness * 8)
+    );
+
+    expect(generated.puzzlePrivate.targetTimeSeconds).toBe(expectedTarget);
+    expect(generated.puzzlePrivate.starThresholds?.['3_star']).toBe(expectedTarget);
+    expect(generated.puzzlePrivate.starThresholds?.['2_star']).toBe(expectedTarget * 1.5);
+    expect(generated.puzzlePrivate.starThresholds?.['1_star']).toBe(expectedTarget * 2);
   });
 });

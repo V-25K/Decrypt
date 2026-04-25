@@ -49,6 +49,7 @@ export default defineConfig([
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      'react-hooks/refs': 'off', // Disabled due to false positives with memo components
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },

@@ -19,7 +19,7 @@ describe('phase2 reveal bootstrap rules', () => {
     expect(count).toBeLessThanOrEqual(10);
   });
 
-  it('reveals at least five unique starter letters on easy when available', () => {
+  it('reveals at least four unique starter letters on easy when available', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2201b',
       dateKey: '2026-03-06',
@@ -35,10 +35,10 @@ describe('phase2 reveal bootstrap rules', () => {
         .filter((tile): tile is (typeof generated.puzzlePrivate.tiles)[number] => Boolean(tile && tile.isLetter))
         .map((tile) => tile.char)
     );
-    expect(uniqueStarterLetters.size).toBeGreaterThanOrEqual(5);
+    expect(uniqueStarterLetters.size).toBeGreaterThanOrEqual(4);
   });
 
-  it('uses medium reveal count range of 3-5', () => {
+  it('uses medium reveal count range of 4-7', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2202',
       dateKey: '2026-03-06',
@@ -49,8 +49,8 @@ describe('phase2 reveal bootstrap rules', () => {
       skipSolvabilityCheck: true,
     });
     const count = generated.puzzlePrivate.prefilledIndices.length;
-    expect(count).toBeGreaterThanOrEqual(3);
-    expect(count).toBeLessThanOrEqual(5);
+    expect(count).toBeGreaterThanOrEqual(4);
+    expect(count).toBeLessThanOrEqual(7);
   });
 
   it('uses hard reveal count range tuned by quote length', () => {
@@ -64,8 +64,8 @@ describe('phase2 reveal bootstrap rules', () => {
       skipSolvabilityCheck: true,
     });
     const count = generated.puzzlePrivate.prefilledIndices.length;
-    expect(count).toBeGreaterThanOrEqual(2);
-    expect(count).toBeLessThanOrEqual(3);
+    expect(count).toBeGreaterThanOrEqual(3);
+    expect(count).toBeLessThanOrEqual(5);
   });
 
   it('guarantees at least one reveal in the first quarter when possible', () => {
@@ -109,5 +109,30 @@ describe('phase2 reveal bootstrap rules', () => {
 
     const selected = new Set(generated.puzzlePrivate.prefilledIndices);
     expect(selected.has(firstWordStart) && selected.has(firstWordEnd)).toBe(false);
+  });
+
+  it('does not reduce starter clues for random cipher compared with shift on same seed', () => {
+    const randomGenerated = buildPuzzle({
+      levelId: 'lvl_2206',
+      dateKey: '2026-03-06',
+      text: sourceText,
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 0,
+      skipSolvabilityCheck: true,
+    });
+    const shiftGenerated = buildPuzzle({
+      levelId: 'lvl_2206',
+      dateKey: '2026-03-06',
+      text: sourceText,
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 100,
+      skipSolvabilityCheck: true,
+    });
+
+    expect(randomGenerated.puzzlePrivate.prefilledIndices.length).toBeGreaterThanOrEqual(
+      shiftGenerated.puzzlePrivate.prefilledIndices.length
+    );
   });
 });

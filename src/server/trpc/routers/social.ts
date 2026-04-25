@@ -1,7 +1,11 @@
 import { socialShareInputSchema } from '../../../shared/game';
 import { trackShareQuest } from '../../core/game-service';
 import { getPuzzlePrivate } from '../../core/puzzle-store';
-import { getShareCompletionReceipt, markLevelSharedOnce } from '../../core/share-receipts';
+import {
+  clearLevelSharedMark,
+  getShareCompletionReceipt,
+  markLevelSharedOnce,
+} from '../../core/share-receipts';
 import { shareResultAsComment } from '../../core/social';
 import { router } from '../base';
 import { authedProcedure } from '../procedures';
@@ -27,23 +31,41 @@ export const socialRouter = router({
           commentId: null,
         };
       }
+      if (typeof receipt.score !== 'number') {
+        return {
+          success: false,
+          reason: 'Score unavailable for this level.',
+          commentId: null,
+        };
+      }
+      const firstShareForLevel = await markLevelSharedOnce(userId, input.levelId);
+      if (!firstShareForLevel) {
+        return {
+          success: true,
+          reason: 'Result already shared for this level.',
+          commentId: null,
+        };
+      }
       const shared = await shareResultAsComment({
         levelId: input.levelId,
         solveSeconds: receipt.solveSeconds,
         mistakes: receipt.mistakes,
         heartsRemaining: receipt.heartsRemaining,
         usedPowerups: receipt.usedPowerups,
-        score: receipt.score ?? null,
+        score: receipt.score,
       });
       if (shared.success) {
-        const firstShareForLevel = await markLevelSharedOnce(userId, input.levelId);
-        if (firstShareForLevel) {
-          await trackShareQuest({
-            levelId: input.levelId,
-            dateKey: puzzle.dateKey,
-          });
-        }
+        await trackShareQuest({
+          levelId: input.levelId,
+          dateKey: puzzle.dateKey,
+        });
+        return shared;
       }
-      return shared;
+      await clearLevelSharedMark(userId, input.levelId);
+      return {
+        success: false,
+        reason: shared.reason,
+        commentId: shared.commentId,
+      };
     }),
 });

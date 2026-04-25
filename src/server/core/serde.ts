@@ -11,14 +11,16 @@ export const parseWithSchema = <T>(
     return fallback;
   }
 
-  const parsedJson = JSON.parse(input);
-  const result = schema.safeParse(parsedJson);
-
-  if (!result.success) {
+  try {
+    const parsedJson = JSON.parse(input);
+    const result = schema.safeParse(parsedJson);
+    if (!result.success) {
+      return fallback;
+    }
+    return result.data;
+  } catch {
     return fallback;
   }
-
-  return result.data;
 };
 
 export const formatDateKey = (now: Date): string => {
@@ -27,4 +29,3 @@ export const formatDateKey = (now: Date): string => {
   const day = `${now.getUTCDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-

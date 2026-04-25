@@ -33,6 +33,28 @@
         "tier": "premium",
         "category": "bundle"
       }
+    },
+    {
+      "sku": "heart_rush_30m",
+      "displayName": "Heart Rush",
+      "description": "30 minutes of infinite hearts",
+      "price": 25,
+      "accountingType": "INSTANT",
+      "metadata": {
+        "tier": "boost",
+        "category": "hearts"
+      }
+    },
+    {
+      "sku": "heart_surge_2h",
+      "displayName": "Heart Surge",
+      "description": "2 hours of infinite hearts",
+      "price": 150,
+      "accountingType": "INSTANT",
+      "metadata": {
+        "tier": "boost",
+        "category": "hearts"
+      }
     }
   ]
 }

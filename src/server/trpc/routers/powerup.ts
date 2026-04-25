@@ -10,15 +10,19 @@ export const powerupRouter = router({
     .mutation(async ({ input, ctx }) => {
       return await purchasePowerup({
         userId: ctx.userId!,
+        postId: ctx.postId ?? undefined,
+        levelId: input.levelId,
         itemType: input.itemType,
         quantity: input.quantity,
       });
     }),
-  use: authedProcedure.input(powerupUseInputSchema).mutation(async ({ input }) => {
+  use: authedProcedure.input(powerupUseInputSchema).mutation(async ({ input, ctx }) => {
     return await usePowerupForSession({
       levelId: input.levelId,
       itemType: input.itemType,
       targetIndex: input.targetIndex ?? null,
+      userId: ctx.userId!,
+      postId: ctx.postId ?? undefined,
     });
   }),
 });

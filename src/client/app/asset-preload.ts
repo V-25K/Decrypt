@@ -9,6 +9,9 @@ const imagePreloadPromises = new Map<string, Promise<boolean>>();
 const connectedOrigins = new Set<string>();
 
 const defaultPreloadTimeoutMs = 1800;
+const maxLoadedImageCacheSize = 320;
+const maxPreloadPromiseCacheSize = 320;
+const maxConnectedOrigins = 64;
 
 const canPreloadImages = (): boolean =>
   typeof window !== 'undefined' && typeof Image !== 'undefined';
@@ -19,8 +22,42 @@ const normalizeSources = (sources: string[]): string[] =>
       sources
         .map((source) => source.trim())
         .filter((source) => source.length > 0)
-    )
+      )
   );
+
+const addToBoundedSet = (
+  targetSet: Set<string>,
+  value: string,
+  maxSize: number
+): void => {
+  if (targetSet.has(value)) {
+    return;
+  }
+  targetSet.add(value);
+  if (targetSet.size <= maxSize) {
+    return;
+  }
+  const oldest = targetSet.values().next().value;
+  if (typeof oldest === 'string') {
+    targetSet.delete(oldest);
+  }
+};
+
+const addToBoundedPromiseCache = (
+  targetMap: Map<string, Promise<boolean>>,
+  key: string,
+  value: Promise<boolean>,
+  maxSize: number
+): void => {
+  targetMap.set(key, value);
+  if (targetMap.size <= maxSize) {
+    return;
+  }
+  const oldest = targetMap.keys().next().value;
+  if (typeof oldest === 'string') {
+    targetMap.delete(oldest);
+  }
+};
 
 const ensureOriginConnection = (source: string) => {
   if (typeof document === 'undefined') {
@@ -31,7 +68,7 @@ const ensureOriginConnection = (source: string) => {
     if (url.origin === window.location.origin || connectedOrigins.has(url.origin)) {
       return;
     }
-    connectedOrigins.add(url.origin);
+    addToBoundedSet(connectedOrigins, url.origin, maxConnectedOrigins);
 
     const preconnect = document.createElement('link');
     preconnect.rel = 'preconnect';
@@ -86,7 +123,7 @@ export const preloadImageAsset = (
       image.onerror = null;
       imagePreloadPromises.delete(src);
       if (ok) {
-        loadedImageSources.add(src);
+        addToBoundedSet(loadedImageSources, src, maxLoadedImageCacheSize);
       }
       resolve(ok);
     };
@@ -104,11 +141,19 @@ export const preloadImageAsset = (
     }
 
     if (shouldDecode && typeof image.decode === 'function') {
-      void image.decode().then(() => settle(true)).catch(() => undefined);
+      void image
+        .decode()
+        .then(() => settle(image.naturalWidth > 0))
+        .catch(() => undefined);
     }
   });
 
-  imagePreloadPromises.set(src, nextPromise);
+  addToBoundedPromiseCache(
+    imagePreloadPromises,
+    src,
+    nextPromise,
+    maxPreloadPromiseCacheSize
+  );
   return nextPromise;
 };
 

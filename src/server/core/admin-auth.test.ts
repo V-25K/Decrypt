@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { getModeratorsAllMock, getModeratorsMock } = vi.hoisted(() => {
+const { getModeratorsAllMock, getModeratorsMock, redisMock } = vi.hoisted(() => {
   const all = vi.fn();
+  // Default: cache miss (returns null so the live Reddit API is always called)
+  const get = vi.fn().mockResolvedValue(null);
+  const set = vi.fn().mockResolvedValue(undefined);
   return {
     getModeratorsAllMock: all,
     getModeratorsMock: vi.fn(() => ({
       all,
     })),
+    redisMock: { get, set },
   };
 });
 
@@ -14,28 +18,31 @@ vi.mock('@devvit/web/server', () => ({
   reddit: {
     getModerators: getModeratorsMock,
   },
+  redis: redisMock,
 }));
 
 import {
   hasAdminAccess,
-  isAllowlistedAdmin,
   isSubredditModerator,
 } from './admin-auth';
 
 afterEach(() => {
   getModeratorsMock.mockClear();
   getModeratorsAllMock.mockReset();
+  redisMock.get.mockResolvedValue(null); // reset to cache-miss after each test
+  redisMock.set.mockResolvedValue(undefined);
 });
 
 describe('admin auth', () => {
-  it('allows configured allowlist usernames', async () => {
+  it('does not allow hardcoded placeholder usernames without moderator access', async () => {
+    getModeratorsAllMock.mockResolvedValue([]);
+
     const allowed = await hasAdminAccess({
       subredditName: 'decrypttest_dev',
       username: 'your_reddit_username',
     });
-    expect(allowed).toBe(true);
-    expect(isAllowlistedAdmin('YOUR_REDDIT_USERNAME')).toBe(true);
-    expect(getModeratorsMock).not.toHaveBeenCalled();
+    expect(allowed).toBe(false);
+    expect(getModeratorsMock).toHaveBeenCalledTimes(1);
   });
 
   it('recognizes moderators for subreddit', async () => {
@@ -64,5 +71,15 @@ describe('admin auth', () => {
 
     expect(allowed).toBe(false);
   });
-});
 
+  it('surfaces moderator lookup failures instead of silently denying', async () => {
+    getModeratorsAllMock.mockRejectedValue(new Error('reddit timeout'));
+
+    await expect(
+      hasAdminAccess({
+        subredditName: 'decrypttest_dev',
+        username: 'mod_user',
+      })
+    ).rejects.toThrow('reddit timeout');
+  });
+});

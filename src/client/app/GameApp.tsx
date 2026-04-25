@@ -22,16 +22,12 @@ import type {
   ConfettiLauncher,
   Options as CanvasConfettiOptions,
 } from 'canvas-confetti';
-import { trpc } from '../trpc';
+import { loadConfettiModule } from '../../shared/bundle-analysis';
 import { chunkPuzzleTokensByWordLimit, cn, tokenizePuzzleTiles } from '../utils';
 import {
   getOfferPromotionLabel,
   promotedOfferPrioritySkus,
 } from '../../shared/store';
-import {
-  isPrimaryCommunitySubreddit,
-  primaryCommunitySubreddit,
-} from '../../shared/community';
 import {
   getQuestProgressValue,
 } from '../../shared/quests';
@@ -49,27 +45,28 @@ import {
 } from './asset-preload';
 import {
   coinEmoji,
+  coinHeartRefillCost,
+  coinHeartTopUpCost,
   challengeHeartbeatIntervalMs,
   confettiPalette,
   crossMarkEmoji,
   emptyHeartGlyph,
   heartEmoji,
+  infiniteHeartsIcon,
   heartRefillIntervalMs,
   inlineMaxWordsPerLine,
-  lockEmoji,
   maxOutcomeCrowdAvatars,
-  maxWordTileColumns,
-  powerupCost,
   powerupIcon,
   powerupLabel,
-  wordContinuationGlyph,
 } from './constants';
+import {
+  getDailyRetryQuote,
+  getPowerupPrice,
+} from '../../shared/game-balance';
 import type {
-  AllTimeLeaderboardEntry,
   AppScreen,
   BuyDialogState,
   ChallengeMetrics,
-  DailyLeaderboardEntry,
   DeviceTier,
   EndlessCatalogStatus,
   HomeTab,
@@ -78,24 +75,25 @@ import type {
   PowerupType,
   Profile,
   QuestStatus,
+  RetryDialogState,
   RouterOutputs,
   RankSummary,
   StatsTab,
   StoreProduct,
   Puzzle,
-  PuzzlePublicTile,
 } from './types';
 import {
-  HomeIcon,
   InfoIcon,
-  ReplayIcon,
   SettingsIcon,
-  ShareIcon,
 } from '../components/Icons';
 import { HelpOverlay } from '../components/HelpOverlay';
 import { SettingsOverlay } from '../components/SettingsOverlay';
 import { BuyDialog } from '../components/BuyDialog';
 import { BottomNav } from '../components/BottomNav';
+import { ChallengePuzzleGrid } from '../components/ChallengePuzzleGrid';
+import { OutcomeOverlay } from '../components/OutcomeOverlay';
+import { RetryDialog } from '../components/RetryDialog';
+import { HeartPurchaseDialog } from '../components/HeartPurchaseDialog';
 import { HomeScreen } from '../screens/HomeScreen';
 import {
   clearCorrectGuessIndices,
@@ -109,10 +107,6 @@ import {
 } from './game-storage';
 import {
   buildOutcomeCrowdBubbles,
-  outcomeCrowdCollisionPasses,
-  outcomeCrowdGravity,
-  resolveOutcomeCrowdCollision,
-  settleOutcomeCrowdBoundary,
   syncOutcomeCrowdNodePosition,
   type OutcomeCrowdBubble,
   type OutcomeCrowdViewport,
@@ -133,16 +127,33 @@ import {
   isQuestHidden,
   questCards,
 } from './game-formatters';
+import { trpc } from '../trpc';
 
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
-type ConfettiModule = typeof import('canvas-confetti');
 const criticalUiImageAssets = ['/background.webp', '/logo.png', '/snoo.png'];
 const deferredUiImageAssets = ['/result.webp'];
 const criticalOutcomeAvatarCount = 3;
 const outcomeCrowdFallbackReadyMs = 650;
 const nonCriticalWarmupDelayMs = 180;
 const nonCriticalWarmupTimeoutMs = 1400;
+const isLayoutlessTestEnv =
+  typeof navigator !== 'undefined' && /jsdom|happy-dom/i.test(navigator.userAgent);
+
+const readOutcomeCrowdViewport = (
+  node: HTMLElement
+): OutcomeCrowdViewport | null => {
+  const bounds = node.getBoundingClientRect();
+  const width = Math.round(bounds.width);
+  const height = Math.round(bounds.height);
+  if (width > 0 && height > 0) {
+    return { width, height };
+  }
+  if (isLayoutlessTestEnv) {
+    return { width: 500, height: 300 };
+  }
+  return null;
+};
 
 const LazyShopScreen = lazy(() =>
   import('../screens/ShopScreen').then((module) => ({ default: module.ShopScreen }))
@@ -207,7 +218,7 @@ const scheduleNonCriticalWarmup = (
   };
 };
 
-const canInitializeConfettiCanvas = (canvas: HTMLCanvasElement): boolean => {
+const canInitializeConfettiCanvas = (_canvas: HTMLCanvasElement): boolean => {
   if (
     typeof navigator !== 'undefined' &&
     typeof navigator.userAgent === 'string' &&
@@ -218,7 +229,7 @@ const canInitializeConfettiCanvas = (canvas: HTMLCanvasElement): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
-  return typeof canvas.transferControlToOffscreen === 'function';
+  return true;
 };
 
 const letterTileState = (
@@ -294,6 +305,33 @@ const defaultChallengeMetrics: ChallengeMetrics = {
   winRatePct: 0,
 };
 
+const formatRetryPenaltyLabel = (factor: number): string => {
+  const penaltyPct = Math.max(0, Math.round((1 - factor) * 100));
+  return penaltyPct <= 0 ? 'No penalty' : `-${penaltyPct}% score`;
+};
+
+const escapeSvgText = (value: string): string =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+const toUsernameAvatarDataUrl = (rawLabel: string): string => {
+  const label = rawLabel.trim().length > 0 ? rawLabel.trim() : 'Player';
+  const normalized = label.replace(/[^a-z0-9]/gi, '');
+  const initialsRaw = normalized.slice(0, 2).toUpperCase();
+  const initials = initialsRaw.length > 0 ? initialsRaw : 'P';
+  const shortName =
+    label.length <= 10 ? label : `${label.slice(0, 9).trim()}...`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <text x="50" y="46" text-anchor="middle" dominant-baseline="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="900" font-size="34" fill="rgba(0,0,0,0.82)">${escapeSvgText(initials)}</text>
+  <text x="50" y="74" text-anchor="middle" dominant-baseline="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="800" font-size="12" fill="rgba(0,0,0,0.7)">${escapeSvgText(shortName)}</text>
+</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+};
+
 export const GameApp = () => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -312,17 +350,36 @@ export const GameApp = () => {
   const [mode, setMode] = useState<'daily' | 'endless'>('daily');
   const [heartsRemaining, setHeartsRemaining] = useState(3);
   const [selectedTile, setSelectedTile] = useState<number | null>(null);
-  const [isGameOver, setIsGameOver] = useState(false);
-  const [isComplete, setIsComplete] = useState(false);
+  const [isGameOver, _setIsGameOver] = useState(false);
+  const [isComplete, _setIsComplete] = useState(false);
+
+  const applicationOutcomeLockRef = useRef(false);
+
+  const setIsComplete = useCallback((value: boolean | ((prevState: boolean) => boolean)) => {
+    _setIsComplete((prev) => {
+      const nextValue = typeof value === 'function' ? value(prev) : value;
+      applicationOutcomeLockRef.current = nextValue;
+      return nextValue;
+    });
+  }, []);
+
+  const setIsGameOver = useCallback((value: boolean | ((prevState: boolean) => boolean)) => {
+    _setIsGameOver((prev) => {
+      if (applicationOutcomeLockRef.current) return false;
+      return typeof value === 'function' ? value(prev) : value;
+    });
+  }, []);
   const [completionResult, setCompletionResult] = useState<RouterOutputs['game']['completeSession'] | null>(null);
   const [completionSolveSeconds, setCompletionSolveSeconds] = useState<number | null>(null);
   const [challengeStartTs, setChallengeStartTs] = useState<number | null>(null);
   const [completionCrowdAvatarUrls, setCompletionCrowdAvatarUrls] = useState<string[]>([]);
   const [completionCrowdReady, setCompletionCrowdReady] = useState(false);
   const [completionCelebrationId, setCompletionCelebrationId] = useState(0);
-  const [outcomeCrowdViewport, setOutcomeCrowdViewport] = useState<OutcomeCrowdViewport>({
-    width: 0,
-    height: 0,
+  const [outcomeCrowdViewport, setOutcomeCrowdViewport] = useState<OutcomeCrowdViewport>(() => {
+    return {
+      width: isLayoutlessTestEnv ? 500 : 0,
+      height: isLayoutlessTestEnv ? 300 : 0,
+    };
   });
   const [outcomeCrowdBubbles, setOutcomeCrowdBubbles] = useState<OutcomeCrowdBubble[]>([]);
   const [featuredOffer, setFeaturedOffer] = useState<StoreProduct | null>(null);
@@ -335,11 +392,20 @@ export const GameApp = () => {
       : 'challenge'
   );
   const [buyDialog, setBuyDialog] = useState<BuyDialogState | null>(null);
+  const [retryDialog, setRetryDialog] = useState<RetryDialogState | null>(null);
   const [correctGuessTileIndices, setCorrectGuessTileIndices] = useState<Set<number>>(() => new Set());
   const [wrongGuessTileIndices, setWrongGuessTileIndices] = useState<Set<number>>(() => new Set());
   const [puzzleScale, setPuzzleScale] = useState(1);
   const [isPuzzleVerticallyCentered, setIsPuzzleVerticallyCentered] = useState(true);
   const [challengeMetrics, setChallengeMetrics] = useState<ChallengeMetrics>(defaultChallengeMetrics);
+  const [dailyRetryCount, setDailyRetryCount] = useState(0);
+  const [nextDailyRetryCost, setNextDailyRetryCost] = useState(0);
+  const [, setDailyRetryScoreFactor] = useState(1);
+  const [nextDailyRetryScoreFactor, setNextDailyRetryScoreFactor] = useState(1);
+  const [requiresPaidRetry, setRequiresPaidRetry] = useState(false);
+  const [heartPurchaseBusy, setHeartPurchaseBusy] = useState(false);
+  const [coinHeartLimitReached, setCoinHeartLimitReached] = useState(false);
+  const [heartPurchaseDialogOpen, setHeartPurchaseDialogOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [headerNowTs, setHeaderNowTs] = useState(() => Date.now());
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -363,9 +429,8 @@ export const GameApp = () => {
   }, [questStatus]);
   const [claimingQuestId, setClaimingQuestId] = useState<string | null>(null);
   const [joiningCommunity, setJoiningCommunity] = useState(false);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
-  const [dailyLeaderboardEntries, setDailyLeaderboardEntries] = useState<DailyLeaderboardEntry[]>([]);
-  const [endlessLeaderboardEntries, setEndlessLeaderboardEntries] = useState<AllTimeLeaderboardEntry[]>([]);
+  const [, setDailyLeaderboardEntries] = useState<RouterOutputs['leaderboard']['getDaily']['entries']>([]);
+  const [, setEndlessLeaderboardEntries] = useState<RouterOutputs['leaderboard']['getAllTime']['levels']>([]);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>('daily');
   const [statsTab, setStatsTab] = useState<StatsTab>('daily');
   const [homeTab, setHomeTab] = useState<HomeTab>('daily');
@@ -374,7 +439,6 @@ export const GameApp = () => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const confettiCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const confettiLauncherRef = useRef<ConfettiLauncher | null>(null);
-  const confettiModuleRef = useRef<ConfettiModule | null>(null);
   const outcomeCrowdRef = useRef<HTMLElement | null>(null);
   const outcomeCrowdBubblesRef = useRef<OutcomeCrowdBubble[]>([]);
   const outcomeCrowdNodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -388,8 +452,15 @@ export const GameApp = () => {
     Array<{ levelId: string; tileIndex: number; letter: string }>
   >([]);
   const processingGuessRef = useRef(false);
+  const completionInProgressRef = useRef(false);
   const puzzleRef = useRef<Puzzle | null>(null);
   const heartbeatInFlightRef = useRef(false);
+  const communityJoinRecorded = profile?.communityJoinRecorded === true;
+  const communityJoinLabel = joiningCommunity
+    ? 'Joining...'
+    : communityJoinRecorded
+      ? 'Joined'
+      : 'Subscribe';
 
   const tokens = useMemo(() => (puzzle ? tokenizePuzzleTiles(puzzle.tiles) : []), [puzzle]);
   const formattedLevel = useMemo(() => formatLevelNumber(levelId), [levelId]);
@@ -407,10 +478,9 @@ export const GameApp = () => {
     if (!node) {
       return;
     }
-    const width = node.clientWidth || window.innerWidth;
-    const height = node.clientHeight || window.innerHeight;
-    if (width > 0 && height > 0) {
-      setOutcomeCrowdViewport({ width, height });
+    const viewport = readOutcomeCrowdViewport(node);
+    if (viewport) {
+      setOutcomeCrowdViewport(viewport);
     }
   }, []);
   const setOutcomeCrowdBubbleNode = useCallback(
@@ -430,15 +500,6 @@ export const GameApp = () => {
     []
   );
 
-  const loadConfettiModule = useCallback(async (): Promise<ConfettiModule> => {
-    if (confettiModuleRef.current) {
-      return confettiModuleRef.current;
-    }
-    const module = await import('canvas-confetti');
-    confettiModuleRef.current = module;
-    return module;
-  }, []);
-
   const setConfettiCanvasNode = useCallback(
     (node: HTMLCanvasElement | null) => {
       confettiCanvasRef.current = node;
@@ -452,38 +513,42 @@ export const GameApp = () => {
       void (async () => {
         try {
           const module = await loadConfettiModule();
-          if (confettiCanvasRef.current !== node) {
-            return;
-          }
-          confettiLauncherRef.current = module.default.create(node, {
-            resize: true,
-            useWorker: true,
-          });
+	          if (confettiCanvasRef.current !== node) {
+	            return;
+	          }
+	          const createConfetti = module.default.create;
+	          if (!createConfetti) {
+	            return;
+	          }
+	          confettiLauncherRef.current = createConfetti(node, {
+	            resize: true,
+	            useWorker: true,
+	          });
         } catch (_error) {
           try {
             const module = await loadConfettiModule();
-            if (confettiCanvasRef.current !== node) {
-              return;
-            }
-            confettiLauncherRef.current = module.default.create(node, {
-              resize: true,
-              useWorker: false,
-            });
+	            if (confettiCanvasRef.current !== node) {
+	              return;
+	            }
+	            const createConfetti = module.default.create;
+	            if (!createConfetti) {
+	              return;
+	            }
+	            confettiLauncherRef.current = createConfetti(node, {
+	              resize: true,
+	              useWorker: false,
+	            });
           } catch (_fallbackError) {
             confettiLauncherRef.current = null;
           }
         }
       })();
     },
-    [loadConfettiModule]
+    []
   );
 
   const fireConfettiBurst = useCallback((options: CanvasConfettiOptions) => {
-    const launcher = confettiLauncherRef.current;
-    if (!launcher) {
-      return;
-    }
-    void launcher({
+    const sharedOptions: CanvasConfettiOptions = {
       colors: confettiPalette,
       disableForReducedMotion: true,
       scalar: 1.6,
@@ -492,7 +557,20 @@ export const GameApp = () => {
       ticks: 220,
       shapes: ['square'],
       ...options,
-    });
+    };
+    const launcher = confettiLauncherRef.current;
+    if (!launcher) {
+      void (async () => {
+        try {
+          const module = await loadConfettiModule();
+          await module.default(sharedOptions);
+        } catch (_error) {
+          // Best effort only.
+        }
+      })();
+      return;
+    }
+    void launcher(sharedOptions);
   }, []);
 
   const launchCompletionConfetti = useCallback(() => {
@@ -559,6 +637,24 @@ export const GameApp = () => {
     setEndlessCatalogStatus(bootstrap.endlessCatalog);
   }, []);
 
+  const applyDailyRetryState = useCallback(
+    (state: Pick<
+      RouterOutputs['game']['loadLevel'],
+      | 'retryCount'
+      | 'nextRetryCost'
+      | 'retryScoreFactor'
+      | 'nextRetryScoreFactor'
+      | 'requiresPaidRetry'
+    >) => {
+      setDailyRetryCount(state.retryCount);
+      setNextDailyRetryCost(state.nextRetryCost);
+      setDailyRetryScoreFactor(state.retryScoreFactor);
+      setNextDailyRetryScoreFactor(state.nextRetryScoreFactor);
+      setRequiresPaidRetry(state.requiresPaidRetry);
+    },
+    []
+  );
+
   const loadCompletionSolveSecondsFromDatabase = useCallback(async (
     levelIdToLookup: string
   ): Promise<number | null> => {
@@ -595,7 +691,6 @@ export const GameApp = () => {
   }, []);
 
   const loadLeaderboardData = useCallback(async () => {
-    setLeaderboardLoading(true);
     try {
       const rankSummaryPromise = trpc.leaderboard.getRankSummary
         .query({})
@@ -624,8 +719,6 @@ export const GameApp = () => {
       setEndlessLeaderboardEntries([]);
       setRankSummary(null);
       showToast('Unable to load leaderboard.');
-    } finally {
-      setLeaderboardLoading(false);
     }
   }, []);
 
@@ -643,7 +736,13 @@ export const GameApp = () => {
       const products = await trpc.store.getProducts.query();
       setShopProducts(products.products);
       setFeaturedOffer(pickPromotedOffer(products.products));
-    } catch (_error) {
+    } catch (error) {
+      console.error('[client] store.getProducts failed:', error);
+      showToast(
+        error instanceof Error && error.message.trim().length > 0
+          ? `Unable to load store: ${error.message}`
+          : 'Unable to load store bundles.'
+      );
       setShopProducts([]);
       setFeaturedOffer(null);
     }
@@ -718,6 +817,103 @@ export const GameApp = () => {
     );
   };
 
+  const isGuessableTileAtIndex = (
+    currentPuzzle: Puzzle | null,
+    tileIndex: number
+  ): boolean => {
+    if (!currentPuzzle) {
+      return false;
+    }
+    const tile = currentPuzzle.tiles[tileIndex];
+    return Boolean(
+      tile &&
+        tile.isLetter &&
+        !tile.isLocked &&
+        tile.displayChar === '_'
+    );
+  };
+
+  const getCurrentRemainingLetters = useCallback(
+    (currentPuzzle: Puzzle | null): number => {
+      if (!currentPuzzle) {
+        return 10;
+      }
+      return currentPuzzle.tiles.filter(
+        (tile) => tile.isLetter && tile.displayChar === '_'
+      ).length;
+    },
+    []
+  );
+
+  const getCurrentPowerupUnitPrice = useCallback(
+    (item: PowerupType, currentPuzzle: Puzzle | null): number => {
+      const pricingContext = {
+        remainingLetters: getCurrentRemainingLetters(currentPuzzle),
+        ...(currentPuzzle ? { difficulty: currentPuzzle.difficulty } : {}),
+      };
+      return getPowerupPrice(item, pricingContext);
+    },
+    [getCurrentRemainingLetters]
+  );
+
+  const findNextGuessableTileIndex = (
+    currentPuzzle: Puzzle | null,
+    fromIndex: number
+  ): number | null => {
+    if (!currentPuzzle) {
+      return null;
+    }
+    const tileCount = currentPuzzle.tiles.length;
+    if (tileCount <= 0) {
+      return null;
+    }
+    const startIndex =
+      Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < tileCount
+        ? fromIndex
+        : 0;
+    for (let offset = 1; offset <= tileCount; offset += 1) {
+      const index = (startIndex + offset) % tileCount;
+      if (isGuessableTileAtIndex(currentPuzzle, index)) {
+        return index;
+      }
+    }
+    return null;
+  };
+
+  const buildDispatchableChunk = (
+    entries: Array<{ levelId: string; tileIndex: number; letter: string }>,
+    currentPuzzle: Puzzle | null
+  ): Array<{ levelId: string; tileIndex: number; letter: string }> => {
+    if (!currentPuzzle || entries.length === 0) {
+      return [];
+    }
+    const dispatchable: Array<{ levelId: string; tileIndex: number; letter: string }> = [];
+    const seenTileIndices = new Set<number>();
+    const seenCipherNumbers = new Set<number>();
+    for (const entry of entries) {
+      if (seenTileIndices.has(entry.tileIndex)) {
+        continue;
+      }
+      if (!isGuessableTileAtIndex(currentPuzzle, entry.tileIndex)) {
+        continue;
+      }
+      const tile = currentPuzzle.tiles[entry.tileIndex];
+      const cipherNumber = tile?.cipherNumber;
+      if (
+        typeof cipherNumber === 'number' &&
+        seenCipherNumbers.has(cipherNumber)
+      ) {
+        continue;
+      }
+      dispatchable.push(entry);
+      seenTileIndices.add(entry.tileIndex);
+      if (typeof cipherNumber === 'number') {
+        seenCipherNumbers.add(cipherNumber);
+      }
+    }
+    return dispatchable;
+  };
+
   const clearTileFeedback = useCallback(() => {
     wrongGuessTimeoutsRef.current.forEach((timeoutId) => {
       window.clearTimeout(timeoutId);
@@ -748,6 +944,10 @@ export const GameApp = () => {
     wrongGuessTimeoutsRef.current.set(tileIndex, timeoutId);
   };
 
+  useEffect(() => {
+    clearTileFeedback();
+  }, [levelId, clearTileFeedback]);
+
   const startLevel = useCallback(async (
     activeLevelId: string,
     activeMode: 'daily' | 'endless'
@@ -769,7 +969,7 @@ export const GameApp = () => {
       setIsComplete(false);
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
-      setChallengeStartTs(Date.now());
+      setChallengeStartTs(session.session.startTimestamp);
       persistOutcomeState(null);
       setSelectedTile(null);
       clearTileFeedback();
@@ -784,15 +984,23 @@ export const GameApp = () => {
         showToast(message);
         return false;
       }
+      if (message.toLowerCase().includes('retry requires coins')) {
+        showToast('Daily retry requires coins.');
+        return false;
+      }
       if (message.toLowerCase().includes('already completed')) {
         showToast(message);
         return false;
       }
       throw error;
     }
+    // setIsComplete and setIsGameOver are stable state setters from useState
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearTileFeedback, refreshBootstrapState]);
 
   const loadLevel = async (nextMode: 'daily' | 'endless') => {
+    setIsComplete(false);
+    setIsGameOver(false);
     setBusy(true);
     try {
       const loaded = await trpc.game.loadLevel.query({
@@ -801,9 +1009,45 @@ export const GameApp = () => {
       setMode(nextMode);
       setLevelId(loaded.levelId);
       setPuzzle(loaded.puzzle);
-      setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
+      applyDailyRetryState(loaded);
+      setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
       setSelectedTile(null);
-      await startLevel(loaded.levelId, nextMode);
+
+      if (loaded.alreadyCompleted) {
+        clearCorrectGuessIndices(loaded.levelId);
+        setIsComplete(true);
+        setIsGameOver(false);
+        setCompletionResult(null);
+        setCompletionSolveSeconds(
+          await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
+        );
+        persistOutcomeState({
+          levelId: loaded.levelId,
+          isComplete: true,
+          isGameOver: false,
+          completion: null,
+          solveSeconds: null,
+          savedAt: Date.now(),
+        });
+      } else if (nextMode === 'daily' && loaded.requiresPaidRetry) {
+        setIsComplete(false);
+        setIsGameOver(true);
+        setCompletionResult(null);
+        setCompletionSolveSeconds(null);
+        setChallengeStartTs(null);
+        setHeartsRemaining(loaded.puzzle.heartsMax);
+        clearTileFeedback();
+        persistOutcomeState({
+          levelId: loaded.levelId,
+          isComplete: false,
+          isGameOver: true,
+          completion: null,
+          solveSeconds: null,
+          savedAt: Date.now(),
+        });
+      } else {
+        await startLevel(loaded.levelId, nextMode);
+      }
       await refreshCurrentView(loaded.levelId);
     } finally {
       setBusy(false);
@@ -811,16 +1055,34 @@ export const GameApp = () => {
   };
 
   const finishLevel = async () => {
+    if (completionInProgressRef.current) {
+      return;
+    }
+    completionInProgressRef.current = true;
+    const activeLevelId = levelId;
+    const activeMode = mode;
     setBusy(true);
     const fallbackSolveSeconds =
       challengeStartTs !== null
         ? Math.max(0, Math.round((Date.now() - challengeStartTs) / 1000))
         : null;
     try {
-      const result = await trpc.game.completeSession.mutate({ levelId, mode });
+      const result = await trpc.game.completeSession.mutate({
+        levelId: activeLevelId,
+        mode: activeMode,
+      });
       const completed = result.ok && result.accepted;
+      const retryQuote = getDailyRetryQuote({
+        retryCount: result.retryCount,
+        difficulty: puzzle?.difficulty,
+      });
       setProfile(result.profile);
       setInventory(result.inventory);
+      setDailyRetryCount(result.retryCount);
+      setDailyRetryScoreFactor(result.retryScoreFactor);
+      setNextDailyRetryCost(retryQuote.nextRetryCost);
+      setNextDailyRetryScoreFactor(retryQuote.nextRetryScoreFactor);
+      setRequiresPaidRetry(false);
       setIsComplete(completed);
       setIsGameOver(false);
       setCompletionResult(completed ? result : null);
@@ -831,7 +1093,7 @@ export const GameApp = () => {
       setCompletionSolveSeconds(resolvedSolveSeconds);
       if (completed) {
         persistOutcomeState({
-          levelId,
+          levelId: activeLevelId,
           isComplete: true,
           isGameOver: false,
           completion: result,
@@ -841,13 +1103,14 @@ export const GameApp = () => {
       } else {
         persistOutcomeState(null);
         showToast('Run not accepted. Starting a fresh attempt.');
-        await startLevel(levelId, mode);
-        await refreshCurrentView(levelId);
+        await startLevel(activeLevelId, activeMode);
+        await refreshCurrentView(activeLevelId);
       }
       if (completed) {
         setCompletionCelebrationId((previous) => previous + 1);
       }
     } finally {
+      completionInProgressRef.current = false;
       setBusy(false);
     }
   };
@@ -856,21 +1119,10 @@ export const GameApp = () => {
     if (completionCelebrationId === 0 || !isComplete) {
       return;
     }
-    let cancelled = false;
-    let animationFrameId = 0;
-    const run = () => {
-      if (cancelled) {
-        return;
-      }
-      if (!confettiCanvasRef.current || !confettiLauncherRef.current) {
-        animationFrameId = window.requestAnimationFrame(run);
-        return;
-      }
+    const animationFrameId = window.requestAnimationFrame(() => {
       launchCompletionConfetti();
-    };
-    run();
+    });
     return () => {
-      cancelled = true;
       window.cancelAnimationFrame(animationFrameId);
     };
   }, [completionCelebrationId, isComplete, launchCompletionConfetti]);
@@ -879,6 +1131,7 @@ export const GameApp = () => {
     let cancelled = false;
     let cancelDeferredNonCritical: () => void = () => undefined;
     const run = async () => {
+      if (isComplete) return;
       setLoading(true);
       setBusy(true);
       try {
@@ -899,6 +1152,7 @@ export const GameApp = () => {
         setMode('daily');
         setLevelId(loaded.levelId);
         setPuzzle(loaded.puzzle);
+        applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
         setSelectedTile(null);
         const persistedOutcome = readOutcomeState();
@@ -923,6 +1177,22 @@ export const GameApp = () => {
           setChallengeStartTs(null);
           setHeartsRemaining(loaded.puzzle.heartsMax);
           clearTileFeedback();
+        } else if (loaded.requiresPaidRetry && !loaded.alreadyCompleted) {
+          setIsComplete(false);
+          setIsGameOver(true);
+          setCompletionResult(null);
+          setCompletionSolveSeconds(null);
+          setChallengeStartTs(null);
+          setHeartsRemaining(loaded.puzzle.heartsMax);
+          clearTileFeedback();
+          persistOutcomeState({
+            levelId: loaded.levelId,
+            isComplete: false,
+            isGameOver: true,
+            completion: null,
+            solveSeconds: null,
+            savedAt: Date.now(),
+          });
         } else if (loaded.alreadyCompleted) {
           clearCorrectGuessIndices(loaded.levelId);
           setIsComplete(true);
@@ -962,7 +1232,9 @@ export const GameApp = () => {
       cancelled = true;
       cancelDeferredNonCritical();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isComplete, setIsComplete, and setIsGameOver are stable or intentionally excluded
   }, [
+    applyDailyRetryState,
     clearTileFeedback,
     loadCompletionSolveSecondsFromDatabase,
     loadFeaturedOffer,
@@ -979,11 +1251,15 @@ export const GameApp = () => {
   }, []);
 
   useEffect(() => {
+    if (activeScreen !== 'challenge' || isComplete || isGameOver) {
+      return;
+    }
+    setHeaderNowTs(Date.now());
     const intervalId = window.setInterval(() => {
       setHeaderNowTs(Date.now());
     }, 1000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [activeScreen, isComplete, isGameOver]);
 
   useEffect(() => {
     if (
@@ -1098,7 +1374,7 @@ export const GameApp = () => {
     return () => {
       cancelWarmup();
     };
-  }, [loadConfettiModule]);
+  }, []);
 
   useEffect(() => {
     const activeTimeouts = wrongGuessTimeoutsRef.current;
@@ -1236,12 +1512,19 @@ export const GameApp = () => {
         if (cancelled) {
           return;
         }
-        const avatars = leaderboard.entries
-          .map((entry) => entry.snoovatarUrl ?? null)
-          .filter((entry): entry is string => Boolean(entry));
-        warmImagePreloads(avatars, {
-          fetchPriority: 'high',
+        const avatars = leaderboard.entries.map((entry) => {
+          const rawUrl = entry.snoovatarUrl;
+          if (typeof rawUrl === 'string' && rawUrl.trim().length > 0) {
+            return rawUrl;
+          }
+          return toUsernameAvatarDataUrl(formatLeaderboardName(entry));
         });
+        warmImagePreloads(
+          avatars.filter((url) => !url.startsWith('data:image/svg+xml')),
+          {
+          fetchPriority: 'high',
+          }
+        );
         setCompletionCrowdAvatarUrls(avatars);
       } catch (_error) {
         if (!cancelled) {
@@ -1256,7 +1539,7 @@ export const GameApp = () => {
   }, [isComplete, levelId, subredditName]);
 
   useEffect(() => {
-    if (activeScreen !== 'challenge' || !isComplete) {
+    if (activeScreen !== 'challenge' || !isComplete || !completionCrowdReady) {
       setOutcomeCrowdViewport({ width: 0, height: 0 });
       return;
     }
@@ -1266,10 +1549,13 @@ export const GameApp = () => {
     }
     let retryFrameId = 0;
     const syncViewport = () => {
-      const width = crowdElement.clientWidth;
-      const height = crowdElement.clientHeight;
-      if (width > 0 && height > 0) {
-        setOutcomeCrowdViewport({ width, height });
+      const viewport = readOutcomeCrowdViewport(crowdElement);
+      if (viewport) {
+        setOutcomeCrowdViewport((previous) =>
+          previous.width === viewport.width && previous.height === viewport.height
+            ? previous
+            : viewport
+        );
         return;
       }
       retryFrameId = window.requestAnimationFrame(syncViewport);
@@ -1286,7 +1572,7 @@ export const GameApp = () => {
       observer?.disconnect();
       window.removeEventListener('resize', syncViewport);
     };
-  }, [activeScreen, isComplete, completionCrowdAvatarUrls.length]);
+  }, [activeScreen, isComplete, completionCrowdAvatarUrls.length, completionCrowdReady]);
 
   useEffect(() => {
     const outcomeCrowdWidth = outcomeCrowdViewport.width;
@@ -1294,7 +1580,6 @@ export const GameApp = () => {
     if (
       activeScreen !== 'challenge' ||
       !isComplete ||
-      completionCrowdAvatarUrls.length === 0 ||
       outcomeCrowdWidth <= 0 ||
       outcomeCrowdHeight <= 0
     ) {
@@ -1303,72 +1588,34 @@ export const GameApp = () => {
       setCompletionCrowdReady(false);
       return;
     }
+    if (completionCrowdAvatarUrls.length === 0) {
+      outcomeCrowdBubblesRef.current = [];
+      setOutcomeCrowdBubbles([]);
+      setCompletionCrowdReady(true);
+      return;
+    }
 
     const viewport = { width: outcomeCrowdWidth, height: outcomeCrowdHeight };
-    let bubbles = buildOutcomeCrowdBubbles(completionCrowdAvatarUrls, viewport);
+    const bubbles = buildOutcomeCrowdBubbles(completionCrowdAvatarUrls, viewport);
     outcomeCrowdBubblesRef.current = bubbles;
     setOutcomeCrowdBubbles(bubbles);
-
-    let frameId = 0;
-    let lastFrameTs = performance.now();
-    const tick = (frameTs: number) => {
-      const dt = Math.min(1.5, (frameTs - lastFrameTs) / 16.6667 || 1);
-      lastFrameTs = frameTs;
-      const next = bubbles.map((bubble) => ({ ...bubble }));
-
-      for (const bubble of next) {
-        bubble.vx += (bubble.anchorX - bubble.x) * bubble.springStrength * dt;
-        bubble.vy += outcomeCrowdGravity * dt;
-        bubble.vx *= bubble.velocityDamping;
-        bubble.vy *= 0.992;
-        bubble.x += bubble.vx * dt;
-        bubble.y += bubble.vy * dt;
+    const nodes = outcomeCrowdNodesRef.current;
+    for (const bubble of bubbles) {
+      const node = nodes.get(bubble.id);
+      if (!node) {
+        continue;
       }
-
-      for (let pass = 0; pass < outcomeCrowdCollisionPasses; pass += 1) {
-        for (let firstIndex = 0; firstIndex < next.length; firstIndex += 1) {
-          for (
-            let secondIndex = firstIndex + 1;
-            secondIndex < next.length;
-            secondIndex += 1
-          ) {
-            const first = next[firstIndex];
-            const second = next[secondIndex];
-            if (!first || !second) {
-              continue;
-            }
-            resolveOutcomeCrowdCollision(first, second);
-          }
-        }
-
-        for (const bubble of next) {
-          settleOutcomeCrowdBoundary(bubble);
-        }
-      }
-
-      bubbles = next;
-      outcomeCrowdBubblesRef.current = next;
-      const nodes = outcomeCrowdNodesRef.current;
-      for (const bubble of next) {
-        const node = nodes.get(bubble.id);
-        if (!node) {
-          continue;
-        }
-        syncOutcomeCrowdNodePosition(node, bubble);
-      }
-
-      frameId = window.requestAnimationFrame(tick);
-    };
-
-    frameId = window.requestAnimationFrame(tick);
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
+      syncOutcomeCrowdNodePosition(node, bubble);
+    }
   }, [activeScreen, isComplete, completionCrowdAvatarUrls, outcomeCrowdViewport]);
 
   useEffect(() => {
-    if (!isComplete || completionCrowdAvatarUrls.length === 0) {
+    if (!isComplete) {
       setCompletionCrowdReady(false);
+      return;
+    }
+    if (completionCrowdAvatarUrls.length === 0) {
+      setCompletionCrowdReady(true);
       return;
     }
     let cancelled = false;
@@ -1453,7 +1700,15 @@ export const GameApp = () => {
         persistCorrectGuessIndices(levelId, next);
         return next;
       });
-      setSelectedTile((previous) => (previous === tileIndex ? null : previous));
+      setSelectedTile((previous) => {
+        if (previous === null) {
+          return previous;
+        }
+        if (isGuessableTileAtIndex(nextPuzzle, previous)) {
+          return previous;
+        }
+        return findNextGuessableTileIndex(nextPuzzle, previous);
+      });
       setPuzzle(nextPuzzle);
     } else if (result.errorCode !== 'TILE_LOCKED') {
       playSfx('wrong');
@@ -1466,13 +1721,14 @@ export const GameApp = () => {
     if (result.newlyUnlockedChainIds.length > 0) {
       showToast('Locks unlocked.');
     }
-    if (result.isLevelComplete) {
-      await finishLevel();
-    } else if (result.isGameOver) {
-      setIsGameOver(true);
-      setCompletionResult(null);
-      setCompletionSolveSeconds(null);
-      await refreshBootstrapState();
+      if (result.isLevelComplete) {
+        await finishLevel();
+      } else if (result.isGameOver) {
+        setIsGameOver(true);
+        setRequiresPaidRetry(mode === 'daily');
+        setCompletionResult(null);
+        setCompletionSolveSeconds(null);
+        await refreshBootstrapState();
       persistOutcomeState({
         levelId,
         isComplete: false,
@@ -1485,12 +1741,18 @@ export const GameApp = () => {
       if (viewPromise) {
         void viewPromise
           .then((view) => {
-            if (!hasAvailableLetters(view)) {
+            if (
+              !completionInProgressRef.current &&
+              !hasAvailableLetters(view)
+            ) {
               void finishLevel().catch(() => undefined);
             }
           })
           .catch(() => undefined);
-      } else if (!hasAvailableLetters(nextPuzzle)) {
+      } else if (
+        !completionInProgressRef.current &&
+        !hasAvailableLetters(nextPuzzle)
+      ) {
         void finishLevel().catch(() => undefined);
       }
     }
@@ -1499,12 +1761,17 @@ export const GameApp = () => {
 
   const submitLetterForTile = async (
     letter: string,
-    tileIndex: number
-  ): Promise<{ isLevelComplete: boolean; isGameOver: boolean } | null> => {
+    tileIndex: number,
+    currentPuzzleOverride?: Puzzle | null
+  ): Promise<{
+    isLevelComplete: boolean;
+    isGameOver: boolean;
+    nextPuzzle: Puzzle | null;
+  } | null> => {
     if (busy || isComplete || isGameOver) {
       return null;
     }
-    const currentPuzzle = puzzleRef.current;
+    const currentPuzzle = currentPuzzleOverride ?? puzzleRef.current;
     if (!currentPuzzle) {
       return null;
     }
@@ -1522,10 +1789,12 @@ export const GameApp = () => {
         tileIndex,
         guessedLetter: letter,
       });
-      await applyGuessResult(result, tileIndex, puzzleRef.current);
+      const nextPuzzle = await applyGuessResult(result, tileIndex, currentPuzzle);
+      puzzleRef.current = nextPuzzle;
       return {
         isLevelComplete: result.isLevelComplete,
         isGameOver: result.isGameOver,
+        nextPuzzle,
       };
     } catch (_error) {
       showToast('Guess failed.');
@@ -1551,13 +1820,16 @@ export const GameApp = () => {
         if (filtered.length === 0) {
           continue;
         }
+        let optimisticPuzzle = puzzleRef.current;
         if (filtered.length === 1) {
           const entry = filtered[0];
-          if (entry) {
+          if (entry && isGuessableTileAtIndex(optimisticPuzzle, entry.tileIndex)) {
             const singleResult = await submitLetterForTile(
               entry.letter,
-              entry.tileIndex
+              entry.tileIndex,
+              optimisticPuzzle
             );
+            optimisticPuzzle = singleResult?.nextPuzzle ?? optimisticPuzzle;
             if (
               singleResult?.isGameOver === true ||
               singleResult?.isLevelComplete === true
@@ -1574,13 +1846,19 @@ export const GameApp = () => {
         }
         for (let offset = 0; offset < filtered.length; offset += 20) {
           const chunk = filtered.slice(offset, offset + 20);
-          if (chunk.length === 1) {
-            const single = chunk[0];
+          const dispatchableChunk = buildDispatchableChunk(chunk, optimisticPuzzle);
+          if (dispatchableChunk.length === 0) {
+            continue;
+          }
+          if (dispatchableChunk.length === 1) {
+            const single = dispatchableChunk[0];
             if (single) {
               const singleResult = await submitLetterForTile(
                 single.letter,
-                single.tileIndex
+                single.tileIndex,
+                optimisticPuzzle
               );
+              optimisticPuzzle = singleResult?.nextPuzzle ?? optimisticPuzzle;
               if (
                 singleResult?.isGameOver === true ||
                 singleResult?.isLevelComplete === true
@@ -1598,14 +1876,13 @@ export const GameApp = () => {
           try {
             const result = await trpc.game.submitGuesses.mutate({
               levelId,
-              guesses: chunk.map((entry) => ({
+              guesses: dispatchableChunk.map((entry) => ({
                 tileIndex: entry.tileIndex,
                 guessedLetter: entry.letter,
               })),
             });
-            let optimisticPuzzle = puzzleRef.current;
             for (let index = 0; index < result.results.length; index += 1) {
-              const entry = chunk[index];
+              const entry = dispatchableChunk[index];
               const guessResult = result.results[index];
               if (!entry || !guessResult) {
                 continue;
@@ -1624,11 +1901,16 @@ export const GameApp = () => {
               }
             }
           } catch (_error) {
-            for (const entry of chunk) {
+            for (const entry of dispatchableChunk) {
+              if (!isGuessableTileAtIndex(optimisticPuzzle, entry.tileIndex)) {
+                continue;
+              }
               const singleResult = await submitLetterForTile(
                 entry.letter,
-                entry.tileIndex
+                entry.tileIndex,
+                optimisticPuzzle
               );
+              optimisticPuzzle = singleResult?.nextPuzzle ?? optimisticPuzzle;
               if (
                 singleResult?.isGameOver === true ||
                 singleResult?.isLevelComplete === true
@@ -1674,10 +1956,12 @@ export const GameApp = () => {
       busy ||
       isGameOver ||
       isComplete ||
+      completionInProgressRef.current ||
+      processingGuessRef.current ||
       guessInFlight ||
       queuedGuessCount > 0
     ) {
-      if (guessInFlight || queuedGuessCount > 0) {
+      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
         showToast('Finish current guesses first.');
       }
       return;
@@ -1746,11 +2030,18 @@ export const GameApp = () => {
     if (!profile) {
       return 0;
     }
-    return Math.floor(profile.coins / powerupCost[item]);
+    const unitPrice = getCurrentPowerupUnitPrice(item, puzzle);
+    if (unitPrice <= 0) {
+      return 0;
+    }
+    return Math.floor(profile.coins / unitPrice);
   };
 
   const openBuyDialog = (item: PowerupType) => {
-    if (busy) {
+    if (busy || processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+        showToast('Finish current guesses first.');
+      }
       return;
     }
     const maxQuantity = maxPurchasableQuantity(item);
@@ -1781,7 +2072,19 @@ export const GameApp = () => {
   };
 
   const confirmBuy = async () => {
-    if (!buyDialog || busy || !profile || !inventory) {
+    if (
+      !buyDialog ||
+      busy ||
+      processingGuessRef.current ||
+      guessInFlight ||
+      queuedGuessCount > 0 ||
+      !profile ||
+      !inventory ||
+      !levelId
+    ) {
+      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+        showToast('Finish current guesses first.');
+      }
       return;
     }
     const max = maxPurchasableQuantity(buyDialog.item);
@@ -1794,6 +2097,7 @@ export const GameApp = () => {
     setBusy(true);
     try {
       const bought = await trpc.powerup.purchase.mutate({
+        levelId,
         itemType: buyDialog.item,
         quantity,
       });
@@ -1809,8 +2113,46 @@ export const GameApp = () => {
     }
   };
 
+  const openRetryDialog = () => {
+    if (busy || processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+        showToast('Finish current guesses first.');
+      }
+      return;
+    }
+    if (!profile) {
+      return;
+    }
+    if (nextDailyRetryCost < 1) {
+      showToast('Retry is unavailable right now.');
+      return;
+    }
+    const followUpRetryQuote = getDailyRetryQuote({
+      retryCount: dailyRetryCount + 1,
+      difficulty: puzzle?.difficulty,
+    });
+    setRetryDialog({
+      cost: nextDailyRetryCost,
+      penaltyLabel: formatRetryPenaltyLabel(nextDailyRetryScoreFactor),
+      nextPenaltyLabel: formatRetryPenaltyLabel(followUpRetryQuote.nextRetryScoreFactor),
+      nextCost: followUpRetryQuote.nextRetryCost,
+      coins: profile.coins,
+      difficulty: puzzle?.difficulty || 5,
+      difficultyLabel: formatDifficultyLabel(puzzle?.difficulty),
+    });
+  };
+
   const handleProductPurchase = async (sku: string) => {
-    if (offerBusy) {
+    if (
+      offerBusy ||
+      busy ||
+      processingGuessRef.current ||
+      guessInFlight ||
+      queuedGuessCount > 0
+    ) {
+      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
+        showToast('Finish current guesses first.');
+      }
       return;
     }
     setOfferBusy(true);
@@ -1896,6 +2238,8 @@ export const GameApp = () => {
   };
 
   const loadModeAndOpenChallenge = async (nextMode: 'daily' | 'endless') => {
+    setIsComplete(false);
+    setIsGameOver(false);
     if (nextMode === 'endless' && !endlessCatalogAvailable) {
       showToast('Endless mode is not available yet.');
       return;
@@ -2017,10 +2361,6 @@ export const GameApp = () => {
       showToast('Community link is unavailable right now.');
       return;
     }
-    if (!isPrimaryCommunitySubreddit(subredditName)) {
-      showToast(`Community join is only available in r/${primaryCommunitySubreddit}.`);
-      return;
-    }
     setJoiningCommunity(true);
     try {
       const result = await trpc.profile.joinCommunity.mutate();
@@ -2032,17 +2372,123 @@ export const GameApp = () => {
       showToast(
         result.rewardCoins > 0
           ? `Community joined. ${coinEmoji} +${result.rewardCoins}`
-          : 'Community opened.'
+          : result.reason ?? 'Joined.'
       );
     } catch (_error) {
-      showToast('Unable to join the community right now.');
+      showToast('Unable to join the community right now. Please try again in a moment.');
     } finally {
       setJoiningCommunity(false);
     }
   };
 
+  const handlePurchaseDailyRetry = async () => {
+    if (!levelId) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await trpc.game.purchaseDailyRetry.mutate({
+        levelId,
+        mode,
+      });
+      setProfile(result.profile);
+      setInventory(result.inventory);
+      setHeartsRemaining(result.heartsRemaining);
+      setDailyRetryCount(result.retryCount);
+      setNextDailyRetryCost(result.nextRetryCost);
+      setDailyRetryScoreFactor(result.retryScoreFactor);
+      setNextDailyRetryScoreFactor(result.nextRetryScoreFactor);
+      setRequiresPaidRetry(result.requiresPaidRetry);
+      clearCorrectGuessIndices(levelId);
+      setIsGameOver(false);
+      setIsComplete(false);
+      setCompletionResult(null);
+      setCompletionSolveSeconds(null);
+      setChallengeStartTs(result.session.startTimestamp);
+      persistOutcomeState(null);
+      setRetryDialog(null);
+      setSelectedTile(null);
+      clearTileFeedback();
+      await refreshCurrentView(levelId);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : 'Unable to start daily retry.';
+      showToast(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCoinHeartRefill = async () => {
+    if (!canBuyCoinHearts || !coinRefillAffordable) {
+      if (!coinRefillAffordable) {
+        showToast('Not enough coins.');
+      }
+      return;
+    }
+    setHeartPurchaseBusy(true);
+    try {
+      const result = await trpc.profile.purchaseCoinRefill.mutate();
+      if (!result.success) {
+        if (result.reason?.toLowerCase().includes('daily limit')) {
+          setCoinHeartLimitReached(true);
+        }
+        showToast(result.reason ?? 'Refill failed.');
+        return;
+      }
+      setProfile(result.profile);
+      setHeartPurchaseDialogOpen(false);
+      showToast(`${heartEmoji} Hearts refilled!`);
+    } catch (_error) {
+      showToast('Refill failed. Please try again.');
+    } finally {
+      setHeartPurchaseBusy(false);
+    }
+  };
+
+  const handleCoinHeartTopUp = async () => {
+    if (!canBuyCoinHearts || !coinTopUpAffordable) {
+      if (!coinTopUpAffordable) {
+        showToast('Not enough coins.');
+      }
+      return;
+    }
+    setHeartPurchaseBusy(true);
+    try {
+      const result = await trpc.profile.purchaseCoinTopUp.mutate();
+      if (!result.success) {
+        if (result.reason?.toLowerCase().includes('daily limit')) {
+          setCoinHeartLimitReached(true);
+        }
+        showToast(result.reason ?? 'Top-up failed.');
+        return;
+      }
+      setProfile(result.profile);
+      setHeartPurchaseDialogOpen(false);
+      showToast(`${heartEmoji} +1 heart!`);
+    } catch (_error) {
+      showToast('Top-up failed. Please try again.');
+    } finally {
+      setHeartPurchaseBusy(false);
+    }
+  };
+
   const retry = async () => {
     if (!levelId) {
+      return;
+    }
+    if (mode === 'daily' && isGameOver && requiresPaidRetry) {
+      if (!hasInfiniteHearts && currentLives <= 0) {
+        setHeartPurchaseDialogOpen(true);
+      } else {
+        openRetryDialog();
+      }
+      return;
+    }
+    if (!hasInfiniteHearts && currentLives <= 0) {
+      setHeartPurchaseDialogOpen(true);
       return;
     }
     setBusy(true);
@@ -2086,6 +2532,10 @@ export const GameApp = () => {
   const mistakesMade = Math.max(0, puzzle.heartsMax - heartsRemaining);
   const isInlineMode = webViewMode === 'inline';
   const buyMax = buyDialog ? maxPurchasableQuantity(buyDialog.item) : 0;
+  const buyDialogUnitPrice = buyDialog
+    ? getCurrentPowerupUnitPrice(buyDialog.item, puzzle)
+    : 0;
+  const buyDialogRemainingLetters = getCurrentRemainingLetters(puzzle);
   const hasQueuedGuesses = queuedGuessCount > 0;
   const guessBusy = guessInFlight || hasQueuedGuesses;
   const deviceTier: DeviceTier =
@@ -2161,9 +2611,9 @@ export const GameApp = () => {
   const isStatsScreen = activeScreen === 'stats';
   const isLeaderboardScreen = activeScreen === 'leaderboard';
   const showOutcomeOverlay = isChallengeScreen && (isGameOver || isComplete);
-  const hasJoinedCommunity = profile?.communityJoinRewardClaimed === true;
   const showSuccessOverlay = isComplete;
   const isDailyComplete = mode === 'daily' && isComplete;
+  const showPaidDailyRetryCta = mode === 'daily' && isGameOver && requiresPaidRetry;
   const maxLives = 3;
   const hasInfiniteHearts = profile.infiniteHeartsExpiryTs > headerNowTs;
   const infiniteHeartsRemainingMs = Math.max(0, profile.infiniteHeartsExpiryTs - headerNowTs);
@@ -2187,6 +2637,14 @@ export const GameApp = () => {
     : currentLives >= maxLives
       ? 'Full'
       : `+1 in ${formatCountdown(nextLifeRemainingMs)}`;
+  const coinRefillAffordable = profile.coins >= coinHeartRefillCost;
+  const coinTopUpAffordable = profile.coins >= coinHeartTopUpCost;
+  const heartsNotFull = currentLives < maxLives;
+  const canBuyCoinHearts =
+    !hasInfiniteHearts &&
+    !coinHeartLimitReached &&
+    !heartPurchaseBusy &&
+    heartsNotFull;
   const completionQuote = (() => {
     const solvedLetters = puzzle.words.join('');
     let letterCursor = 0;
@@ -2202,8 +2660,10 @@ export const GameApp = () => {
       .join('');
     return rebuilt.trim().length > 0 ? rebuilt : puzzle.words.join(' ');
   })();
-  const outcomeTitle = isComplete ? 'Level Completed' : 'Challenge Ended';
-  const outcomeSubtitle = isComplete ? '' : 'Good run. Recharge and try again.';
+  const outcomeTitle = isComplete ? 'Challenge Completed' : 'Challenge Failed';
+  const outcomeSubtitle = isComplete
+    ? completionResult?.rewardNotice ?? ''
+    : 'Try again!';
   const completionSolveLabel = formatStatDuration(
     completionSolveSeconds ?? completionResult?.solveSeconds ?? null
   );
@@ -2268,8 +2728,6 @@ export const GameApp = () => {
   const puzzleTokenLines = isInlineMode
     ? chunkPuzzleTokensByWordLimit(tokens, inlineMaxWordsPerLine)
     : [tokens];
-  const activeLeaderboardEntries =
-    leaderboardTab === 'daily' ? dailyLeaderboardEntries : endlessLeaderboardEntries;
   const activeLeaderboardRank =
     leaderboardTab === 'daily'
       ? rankSummary?.dailyRank ?? null
@@ -2317,17 +2775,6 @@ export const GameApp = () => {
     },
   ];
   const visibleStatsCards = [...activeStatsCards, ...globalStatsCards];
-
-  const splitWordTiles = (tiles: PuzzlePublicTile[]): PuzzlePublicTile[][] => {
-    if (tiles.length <= maxWordTileColumns) {
-      return [tiles];
-    }
-    const chunks: PuzzlePublicTile[][] = [];
-    for (let i = 0; i < tiles.length; i += maxWordTileColumns) {
-      chunks.push(tiles.slice(i, i + maxWordTileColumns));
-    }
-    return chunks;
-  };
 
   const focusInlineInputProxy = () => {
     const input = inlineInputRef.current;
@@ -2453,9 +2900,10 @@ export const GameApp = () => {
         <div className="flex h-full w-full min-w-0 flex-col overflow-hidden" data-testid={layoutTestId}>
           {!showOutcomeOverlay && (
             <header className="px-2 pb-[6px] pt-2">
-              <div className="flex items-center justify-between">
-                <div className="app-text text-[clamp(14px,4.2vw,16px)] font-bold">{coinEmoji} {profile.coins}</div>
-                <div className="text-center">
+	              <div className="flex items-center justify-between">
+	                <div className="app-text text-[clamp(14px,4.2vw,16px)] font-bold">{coinEmoji} {profile.coins}</div>
+
+	                <div className="text-center">
                   {isChallengeScreen ? (
                     <>
                       <div className="app-text-muted text-[10px] font-bold uppercase">Mistakes</div>
@@ -2474,14 +2922,20 @@ export const GameApp = () => {
                     <>
                       <div className="app-text-muted text-[10px] font-bold uppercase">Lives</div>
                       <div className="flex justify-center gap-1" data-testid="life-indicator">
-                        {[0, 1, 2].map((index) => (
-                          <span
-                            key={index}
-                            className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none"
-                          >
-                            {index < (hasInfiniteHearts ? maxLives : currentLives) ? heartEmoji : emptyHeartGlyph}
+                        {hasInfiniteHearts ? (
+                          <span className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none">
+                            {infiniteHeartsIcon}
                           </span>
-                        ))}
+                        ) : (
+                          [0, 1, 2].map((index) => (
+                            <span
+                              key={index}
+                              className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none"
+                            >
+                              {index < currentLives ? heartEmoji : emptyHeartGlyph}
+                            </span>
+                          ))
+                        )}
                       </div>
                       <div className="app-text-muted mt-[2px] text-[9px] font-bold uppercase">{lifeStatusText}</div>
                     </>
@@ -2542,359 +2996,64 @@ export const GameApp = () => {
           )}
 
           {isChallengeScreen && !showOutcomeOverlay && (
-            <main
-              className="flex flex-1 min-h-0 px-2 py-2"
-            >
-            <div
-              className="min-w-0 flex-1"
-            >
-              <div
-                ref={viewportRef}
-                className={`flex h-full justify-center overflow-x-hidden overflow-y-auto ${isPuzzleVerticallyCentered ? 'items-center' : 'items-start'}`}
-              >
-                <div className="flex w-full justify-center" style={{ transform: `scale(${puzzleScale})`, transformOrigin: 'top center' }}>
-                  <div ref={contentRef} className="inline-block max-w-full">
-                    <div
-                      data-testid="puzzle-token-wrap"
-                      className="flex flex-col items-center gap-y-[4px]"
-                    >
-                      {puzzleTokenLines.map((lineTokens, lineIndex) => (
-                        <div key={`line-${lineIndex}`} className="flex flex-wrap items-end justify-center">
-                          {lineTokens.map((token) => {
-                            if (token.type === 'separator') {
-                              return token.tile.displayChar === ' ' ? (
-                                <span key={token.key} className={`inline-flex h-[1px] ${isInlineMode ? 'w-[18px]' : 'w-[20px]'}`} aria-hidden="true" />
-                              ) : (
-                                <div
-                                  key={token.key}
-                                  className={isInlineMode ? 'mr-[2px]' : 'mr-[4px]'}
-                                >
-                                  {renderPunctuationTile(token.key, token.tile.displayChar)}
-                                </div>
-                              );
-                            }
-                            const wordRows = splitWordTiles(token.tiles);
-                            const isBridgeWord = wordRows.length > 1;
-                            const highlightBridgeWord =
-                              isBridgeWord &&
-                              selectedTile !== null &&
-                              token.tiles.some((tile) => tile.index === selectedTile);
-                            return (
-                              <div
-                                key={token.key}
-                                className={`${isBridgeWord
-                                  ? `${isInlineMode ? 'mr-0.5' : 'mr-1'} inline-flex flex-col gap-0`
-                                  : `${isInlineMode ? 'mr-0.5 gap-[1px]' : 'mr-1 gap-[2px]'} inline-flex items-end whitespace-nowrap`
-                                  } ${highlightBridgeWord ? 'app-surface-subtle rounded-md px-1 py-0.5' : ''}`}
-                              >
-                                {wordRows.map((rowTiles, rowIndex) => (
-                                  <div
-                                    key={`${token.key}-row-${rowIndex}`}
-                                    className={`inline-flex items-end ${isInlineMode ? 'gap-[1px]' : 'gap-[2px]'}`}
-                                  >
-                                    {rowTiles.map((tile) => {
-                                      if (!tile.isLetter) {
-                                        return (
-                                          renderPunctuationTile(
-                                            tile.index,
-                                            tile.displayChar
-                                          )
-                                        );
-                                      }
-                                      const disabled = tile.isLocked || busy || isComplete || isGameOver;
-                                      const pendingLetter =
-                                        !tile.isLocked && tile.displayChar === '_'
-                                          ? pendingGuessByTile.get(tile.index)
-                                          : null;
-                                      const displayChar = pendingLetter ?? tile.displayChar;
-                                      const lockDotCount = tile.isLocked
-                                        ? Math.min(
-                                            2,
-                                            tile.lockTotalKeys ??
-                                              tile.lockRemainingKeys ??
-                                              0
-                                          )
-                                        : 0;
-                                      const lockDots =
-                                        lockDotCount > 0
-                                          ? Array.from({ length: lockDotCount }, (_value, index) => (
-                                              <span key={`lock-dot-${tile.index}-${index}`} className="lock-dot">
-                                                •
-                                              </span>
-                                            ))
-                                          : null;
-                                      const tileState = letterTileState(
-                                        selectedTile === tile.index,
-                                        tile.isLocked,
-                                        correctGuessTileIndices.has(tile.index) ||
-                                          tile.isSessionRevealed === true,
-                                        wrongGuessTileIndices.has(tile.index)
-                                      );
-                                      return (
-                                        <button
-                                          key={tile.index}
-                                          disabled={disabled}
-                                          onClick={() => handleTileSelection(tile.index)}
-                                          data-tile-state={tileState}
-                                          className={letterTileClass(
-                                            selectedTile === tile.index,
-                                            disabled,
-                                            tile.isGold,
-                                            tile.isLocked,
-                                            correctGuessTileIndices.has(tile.index) ||
-                                              tile.isSessionRevealed === true,
-                                            wrongGuessTileIndices.has(tile.index)
-                                          )}
-                                        >
-                                          {tile.isLocked && (
-                                            <span className="lock-stack-full">
-                                              {lockDots ? (
-                                                <span className="lock-dot-col">
-                                                  {lockDots}
-                                                </span>
-                                              ) : null}
-                                              <span className="lock-emoji">{lockEmoji}</span>
-                                            </span>
-                                          )}
-                                          <span
-                                            className={cn(
-                                              `flex h-[16px] items-center justify-center font-black leading-none ${puzzleMarkClass}`,
-                                              pendingLetter ? 'opacity-60' : ''
-                                            )}
-                                          >
-                                            {tile.isLocked
-                                              ? '\u00A0'
-                                              : displayChar === '_'
-                                                ? '\u00A0'
-                                                : displayChar}
-                                          </span>
-                                          <span
-                                            className={cn(
-                                              'app-surface-subtle block h-[2px] rounded-full',
-                                              tile.isLocked ? 'opacity-0' : 'opacity-100',
-                                              isInlineMode ? 'mt-0.5' : 'mt-1',
-                                              puzzleTileUnderlineWidthClass
-                                            )}
-                                          />
-                                          <span className={`app-text-soft block min-h-[10px] ${isInlineMode ? 'mt-0.5' : 'mt-1'} ${puzzleCipherClass}`}>
-                                            {tile.isLocked ? (
-                                              '\u00A0'
-                                            ) : tile.isBlind ? (
-                                              <span className="cipher-blind-mark">?</span>
-                                            ) : (
-                                              tile.cipherNumber ?? '\u00A0'
-                                            )}
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-                                    {isBridgeWord && rowIndex < wordRows.length - 1 && (
-                                      <div className={`app-text-soft flex min-w-[12px] items-center justify-center ${isInlineMode ? 'mb-[7px]' : 'mb-[10px]'}`}>
-                                        <span className={`${separatorGlyphClass} leading-none`}>{wordContinuationGlyph}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            </main>
+            <ChallengePuzzleGrid
+              viewportRef={viewportRef}
+              contentRef={contentRef}
+              isPuzzleVerticallyCentered={isPuzzleVerticallyCentered}
+              puzzleScale={puzzleScale}
+              puzzleTokenLines={puzzleTokenLines}
+              isInlineMode={isInlineMode}
+              selectedTile={selectedTile}
+              busy={busy}
+              isComplete={isComplete}
+              isGameOver={isGameOver}
+              pendingGuessByTile={pendingGuessByTile}
+              correctGuessTileIndices={correctGuessTileIndices}
+              wrongGuessTileIndices={wrongGuessTileIndices}
+              puzzleMarkClass={puzzleMarkClass}
+              puzzleTileUnderlineWidthClass={puzzleTileUnderlineWidthClass}
+              puzzleCipherClass={puzzleCipherClass}
+              punctuationTileMinWidthClass={punctuationTileMinWidthClass}
+              punctuationMarkClass={punctuationMarkClass}
+              separatorGlyphClass={separatorGlyphClass}
+              handleTileSelection={handleTileSelection}
+              renderPunctuationTile={renderPunctuationTile}
+              getLetterTileClass={letterTileClass}
+              getLetterTileState={letterTileState}
+            />
           )}
 
           {isChallengeScreen && showOutcomeOverlay && (
-            <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="result-screen">
-              {showSuccessOverlay && (
-                <canvas
-                  ref={setConfettiCanvasNode}
-                  data-testid="result-confetti"
-                  className="result-confetti-canvas"
-                />
-              )}
-              {showSuccessOverlay &&
-                completionCrowdAvatarUrls.length > 0 &&
-                completionCrowdReady && (
-                <section
-                  data-testid="outcome-overlay-crowd"
-                  className="pointer-events-none absolute bottom-0 left-1/2 top-[66%] z-0 w-screen max-w-none -translate-x-1/2"
-                >
-                  <div
-                    className="relative h-full w-full overflow-hidden"
-                    ref={handleOutcomeCrowdRef}
-                  >
-                    {outcomeCrowdBubbles.map((bubble) => {
-                      return (
-                        <div
-                          key={bubble.id}
-                          ref={(node) => {
-                            setOutcomeCrowdBubbleNode(bubble.id, node);
-                          }}
-                          className={cn(
-                            'result-crowd-avatar absolute',
-                            bubble.isPodium ? 'result-crowd-avatar-podium' : ''
-                          )}
-                          style={{
-                            left: 0,
-                            top: 0,
-                            width: `${bubble.size}px`,
-                            height: `${bubble.size}px`,
-                            zIndex: bubble.z,
-                            transform: `translate3d(${bubble.x}px, ${bubble.y}px, 0) translate(-50%, -50%)`,
-                          }}
-                        >
-                          <div
-                            className="result-crowd-avatar-frame"
-                            style={{
-                              background: `radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.42) 22%, rgba(255, 255, 255, 0.08) 38%), linear-gradient(165deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.2)), ${bubble.backgroundColor}`,
-                              boxShadow: bubble.isPodium
-                                ? '0 12px 24px rgba(0, 0, 0, 0.28)'
-                                : '0 8px 16px rgba(0, 0, 0, 0.18)',
-                            }}
-                          >
-                            <img
-                              src={bubble.avatarUrl}
-                              alt="Player avatar"
-                              className="result-crowd-avatar-image"
-                              loading="eager"
-                              decoding="async"
-                              fetchPriority={
-                                bubble.rank <= criticalOutcomeAvatarCount ? 'high' : 'low'
-                              }
-                              onError={(event) => {
-                                event.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-
-              <div
-                className="pointer-events-none absolute inset-0 z-10"
-                style={{ backgroundColor: 'var(--app-overlay)' }}
-              />
-
-              <main className="relative z-20 flex min-h-0 flex-1 flex-col px-2 py-2 sm:px-3 sm:py-3">
-                <div className="pointer-events-none absolute inset-x-0 top-0 z-30 px-3 pt-3 sm:px-4 sm:pt-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="pointer-events-auto flex items-center gap-2 sm:gap-3">
-                      {showSuccessOverlay && (
-                        <button
-                          data-testid="overlay-share-comment"
-                          className="btn-3d btn-primary btn-share-result btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
-                          onClick={share}
-                          disabled={busy}
-                          aria-label="Share as comment"
-                          title="Share as comment"
-                        >
-                          <ShareIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
-                        </button>
-                      )}
-                      {!isDailyComplete && (
-                        <button
-                          data-testid="overlay-play-again"
-                          className="btn-3d btn-retry btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
-                          onClick={retry}
-                          disabled={busy}
-                          aria-label="Play again"
-                          title="Play again"
-                        >
-                          <ReplayIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
-                        </button>
-                      )}
-                      <button
-                        data-testid="overlay-go-home"
-                        className="btn-3d btn-home btn-round flex h-11 w-11 items-center justify-center sm:h-12 sm:w-12 md:h-14 md:w-14"
-                        onClick={openHome}
-                        disabled={busy}
-                        aria-label="Go home"
-                        title="Go home"
-                      >
-                        <HomeIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
-                      </button>
-                    </div>
-                    {subredditName && (
-                      <div className="pointer-events-auto flex justify-end">
-                        <button
-                          data-testid="join-community-button"
-                          className={cn(
-                            'btn-3d btn-neutral app-text flex min-h-[38px] min-w-[148px] max-w-[188px] items-center justify-center rounded-2xl px-3 text-center text-[10px] font-black uppercase tracking-[0.03em] sm:min-h-[42px] sm:min-w-[176px] sm:max-w-[220px] sm:px-4 sm:text-[12px] md:min-h-[46px] md:min-w-[200px] md:px-5 md:text-[13px]',
-                            hasJoinedCommunity ? 'opacity-90' : ''
-                          )}
-                          onClick={handleJoinCommunity}
-                          disabled={joiningCommunity}
-                          aria-label="Join the community"
-                          title="Join the community"
-                        >
-                          {joiningCommunity
-                            ? 'Joining...'
-                            : hasJoinedCommunity
-                              ? 'Community Joined'
-                              : 'Join the Community'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col justify-center overflow-y-auto bg-transparent px-3 pb-20 pt-16 sm:px-4 sm:pb-24 sm:pt-20">
-                  <div className="mx-auto flex w-full max-w-[500px] flex-col items-center text-center">
-                    <header
-                      className="shrink-0"
-                      data-testid="outcome-overlay-header"
-                    >
-                      <h2 className="text-white text-[clamp(24px,5vw,36px)] font-black uppercase tracking-[0.05em]">
-                        {outcomeTitle}
-                      </h2>
-                      {outcomeSubtitle.length > 0 && (
-                        <p className="mt-1 text-sm font-semibold uppercase tracking-[0.04em] text-white/85">
-                          {outcomeSubtitle}
-                        </p>
-                      )}
-                    </header>
-
-                    {showSuccessOverlay && (
-                      <div className="relative mt-10 w-full max-w-[500px] shrink-0 sm:mt-12">
-                        <div
-                          data-testid="outcome-time-pill"
-                          className="absolute bottom-[calc(100%-1px)] left-1/2 flex -translate-x-1/2 translate-y-0 items-center gap-2 rounded-t-2xl border-x border-t border-white bg-transparent px-4 py-1.5"
-                        >
-                          <span className="text-[11px] font-black uppercase tracking-[0.03em] text-white sm:text-[12px]">
-                            Time:
-                          </span>
-                          <span className="text-[clamp(17px,3.4vw,24px)] leading-none font-black tabular-nums text-white">
-                            {completionSolveLabel}
-                          </span>
-                        </div>
-                        <section
-                          data-testid="outcome-overlay-quote"
-                          className="rounded-2xl border border-white bg-transparent px-3 py-3 text-center sm:px-5 sm:py-4"
-                        >
-                          <p className="text-4xl font-black leading-none text-white/85">“</p>
-                          <p className="mt-1 text-[clamp(16px,2.8vw,28px)] font-black leading-snug text-white">
-                            {completionQuote}
-                          </p>
-                          <p className="mt-2 text-[clamp(14px,2.3vw,20px)] font-semibold text-white">
-                            — {puzzle.author}
-                          </p>
-                        </section>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </main>
-            </section>
+            <OutcomeOverlay
+              showSuccessOverlay={showSuccessOverlay}
+              setConfettiCanvasNode={setConfettiCanvasNode}
+              completionCrowdAvatarUrls={completionCrowdAvatarUrls}
+              completionCrowdReady={completionCrowdReady}
+              outcomeCrowdBubbles={outcomeCrowdBubbles}
+              handleOutcomeCrowdRef={handleOutcomeCrowdRef}
+              setOutcomeCrowdBubbleNode={setOutcomeCrowdBubbleNode}
+              criticalOutcomeAvatarCount={criticalOutcomeAvatarCount}
+              busy={busy}
+              share={share}
+              isDailyComplete={isDailyComplete}
+              retry={retry}
+              openHome={openHome}
+              showPaidDailyRetryCta={showPaidDailyRetryCta}
+              nextDailyRetryCost={nextDailyRetryCost}
+              subredditName={subredditName}
+              joiningCommunity={joiningCommunity}
+              communityJoinRecorded={communityJoinRecorded}
+              communityJoinLabel={communityJoinLabel}
+              handleJoinCommunity={handleJoinCommunity}
+              outcomeTitle={outcomeTitle}
+              outcomeSubtitle={outcomeSubtitle}
+              completionSolveLabel={completionSolveLabel}
+              completionQuote={completionQuote}
+              puzzleAuthor={puzzle.author}
+              hasClaimableQuest={hasClaimableQuest}
+              openQuest={openQuest}
+            />
           )}
-
           {isChallengeScreen && !showOutcomeOverlay && (
             <section className={utilityRowClass} data-testid="utility-row">
               <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-end gap-2">
@@ -3014,6 +3173,7 @@ export const GameApp = () => {
               endlessActiveCatalogVersion={
                 endlessCatalogStatus?.activeCatalogVersion ?? null
               }
+              hasClaimableQuest={hasClaimableQuest}
             />
           )}
 
@@ -3072,9 +3232,6 @@ export const GameApp = () => {
               <LazyLeaderboardScreen
                 leaderboardTab={leaderboardTab}
                 onTabChange={setLeaderboardTab}
-                onRefresh={() => void loadLeaderboardData()}
-                leaderboardLoading={leaderboardLoading}
-                activeLeaderboardEntries={activeLeaderboardEntries}
                 currentUserRank={activeLeaderboardRank}
                 formatLeaderboardName={formatLeaderboardName}
                 formatStatDuration={formatStatDuration}
@@ -3143,6 +3300,9 @@ export const GameApp = () => {
           buyDialog={buyDialog}
           buyMax={buyMax}
           busy={busy}
+          unitPrice={buyDialogUnitPrice}
+          remainingLetters={buyDialogRemainingLetters}
+          difficultyLabel={formatDifficultyLabel(puzzle?.difficulty)}
           buyChips={buyChips}
           onSelectQuantity={(quantity) =>
             setBuyDialog((previous) =>
@@ -3151,6 +3311,24 @@ export const GameApp = () => {
           }
           onCancel={() => setBuyDialog(null)}
           onConfirm={confirmBuy}
+        />
+      )}
+      {retryDialog && (
+        <RetryDialog
+          retryDialog={retryDialog}
+          busy={busy}
+          onCancel={() => setRetryDialog(null)}
+          onConfirm={() => void handlePurchaseDailyRetry()}
+        />
+      )}
+      {heartPurchaseDialogOpen && profile && (
+        <HeartPurchaseDialog
+          coins={profile.coins}
+          busy={heartPurchaseBusy}
+          limitReached={coinHeartLimitReached}
+          onRefill={() => void handleCoinHeartRefill()}
+          onTopUp={() => void handleCoinHeartTopUp()}
+          onCancel={() => setHeartPurchaseDialogOpen(false)}
         />
       )}
     </div>

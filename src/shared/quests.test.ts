@@ -18,7 +18,6 @@ const requireQuest = (id: string) => {
 const baseProgress = (): QuestProgress => ({
   dailyPlayCount: 0,
   dailyFastWin: false,
-  dailyUnder5Min: false,
   dailyNoPowerup: false,
   dailyNoMistake: false,
   dailyShareCount: 0,
@@ -48,16 +47,18 @@ describe('quest catalog', () => {
       isQuestDefinitionComplete(requireQuest('daily_no_mistake'), progress)
     ).toBe(true);
     expect(
-      isQuestDefinitionComplete(requireQuest('daily_under_5min'), progress)
+      isQuestDefinitionComplete(requireQuest('daily_fast_under_180'), progress)
     ).toBe(false);
   });
 
-  it('keeps the total daily coin rewards capped at 100', () => {
+  it('keeps the refreshed daily coin rewards aligned with the two-dailies plan', () => {
     const totalDailyCoins = questCatalog
       .filter((quest) => quest.category === 'daily')
       .reduce((sum, quest) => sum + quest.reward.coins, 0);
 
-    expect(totalDailyCoins).toBe(100);
+    expect(totalDailyCoins).toBe(60);
+    expect(requireQuest('daily_play_2').target).toBe(2);
+    expect(requireQuest('daily_fast_under_180').reward.inventory.hammer).toBe(1);
   });
 
   it('evaluates milestone quests from the shared reward catalog', () => {

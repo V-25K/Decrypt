@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { PuzzlePrivate, SessionState } from '../../shared/game';
 import { buildPuzzle } from './puzzle';
 import {
@@ -185,9 +185,7 @@ describe('gameplay lock + powerup rules', () => {
     puzzle.blindIndices = [blindIndex];
     const lockedWordIndices = new Set(wordLetterIndices(puzzle, 1));
 
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
-    const result = applyRocket(puzzle, buildSession(puzzle.levelId));
-    randomSpy.mockRestore();
+    const result = applyRocket(puzzle, buildSession(puzzle.levelId), () => 0);
 
     expect(result.revealedTiles.length).toBeGreaterThan(0);
     expect(result.revealedLetter).toBeNull();

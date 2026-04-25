@@ -1,9 +1,10 @@
 import { payments } from '@devvit/web/server';
+import { TRPCError } from '@trpc/server';
 import { storeProductsResponseSchema } from '../../../shared/game';
 import { getBundlePerks, getUsdApproxFromGold, isOneTimeOfferSku } from '../../../shared/store';
 import { getPurchasedSkus } from '../../core/state';
 import { router } from '../base';
-import { authedProcedure } from '../procedures';
+import { publicProcedure } from '../procedures';
 
 type ProductLike = {
   name?: string;
@@ -23,16 +24,26 @@ const mapProductDisplayName = (product: ProductLike) => ({
 });
 
 export const storeRouter = router({
-  getProducts: authedProcedure.query(async ({ ctx }) => {
-    const [result, purchasedSkus] = await Promise.all([
-      payments.getProducts(),
-      getPurchasedSkus(ctx.userId!),
-    ]);
-    const normalized = result.products
-      .filter((product) => !(isOneTimeOfferSku(product.sku) && purchasedSkus.has(product.sku)))
-      .map(mapProductDisplayName);
-    return storeProductsResponseSchema.parse({
-      products: normalized,
-    });
+  getProducts: publicProcedure.query(async ({ ctx }) => {
+    try {
+      const result = await payments.getProducts();
+      const purchasedSkus = ctx.userId ? await getPurchasedSkus(ctx.userId) : new Set<string>();
+      const normalized = result.products
+        .filter(
+          (product) =>
+            !(isOneTimeOfferSku(product.sku) && purchasedSkus.has(product.sku))
+        )
+        .map(mapProductDisplayName);
+
+      return storeProductsResponseSchema.parse({
+        products: normalized,
+      });
+    } catch (error) {
+      console.error('[store.getProducts] failed:', error);
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Unable to load store products right now.',
+      });
+    }
   }),
 });

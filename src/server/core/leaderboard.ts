@@ -27,28 +27,36 @@ type LeaderboardUserMeta = {
   snoovatarUrl: string | null;
 };
 
+const publicLeaderboardCacheTtlSeconds = 12;
+
+const withSharedCache = async <T>(
+  _key: string,
+  _ttl: number,
+  read: () => Promise<T>
+): Promise<T> => await read();
+
 const resolveLeaderboardUserMeta = async (
   userId: string
 ): Promise<LeaderboardUserMeta> => {
-  try {
-    const user = await reddit.getUserById(normalizeUserId(userId));
-    if (!user) {
-      return {
-        username: null,
-        snoovatarUrl: null,
-      };
-    }
-    const snoovatarUrl = await reddit.getSnoovatarUrl(user.username);
-    return {
-      username: user.username,
-      snoovatarUrl: snoovatarUrl ?? null,
-    };
-  } catch (_error) {
-    return {
-      username: null,
-      snoovatarUrl: null,
-    };
-  }
+      try {
+        const user = await reddit.getUserById(normalizeUserId(userId));
+        if (!user) {
+          return {
+            username: null,
+            snoovatarUrl: null,
+          };
+        }
+        const snoovatarUrl = await reddit.getSnoovatarUrl(user.username);
+        return {
+          username: user.username,
+          snoovatarUrl: snoovatarUrl ?? null,
+        };
+      } catch (_error) {
+        return {
+          username: null,
+          snoovatarUrl: null,
+        };
+      }
 };
 
 export const computeScore = (params: {
@@ -70,12 +78,15 @@ const scoreFromReceipt = (receipt: {
   solveSeconds: number;
   mistakes: number;
   usedPowerups: number;
+  score?: number | null;
 }): number =>
-  computeScore({
-    solveSeconds: receipt.solveSeconds,
-    mistakes: receipt.mistakes,
-    usedPowerups: receipt.usedPowerups,
-  });
+  typeof receipt.score === 'number' && Number.isFinite(receipt.score)
+    ? Math.max(0, Math.round(receipt.score))
+    : computeScore({
+        solveSeconds: receipt.solveSeconds,
+        mistakes: receipt.mistakes,
+        usedPowerups: receipt.usedPowerups,
+      });
 
 const dailyStatsField = (
   userId: string,
@@ -193,7 +204,6 @@ const recomputeDailyStatsFromReceipts = async (params: {
         totals.usedPowerups
       ),
       [dailyStatsField(params.userId, 'runs')]: String(totals.runs),
-      [params.userId]: JSON.stringify(totals),
     }),
   ]);
   await expireDailyLeaderboardKeys(params.dateKey, statsKey);
@@ -318,13 +328,7 @@ export const recordDailyScore = async (params: {
       }
     }
   }
-  const [
-    _dailyScore,
-    nextSolveSeconds,
-    nextMistakes,
-    nextUsedPowerups,
-    nextRuns,
-  ] = await Promise.all([
+  await Promise.all([
     redis.zIncrBy(keyDailyLeaderboard(params.dateKey), params.userId, roundScore),
     redis.hIncrBy(
       statsKey,
@@ -343,14 +347,6 @@ export const recordDailyScore = async (params: {
     ),
     redis.hIncrBy(statsKey, runsField, 1),
   ]);
-  await redis.hSet(statsKey, {
-    [params.userId]: JSON.stringify({
-      solveSeconds: nextSolveSeconds,
-      mistakes: nextMistakes,
-      usedPowerups: nextUsedPowerups,
-      runs: nextRuns,
-    }),
-  });
   await expireDailyLeaderboardKeys(params.dateKey, statsKey);
 };
 
@@ -419,177 +415,160 @@ export const getDailyTop = async (
   solveSeconds: number | null;
   mistakes: number | null;
   usedPowerups: number | null;
-}[]> => {
-  const fetchLimit = Math.max(limit * 3, limit);
-  const entries = await redis.zRange(
-    keyDailyLeaderboard(dateKey),
-    0,
-    fetchLimit - 1,
-    {
-      by: 'rank',
-      reverse: true,
+}[]> =>
+  await withSharedCache(
+    `leaderboard:daily:${dateKey}:limit:${limit}`,
+    publicLeaderboardCacheTtlSeconds,
+    async () => {
+      const statsKey = keyDailyLeaderboardStats(dateKey);
+      const fetchLimit = Math.max(limit * 3, limit);
+      const [entries, dailyStats] = await Promise.all([
+        redis.zRange(keyDailyLeaderboard(dateKey), 0, fetchLimit - 1, {
+          by: 'rank',
+          reverse: true,
+        }),
+        redis.hGetAll(statsKey),
+      ]);
+      const entriesWithSnoovatar = await Promise.all(
+        entries.map(async (entry) => {
+          const rawStats = dailyStats[entry.member];
+          let solveSeconds: number | null = null;
+          let mistakes: number | null = null;
+          let usedPowerups: number | null = null;
+          let runs: number | null = null;
+          const solveField = dailyStats[dailyStatsField(entry.member, 'solveSeconds')];
+          const mistakesField = dailyStats[dailyStatsField(entry.member, 'mistakes')];
+          const powerupsField = dailyStats[dailyStatsField(entry.member, 'usedPowerups')];
+          const runsField = dailyStats[dailyStatsField(entry.member, 'runs')];
+          const parsedSolveField = numberFromHashField(solveField);
+          const parsedMistakesField = numberFromHashField(mistakesField);
+          const parsedPowerupsField = numberFromHashField(powerupsField);
+          const parsedRunsField = numberFromHashField(runsField);
+          if (parsedSolveField !== null) {
+            solveSeconds = parsedSolveField;
+          }
+          if (parsedMistakesField !== null) {
+            mistakes = parsedMistakesField;
+          }
+          if (parsedPowerupsField !== null) {
+            usedPowerups = parsedPowerupsField;
+          }
+          if (parsedRunsField !== null) {
+            runs = parsedRunsField;
+          }
+          if (rawStats) {
+            try {
+              const parsed = JSON.parse(rawStats) as
+                | {
+                    solveSeconds?: unknown;
+                    mistakes?: unknown;
+                    usedPowerups?: unknown;
+                    runs?: unknown;
+                  }
+                | number;
+              const legacyParsed =
+                typeof parsed === 'number'
+                  ? { solveSeconds: parsed }
+                  : parsed;
+              if (solveSeconds === null) {
+                solveSeconds =
+                  typeof legacyParsed.solveSeconds === 'number'
+                    ? legacyParsed.solveSeconds
+                    : null;
+              }
+              if (mistakes === null) {
+                mistakes =
+                  typeof legacyParsed.mistakes === 'number'
+                    ? legacyParsed.mistakes
+                    : null;
+              }
+              if (usedPowerups === null) {
+                usedPowerups =
+                  typeof legacyParsed.usedPowerups === 'number'
+                    ? legacyParsed.usedPowerups
+                    : null;
+              }
+              if (runs === null) {
+                runs =
+                  typeof legacyParsed.runs === 'number' ? legacyParsed.runs : null;
+              }
+            } catch (_error) {
+              // Ignore malformed legacy stats entries.
+            }
+          }
+          const hasLegacyStats =
+            typeof solveSeconds === 'number' ||
+            typeof mistakes === 'number' ||
+            typeof usedPowerups === 'number';
+          let normalizedRuns = normalizeDailyRuns(runs, hasLegacyStats);
+          const needsRepair =
+            normalizedRuns === null ||
+            solveSeconds === null ||
+            mistakes === null ||
+            usedPowerups === null;
+          let repaired:
+            | {
+                solveSeconds: number;
+                mistakes: number;
+                usedPowerups: number;
+                runs: number;
+                score: number;
+              }
+            | null = null;
+          if (needsRepair) {
+            const dailyPlayCount = await readDailyPlayCount(entry.member, dateKey);
+            repaired = await recomputeDailyStatsFromReceipts({
+              userId: entry.member,
+              dateKey,
+              targetRuns: dailyPlayCount,
+            });
+            if (repaired) {
+              solveSeconds = repaired.solveSeconds;
+              mistakes = repaired.mistakes;
+              usedPowerups = repaired.usedPowerups;
+              runs = repaired.runs;
+              normalizedRuns = repaired.runs;
+            }
+          }
+          if (normalizedRuns === null) {
+            return null;
+          }
+          const averageSolveSeconds = averageDailyStat(
+            solveSeconds,
+            normalizedRuns
+          );
+          const averageMistakes = averageDailyStat(mistakes, normalizedRuns);
+          const averagePowerups = averageDailyStat(usedPowerups, normalizedRuns);
+          const userMeta = await resolveLeaderboardUserMeta(entry.member);
+          return {
+            userId: entry.member,
+            username: userMeta.username,
+            score: repaired?.score ?? entry.score,
+            snoovatarUrl: userMeta.snoovatarUrl,
+            solveSeconds: averageSolveSeconds,
+            mistakes: averageMistakes,
+            usedPowerups: averagePowerups,
+          };
+        })
+      );
+      return entriesWithSnoovatar
+        .filter(
+          (
+            entry
+          ): entry is {
+            userId: string;
+            username: string | null;
+            score: number;
+            snoovatarUrl: string | null;
+            solveSeconds: number | null;
+            mistakes: number | null;
+            usedPowerups: number | null;
+          } => entry !== null
+        )
+        .sort((left, right) => right.score - left.score)
+        .slice(0, limit);
     }
   );
-  const entriesWithSnoovatar = await Promise.all(
-    entries.map(async (entry) => {
-      const rawStats = await redis.hGet(
-        keyDailyLeaderboardStats(dateKey),
-        entry.member
-      );
-      let solveSeconds: number | null = null;
-      let mistakes: number | null = null;
-      let usedPowerups: number | null = null;
-      let runs: number | null = null;
-      const [
-        solveField,
-        mistakesField,
-        powerupsField,
-        runsField,
-      ] = await Promise.all([
-        redis.hGet(
-          keyDailyLeaderboardStats(dateKey),
-          dailyStatsField(entry.member, 'solveSeconds')
-        ),
-        redis.hGet(
-          keyDailyLeaderboardStats(dateKey),
-          dailyStatsField(entry.member, 'mistakes')
-        ),
-        redis.hGet(
-          keyDailyLeaderboardStats(dateKey),
-          dailyStatsField(entry.member, 'usedPowerups')
-        ),
-        redis.hGet(
-          keyDailyLeaderboardStats(dateKey),
-          dailyStatsField(entry.member, 'runs')
-        ),
-      ]);
-      const parsedSolveField = numberFromHashField(solveField);
-      const parsedMistakesField = numberFromHashField(mistakesField);
-      const parsedPowerupsField = numberFromHashField(powerupsField);
-      const parsedRunsField = numberFromHashField(runsField);
-      if (parsedSolveField !== null) {
-        solveSeconds = parsedSolveField;
-      }
-      if (parsedMistakesField !== null) {
-        mistakes = parsedMistakesField;
-      }
-      if (parsedPowerupsField !== null) {
-        usedPowerups = parsedPowerupsField;
-      }
-      if (parsedRunsField !== null) {
-        runs = parsedRunsField;
-      }
-      if (rawStats) {
-        try {
-          const parsed = JSON.parse(rawStats) as
-            | {
-                solveSeconds?: unknown;
-                mistakes?: unknown;
-                usedPowerups?: unknown;
-                runs?: unknown;
-              }
-            | number;
-          const legacyParsed =
-            typeof parsed === 'number'
-              ? { solveSeconds: parsed }
-              : parsed;
-          if (solveSeconds === null) {
-            solveSeconds =
-              typeof legacyParsed.solveSeconds === 'number'
-                ? legacyParsed.solveSeconds
-                : null;
-          }
-          if (mistakes === null) {
-            mistakes =
-              typeof legacyParsed.mistakes === 'number'
-                ? legacyParsed.mistakes
-                : null;
-          }
-          if (usedPowerups === null) {
-            usedPowerups =
-              typeof legacyParsed.usedPowerups === 'number'
-                ? legacyParsed.usedPowerups
-                : null;
-          }
-          if (runs === null) {
-            runs = typeof legacyParsed.runs === 'number' ? legacyParsed.runs : null;
-          }
-        } catch (_error) {
-          // Ignore malformed legacy stats entries.
-        }
-      }
-      const hasLegacyStats =
-        typeof solveSeconds === 'number' ||
-        typeof mistakes === 'number' ||
-        typeof usedPowerups === 'number';
-      let normalizedRuns = normalizeDailyRuns(runs, hasLegacyStats);
-      const needsRepair =
-        normalizedRuns === null ||
-        solveSeconds === null ||
-        mistakes === null ||
-        usedPowerups === null;
-      let repaired:
-        | {
-            solveSeconds: number;
-            mistakes: number;
-            usedPowerups: number;
-            runs: number;
-            score: number;
-          }
-        | null = null;
-      if (needsRepair) {
-        const dailyPlayCount = await readDailyPlayCount(entry.member, dateKey);
-        repaired = await recomputeDailyStatsFromReceipts({
-          userId: entry.member,
-          dateKey,
-          targetRuns: dailyPlayCount,
-        });
-        if (repaired) {
-          solveSeconds = repaired.solveSeconds;
-          mistakes = repaired.mistakes;
-          usedPowerups = repaired.usedPowerups;
-          runs = repaired.runs;
-          normalizedRuns = repaired.runs;
-        }
-      }
-      if (normalizedRuns === null) {
-        return null;
-      }
-      const averageSolveSeconds = averageDailyStat(
-        solveSeconds,
-        normalizedRuns
-      );
-      const averageMistakes = averageDailyStat(mistakes, normalizedRuns);
-      const averagePowerups = averageDailyStat(usedPowerups, normalizedRuns);
-      const userMeta = await resolveLeaderboardUserMeta(entry.member);
-      return {
-        userId: entry.member,
-        username: userMeta.username,
-        score: repaired?.score ?? entry.score,
-        snoovatarUrl: userMeta.snoovatarUrl,
-        solveSeconds: averageSolveSeconds,
-        mistakes: averageMistakes,
-        usedPowerups: averagePowerups,
-      };
-    })
-  );
-  return entriesWithSnoovatar
-    .filter(
-      (
-        entry
-      ): entry is {
-        userId: string;
-        username: string | null;
-        score: number;
-        snoovatarUrl: string | null;
-        solveSeconds: number | null;
-        mistakes: number | null;
-        usedPowerups: number | null;
-      } => entry !== null
-    )
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
-};
 
 export const getLevelTop = async (
   levelId: string,
@@ -602,39 +581,13 @@ export const getLevelTop = async (
   solveSeconds: number | null;
   mistakes: number | null;
   usedPowerups: number | null;
-}[]> => {
-  const winners = await redis.zRange(keyLevelWinners(levelId), 0, -1, {
-    by: 'rank',
-  });
-
-  const resolved = await Promise.all(
-    winners.map(async (entry) => {
-      const receipt = await getShareCompletionReceipt(entry.member, levelId);
-      if (!receipt) {
-        return null;
-      }
-
-      const userMeta = await resolveLeaderboardUserMeta(entry.member);
-      const levelScore = scoreFromReceipt(receipt);
-
-      return {
-        userId: entry.member,
-        username: userMeta.username,
-        score: levelScore,
-        snoovatarUrl: userMeta.snoovatarUrl,
-        solveSeconds: receipt.solveSeconds,
-        mistakes: receipt.mistakes,
-        usedPowerups: receipt.usedPowerups,
-        completedAtTs: receipt.completedAtTs,
-      };
-    })
-  );
-
-  return resolved
-    .filter(
-      (
-        entry
-      ): entry is {
+}[]> =>
+  await withSharedCache(
+    `leaderboard:level:${levelId}:limit:${limit}`,
+    publicLeaderboardCacheTtlSeconds,
+    async () => {
+      const fetchWindow = Math.max(limit * 2, 10);
+      const resolved: Array<{
         userId: string;
         username: string | null;
         score: number;
@@ -643,26 +596,85 @@ export const getLevelTop = async (
         mistakes: number;
         usedPowerups: number;
         completedAtTs: number;
-      } => entry !== null
-    )
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
+      }> = [];
+      let start = 0;
+
+      while (resolved.length < limit) {
+        const winners = await redis.zRange(
+          keyLevelWinners(levelId),
+          start,
+          start + fetchWindow - 1,
+          {
+            by: 'rank',
+          }
+        );
+        if (winners.length === 0) {
+          break;
+        }
+
+        const batch = await Promise.all(
+          winners.map(async (entry) => {
+            const receipt = await getShareCompletionReceipt(entry.member, levelId);
+            if (!receipt) {
+              return null;
+            }
+
+            const userMeta = await resolveLeaderboardUserMeta(entry.member);
+            const levelScore = scoreFromReceipt(receipt);
+
+            return {
+              userId: entry.member,
+              username: userMeta.username,
+              score: levelScore,
+              snoovatarUrl: userMeta.snoovatarUrl,
+              solveSeconds: receipt.solveSeconds,
+              mistakes: receipt.mistakes,
+              usedPowerups: receipt.usedPowerups,
+              completedAtTs: receipt.completedAtTs,
+            };
+          })
+        );
+
+        resolved.push(
+          ...batch.filter(
+            (
+              entry
+            ): entry is {
+              userId: string;
+              username: string | null;
+              score: number;
+              snoovatarUrl: string | null;
+              solveSeconds: number;
+              mistakes: number;
+              usedPowerups: number;
+              completedAtTs: number;
+            } => entry !== null
+          )
+        );
+
+        start += fetchWindow;
       }
-      if (left.solveSeconds !== right.solveSeconds) {
-        return left.solveSeconds - right.solveSeconds;
-      }
-      if (left.mistakes !== right.mistakes) {
-        return left.mistakes - right.mistakes;
-      }
-      if (left.usedPowerups !== right.usedPowerups) {
-        return left.usedPowerups - right.usedPowerups;
-      }
-      return left.completedAtTs - right.completedAtTs;
-    })
-    .slice(0, limit)
-    .map(({ completedAtTs: _completedAtTs, ...entry }) => entry);
-};
+
+      return resolved
+        .sort((left, right) => {
+          if (right.score !== left.score) {
+            return right.score - left.score;
+          }
+          if (left.solveSeconds !== right.solveSeconds) {
+            return left.solveSeconds - right.solveSeconds;
+          }
+          if (left.mistakes !== right.mistakes) {
+            return left.mistakes - right.mistakes;
+          }
+          if (left.usedPowerups !== right.usedPowerups) {
+            return left.usedPowerups - right.usedPowerups;
+          }
+          return left.completedAtTs - right.completedAtTs;
+        })
+        .slice(0, limit)
+        .map(({ completedAtTs: _completedAtTs, ...entry }) => entry);
+    }
+  );
 
 export const getAllTimeTopLevels = async (
   limit: number
@@ -672,41 +684,51 @@ export const getAllTimeTopLevels = async (
   score: number;
   snoovatarUrl: string | null;
   levelsCompleted: number;
-}[]> => {
-  const fetchLimit = Math.max(limit * 4, limit);
-  const entries = await redis.zRange(keyAllTimeLevelsLeaderboard, 0, fetchLimit - 1, {
-    by: 'rank',
-    reverse: true,
-  });
-  const resolved = await Promise.all(
-    entries.map(async (entry) => {
-      const levelsCompleted = await readEndlessClears(entry.member);
-      if (levelsCompleted <= 0) {
-        return null;
-      }
-      const userMeta = await resolveLeaderboardUserMeta(entry.member);
-      return {
-        userId: entry.member,
-        username: userMeta.username,
-        score: entry.score,
-        snoovatarUrl: userMeta.snoovatarUrl,
-        levelsCompleted,
-      };
-    })
+}[]> =>
+  await withSharedCache(
+    `leaderboard:all-time-levels:limit:${limit}`,
+    publicLeaderboardCacheTtlSeconds,
+    async () => {
+      const fetchLimit = Math.max(limit * 4, limit);
+      const entries = await redis.zRange(
+        keyAllTimeLevelsLeaderboard,
+        0,
+        fetchLimit - 1,
+        {
+          by: 'rank',
+          reverse: true,
+        }
+      );
+      const resolved = await Promise.all(
+        entries.map(async (entry) => {
+          const levelsCompleted = await readEndlessClears(entry.member);
+          if (levelsCompleted <= 0) {
+            return null;
+          }
+          const userMeta = await resolveLeaderboardUserMeta(entry.member);
+          return {
+            userId: entry.member,
+            username: userMeta.username,
+            score: entry.score,
+            snoovatarUrl: userMeta.snoovatarUrl,
+            levelsCompleted,
+          };
+        })
+      );
+      const filtered = resolved.filter(
+        (
+          entry
+        ): entry is {
+          userId: string;
+          username: string | null;
+          score: number;
+          snoovatarUrl: string | null;
+          levelsCompleted: number;
+        } => entry !== null
+      );
+      return filtered.slice(0, limit);
+    }
   );
-  const filtered = resolved.filter(
-    (
-      entry
-    ): entry is {
-      userId: string;
-      username: string | null;
-      score: number;
-      snoovatarUrl: string | null;
-      levelsCompleted: number;
-    } => entry !== null
-  );
-  return filtered.slice(0, limit);
-};
 
 export const getAllTimeTopLogic = async (
   limit: number
@@ -715,23 +737,28 @@ export const getAllTimeTopLogic = async (
   username: string | null;
   score: number;
   snoovatarUrl: string | null;
-}[]> => {
-  const entries = await redis.zRange(keyAllTimeLogicLeaderboard, 0, limit - 1, {
-    by: 'rank',
-    reverse: true,
-  });
-  return Promise.all(
-    entries.map(async (entry) => {
-      const userMeta = await resolveLeaderboardUserMeta(entry.member);
-      return {
-        userId: entry.member,
-        username: userMeta.username,
-        score: entry.score,
-        snoovatarUrl: userMeta.snoovatarUrl,
-      };
-    })
+}[]> =>
+  await withSharedCache(
+    `leaderboard:all-time-logic:limit:${limit}`,
+    publicLeaderboardCacheTtlSeconds,
+    async () => {
+      const entries = await redis.zRange(keyAllTimeLogicLeaderboard, 0, limit - 1, {
+        by: 'rank',
+        reverse: true,
+      });
+      return await Promise.all(
+        entries.map(async (entry) => {
+          const userMeta = await resolveLeaderboardUserMeta(entry.member);
+          return {
+            userId: entry.member,
+            username: userMeta.username,
+            score: entry.score,
+            snoovatarUrl: userMeta.snoovatarUrl,
+          };
+        })
+      );
+    }
   );
-};
 
 export const getUserRankSummary = async (params: {
   userId: string;
@@ -741,33 +768,26 @@ export const getUserRankSummary = async (params: {
   endlessRank: number | null;
   currentRank: number | null;
 }> => {
-  const [dailyEntries, allTimeEntries] = await Promise.all([
-    redis.zRange(keyDailyLeaderboard(params.dateKey), 0, -1, {
-      by: 'rank',
-      reverse: true,
-    }),
-    redis.zRange(keyAllTimeLevelsLeaderboard, 0, -1, {
-      by: 'rank',
-      reverse: true,
-    }),
-  ]);
-  const dailyIndex = dailyEntries.findIndex(
-    (entry) => entry.member === params.userId
-  );
-  const endlessEligibility = await Promise.all(
-    allTimeEntries.map(async (entry) => ({
-      entry,
-      clears: await readEndlessClears(entry.member),
-    }))
-  );
-  const endlessEntries = endlessEligibility
-    .filter((item) => item.clears > 0)
-    .map((item) => item.entry);
-  const endlessIndex = endlessEntries.findIndex(
-    (entry) => entry.member === params.userId
-  );
-  const dailyRank = dailyIndex >= 0 ? dailyIndex + 1 : null;
-  const endlessRank = endlessIndex >= 0 ? endlessIndex + 1 : null;
+  const dailyKey = keyDailyLeaderboard(params.dateKey);
+  const endlessKey = keyAllTimeLevelsLeaderboard;
+  const [dailyRankIndex, dailyCount, endlessRankIndex, endlessCount, endlessClears] =
+    await Promise.all([
+      redis.zRank(dailyKey, params.userId),
+      redis.zCard(dailyKey),
+      redis.zRank(endlessKey, params.userId),
+      redis.zCard(endlessKey),
+      readEndlessClears(params.userId),
+    ]);
+  const dailyRank =
+    typeof dailyRankIndex === 'number'
+      ? Math.max(1, Math.floor(dailyCount) - Math.floor(dailyRankIndex))
+      : null;
+  // Approximation note: this rank is derived from the all-time sorted set directly.
+  // It may include users with 0 clears who still have leaderboard entries.
+  const endlessRank =
+    endlessClears > 0 && typeof endlessRankIndex === 'number'
+      ? Math.max(1, Math.floor(endlessCount) - Math.floor(endlessRankIndex))
+      : null;
   const currentRank =
     dailyRank === null
       ? endlessRank

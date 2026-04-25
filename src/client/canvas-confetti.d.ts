@@ -1,39 +1,15 @@
 declare module 'canvas-confetti' {
-  export type Shape = 'square' | 'circle';
+  export type Options = Record<string, unknown>;
+  export type CreateTypes = unknown;
 
-  export type Options = {
-    angle?: number;
-    colors?: string[];
-    decay?: number;
-    disableForReducedMotion?: boolean;
-    drift?: number;
-    gravity?: number;
-    origin?: {
-      x?: number;
-      y?: number;
-    };
-    particleCount?: number;
-    scalar?: number;
-    shapes?: Shape[];
-    spread?: number;
-    startVelocity?: number;
-    ticks?: number;
-    zIndex?: number;
+  export type ConfettiFunction = {
+    (options?: Options): Promise<null> | null;
+    create?: (...args: unknown[]) => ConfettiFunction;
+    reset?: () => void;
   };
 
-  export type CreateOptions = {
-    resize?: boolean;
-    useWorker?: boolean;
-  };
+  export type ConfettiLauncher = ConfettiFunction;
 
-  export type ConfettiLauncher = (options?: Options) => Promise<null> | null;
-
-  type ConfettiStatic = ConfettiLauncher & {
-    create(canvas: HTMLCanvasElement, options?: CreateOptions): ConfettiLauncher;
-    reset(): void;
-  };
-
-  const confetti: ConfettiStatic;
-
+  const confetti: ConfettiFunction;
   export default confetti;
 }

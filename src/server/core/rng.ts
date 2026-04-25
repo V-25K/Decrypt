@@ -2,19 +2,17 @@ export type Rng = () => number;
 
 const UINT32_MAX_PLUS_ONE = 0x1_0000_0000;
 
-const toUint32 = (value: bigint): number =>
-  Number(value % BigInt(UINT32_MAX_PLUS_ONE)) >>> 0;
-
-const levelDigits = (levelId: string): string => {
-  const digits = levelId.replace(/[^0-9]/g, '');
-  return digits.length > 0 ? `${Number(digits)}` : '0';
-};
-
 export const deriveSeed = (levelId: string, quotePlain: string): number => {
-  const levelPart = levelDigits(levelId);
-  const quoteLengthPart = `${quotePlain.length}`.padStart(3, '0');
-  const concatenated = `${levelPart}${quoteLengthPart}`;
-  return toUint32(BigInt(concatenated));
+  // FNV-1a 32-bit hash over the full seed key and quote text.
+  // This keeps generation deterministic while avoiding collisions between
+  // different same-length phrases or large pending-token digit sequences.
+  const input = `${levelId}|${quotePlain.length}|${quotePlain}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash >>> 0;
 };
 
 export const mulberry32 = (seed: number): Rng => {

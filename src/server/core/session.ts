@@ -23,12 +23,16 @@ const parseRevealed = (value: string | undefined): number[] => {
   if (!value) {
     return [];
   }
-  const parsed = JSON.parse(value);
-  const result = revealedSchema.safeParse(parsed);
-  if (!result.success) {
+  try {
+    const parsed = JSON.parse(value);
+    const result = revealedSchema.safeParse(parsed);
+    if (!result.success) {
+      return [];
+    }
+    return result.data;
+  } catch {
     return [];
   }
-  return result.data;
 };
 
 const serializeSession = (session: SessionState): Record<string, string> => ({
@@ -58,6 +62,8 @@ const untrackSessionKey = async (sessionKey: string): Promise<void> => {
 export const getIndexedSessionKeys = async (): Promise<string[]> =>
   await redis.hKeys(keySessionIndex);
 
+// Sessions are keyed by (userId, postId) — one active session per user per post.
+// postId is the Reddit post ID, not the level ID.
 export const getSessionState = async (
   userId: string,
   postId: string
@@ -70,7 +76,7 @@ export const getSessionState = async (
     return null;
   }
 
-  return sessionSchema.parse({
+  const result = sessionSchema.safeParse({
     activeLevelId: hash.activeLevelId,
     mode: hash.mode === 'endless' ? 'endless' : 'daily',
     startTimestamp: numberField(hash, 'startTimestamp', Date.now()),
@@ -83,6 +89,7 @@ export const getSessionState = async (
     wrongGuesses: numberField(hash, 'wrongGuesses', 0),
     guessCount: numberField(hash, 'guessCount', 0),
   });
+  return result.success ? result.data : null;
 };
 
 export const createSessionState = async (params: {

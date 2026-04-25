@@ -2,10 +2,15 @@ import { z } from 'zod';
 import {
   gameBootstrapResponseSchema,
   gameCompleteSessionInputSchema,
+  gameCompleteSessionResponseSchema,
   gameHeartbeatInputSchema,
   gameHeartbeatResponseSchema,
   gameLoadLevelInputSchema,
+  gameLoadLevelResponseSchema,
+  gamePurchaseDailyRetryInputSchema,
+  gamePurchaseDailyRetryResponseSchema,
   gameStartSessionInputSchema,
+  gameStartSessionResponseSchema,
   gameSubmitGuessesInputSchema,
   gameSubmitGuessesResponseSchema,
   gameSubmitGuessInputSchema,
@@ -16,6 +21,7 @@ import {
   getCurrentPuzzleView,
   heartbeatSessionForLevel,
   loadLevelForUser,
+  purchaseDailyRetryForLevel,
   startSessionForLevel,
   submitGuessesForSession,
   submitGuessForSession,
@@ -30,15 +36,29 @@ export const gameRouter = router({
     return gameBootstrapResponseSchema.parse(data);
   }),
   loadLevel: authedProcedure.input(gameLoadLevelInputSchema).query(async ({ input }) => {
-    return await loadLevelForUser({
-      mode: input.mode,
-      requestedLevelId: input.requestedLevelId ?? null,
-    });
+    return gameLoadLevelResponseSchema.parse(
+      await loadLevelForUser({
+        mode: input.mode,
+        requestedLevelId: input.requestedLevelId ?? null,
+      })
+    );
   }),
   startSession: authedProcedure
     .input(gameStartSessionInputSchema)
     .mutation(async ({ input }) => {
-      return await startSessionForLevel(input.levelId, input.mode);
+      return gameStartSessionResponseSchema.parse(
+        await startSessionForLevel(input.levelId, input.mode)
+      );
+    }),
+  purchaseDailyRetry: authedProcedure
+    .input(gamePurchaseDailyRetryInputSchema)
+    .mutation(async ({ input }) => {
+      return gamePurchaseDailyRetryResponseSchema.parse(
+        await purchaseDailyRetryForLevel({
+          levelId: input.levelId,
+          mode: input.mode,
+        })
+      );
     }),
   heartbeat: authedProcedure
     .input(gameHeartbeatInputSchema)
@@ -70,10 +90,12 @@ export const gameRouter = router({
   completeSession: authedProcedure
     .input(gameCompleteSessionInputSchema)
     .mutation(async ({ input }) => {
-      return await completeSessionForLevel({
-        levelId: input.levelId,
-        mode: input.mode,
-      });
+      return gameCompleteSessionResponseSchema.parse(
+        await completeSessionForLevel({
+          levelId: input.levelId,
+          mode: input.mode,
+        })
+      );
     }),
   getCompletionReceipt: authedProcedure
     .input(z.object({ levelId: z.string().min(1) }))
@@ -84,11 +106,13 @@ export const gameRouter = router({
       };
     }),
   getCurrentView: publicProcedure
-    .input(z.object({ levelId: z.string().min(1), revealedIndices: z.array(z.number()).optional() }))
+    .input(z.object({ levelId: z.string().min(1) }))
     .query(async ({ input }) => {
+      // revealedIndices are always sourced server-side from the stored session;
+      // never accepted from the caller to prevent client-side tile reveal exploits.
       return await getCurrentPuzzleView({
         levelId: input.levelId,
-        revealedIndices: input.revealedIndices ?? [],
+        revealedIndices: [],
       });
     }),
 });

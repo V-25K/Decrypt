@@ -1,17 +1,47 @@
 export const keyDailyPointer = 'decrypt:state:daily_pointer';
+export const keyLevelIdCounter = 'decrypt:state:level_id_counter';
+export const keyPuzzleGenerationLock = 'decrypt:state:puzzle_generation_lock';
+export const keyDailyStageLock = (dateKey: string) =>
+  `decrypt:state:daily_stage_lock:${dateKey}`;
+export const keyAIPoolCandidateSequence = 'decrypt:state:ai_pool_candidate_sequence';
+export const keyAIPoolFillLock = 'decrypt:state:ai_pool_fill_lock';
 export const keyDailyTierCursor = (dateKey: string) =>
   `decrypt:state:daily_tier_cursor:${dateKey}`;
 export const keyDailyChallengeTypeCursor = (dateKey: string) =>
   `decrypt:state:daily_challenge_type_cursor:${dateKey}`;
 export const keyDailyChallengeTypeSeed = (dateKey: string) =>
   `decrypt:state:daily_challenge_type_seed:${dateKey}`;
+export const keyAIPoolBucket = (tier: string, challengeType: string) =>
+  `decrypt:ai_pool:${tier}:${challengeType}`;
+export const keyAIPoolCandidate = (candidateId: string) =>
+  `decrypt:ai_pool:candidate:${candidateId}`;
+export const keyAIPoolCandidateSignature = (candidateId: string) =>
+  `decrypt:ai_pool:candidate_signature:${candidateId}`;
+export const keyAIPoolReservedSignature = (normalizedSignature: string) =>
+  `decrypt:ai_pool:reserved_signature:${normalizedSignature}`;
+export const keyAIPoolDifficultyCursor = (tier: string, challengeType: string) =>
+  `decrypt:ai_pool:cursor:${tier}:${challengeType}`;
 export const keyPuzzleStaged = 'decrypt:puzzle:staged';
 export const keyPuzzlePublishedPost = (levelId: string) =>
   `decrypt:puzzle:${levelId}:published_post`;
+export const keyPuzzleMapping = (levelId: string) =>
+  `decrypt:puzzle:${levelId}:mapping`;
+export const keyPuzzlePublicationReceipt = (levelId: string) =>
+  `decrypt:puzzle:${levelId}:publication_receipt`;
+export const keyPuzzlePublishLock = (levelId: string) =>
+  `decrypt:puzzle:${levelId}:publish_lock`;
 export const keyPuzzlesIndex = 'decrypt:puzzles:index';
 export const keyPuzzlesByDate = (dateKey: string) =>
   `decrypt:puzzles:by_date:${dateKey}`;
+export const keyPublishedAutoDailyPuzzlesByDate = (dateKey: string) =>
+  `decrypt:puzzles:auto_daily_published:${dateKey}`;
+export const keyPublishedAutoDailyPuzzlesByDateInitialized = (dateKey: string) =>
+  `decrypt:puzzles:auto_daily_published_initialized:${dateKey}`;
 export const keyUsedStrings = 'decrypt:history:used_strings';
+export const keyUsedSignatureMeta = 'decrypt:history:used_signature_meta';
+export const keyUsedSignatureRecent = 'decrypt:history:used_signature_recent';
+export const keyDifficultyCalibrationArtifact =
+  'decrypt:state:difficulty_calibration_artifact';
 export const keyGenerationFailureLatest =
   'decrypt:state:generation_failure_latest';
 export const keyGenerationFailureNotified = (dateKey: string) =>
@@ -38,6 +68,15 @@ export const keyUserEndlessLevelScores = (userId: string) =>
 
 export const keyUserFailedLevels = (userId: string) =>
   `decrypt:user:${userId}:failed_levels`;
+
+export const keyUserDailyRetryCounts = (userId: string) =>
+  `decrypt:user:${userId}:daily_retry_counts`;
+
+export const keyCompletionFinalizeLock = (userId: string, levelId: string) =>
+  `decrypt:user:${userId}:completion_lock:${levelId}`;
+
+export const keyCompletionFinalizeJournal = (userId: string, levelId: string) =>
+  `decrypt:user:${userId}:completion_journal:${levelId}`;
 
 export const keyUserQuestDaily = (userId: string, dateKey: string) =>
   `decrypt:user:${userId}:quests:daily:${dateKey}`;
@@ -67,6 +106,12 @@ export const keyLevelPlayers = (levelId: string) =>
 export const keyLevelWinners = (levelId: string) =>
   `decrypt:level:${levelId}:winners`;
 
+export const keyLevelPlayCount = (levelId: string) =>
+  `decrypt:level:${levelId}:play_count`;
+
+export const keyLevelWinCount = (levelId: string) =>
+  `decrypt:level:${levelId}:win_count`;
+
 export const keyLevelQualifiedPlayers = (levelId: string) =>
   `decrypt:level:${levelId}:qualified_players`;
 
@@ -92,8 +137,14 @@ export const keyRefundProcessedOrder = (orderId: string) =>
 export const keyGrantedOrderSkus = (orderId: string) =>
   `decrypt:payments:granted_order_skus:${orderId}`;
 
+export const keyUserCoinHeartPurchases = (userId: string, dateKey: string) =>
+  `decrypt:user:${userId}:coin-heart-purchases:${dateKey}`;
+
 export const keyEndlessActiveCatalogVersion =
   'decrypt:endless:active_catalog_version';
 
 export const keyEndlessCatalogSequence = (catalogVersion: string) =>
   `decrypt:endless:catalog:${catalogVersion}:sequence`;
+
+export const keyUserEndlessCursor = (userId: string) =>
+  `decrypt:user:${userId}:endless:cursor`;

@@ -32,6 +32,9 @@ const hasOverlap = (a: number[], b: number[]): boolean => {
   return a.some((index) => setB.has(index));
 };
 
+const hasSelfLockingPadlock = (puzzle: PuzzlePrivate): boolean =>
+  puzzle.padlockChains.some((chain) => hasOverlap(chain.keyIndices, chain.lockedIndices));
+
 const hasCircularPadlock = (puzzle: PuzzlePrivate): boolean => {
   const adjacency = new Map<number, number[]>();
   const chainCount = puzzle.padlockChains.length;
@@ -132,6 +135,9 @@ export const validatePuzzle = (puzzle: PuzzlePrivate): {
 
   if (!hasStarterClue(puzzle)) {
     reasons.push('No starter clue on board.');
+  }
+  if (hasSelfLockingPadlock(puzzle)) {
+    reasons.push('Padlock chain locks its own key tiles.');
   }
   if (hasCircularPadlock(puzzle)) {
     reasons.push('Padlock dependency loop detected.');

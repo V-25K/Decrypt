@@ -11,8 +11,13 @@ import {
   saveUserProfile,
   unmarkSkuPurchased,
 } from '../core/state';
-import { getBundlePerks, isOneTimeOfferSku } from '../../shared/store';
+import {
+  getBundlePerks,
+  getInfiniteHeartsDurationMs,
+  isOneTimeOfferSku,
+} from '../../shared/store';
 import { addHeartsFromBundle, normalizeHearts } from '../core/hearts';
+import { heartsPerRun } from '../core/constants';
 import {
   keyGrantedOrderSkus,
   keyProcessedOrder,
@@ -30,7 +35,7 @@ type PaymentOrderProduct = {
 type PaymentOrderPayload = {
   id: string | null;
   userId: string | null;
-  status: number | null;
+  status: number | string | null;
   products: PaymentOrderProduct[];
 };
 
@@ -58,11 +63,13 @@ const applyBundle = async (params: {
   updatedInventory.wand += perks.wand;
   updatedInventory.shield += perks.shield;
   updatedInventory.rocket += perks.rocket;
-  if (perks.infiniteHeartsHours > 0) {
-    updatedProfile.infiniteHeartsExpiryTs = Math.max(
-      updatedProfile.infiniteHeartsExpiryTs,
-      nowTs + perks.infiniteHeartsHours * 60 * 60 * 1000
-    );
+  const durationMs = getInfiniteHeartsDurationMs(params.sku);
+  if (durationMs > 0) {
+    const baseTs = Math.max(nowTs, updatedProfile.infiniteHeartsExpiryTs);
+    const nextExpiryTs = Math.min(baseTs + durationMs, nowTs + 24 * 60 * 60 * 1000);
+    updatedProfile.infiniteHeartsExpiryTs = nextExpiryTs;
+    updatedProfile.hearts = heartsPerRun;
+    updatedProfile.lastHeartRefillTs = nowTs;
   }
 
   await Promise.all([
@@ -95,10 +102,14 @@ const revokeBundle = async (params: {
   updatedInventory.rocket = Math.max(0, updatedInventory.rocket - perks.rocket);
   if (perks.infiniteHeartsHours > 0) {
     const rollbackMs = perks.infiniteHeartsHours * 60 * 60 * 1000;
+    // If the expiry is already in the past, nothing to roll back.
+    // Otherwise subtract the bundle duration but never go below 0 (expired).
+    // We do NOT floor at nowTs here — if the result is in the past, set to 0
+    // so the UI correctly shows hearts as finite again.
     updatedProfile.infiniteHeartsExpiryTs =
       updatedProfile.infiniteHeartsExpiryTs <= nowTs
         ? 0
-        : Math.max(nowTs, updatedProfile.infiniteHeartsExpiryTs - rollbackMs);
+        : Math.max(0, updatedProfile.infiniteHeartsExpiryTs - rollbackMs);
   }
 
   await Promise.all([
@@ -123,7 +134,7 @@ const parseOrderPayload = (value: unknown): PaymentOrderPayload => {
   const userId =
     'userId' in value && typeof value.userId === 'string' ? value.userId : null;
   const status =
-    'status' in value && typeof value.status === 'number'
+    'status' in value && (typeof value.status === 'number' || typeof value.status === 'string')
       ? value.status
       : null;
   const products =
@@ -148,9 +159,19 @@ const parseOrderPayload = (value: unknown): PaymentOrderPayload => {
   };
 };
 
-const orderIsFulfillable = (order: PaymentOrderPayload): boolean =>
-  order.status === OrderStatus.ORDER_STATUS_PAID ||
-  order.status === OrderStatus.ORDER_STATUS_DELIVERED;
+const orderIsFulfillable = (order: PaymentOrderPayload): boolean => {
+  if (order.status === OrderStatus.ORDER_STATUS_PAID) {
+    return true;
+  }
+  if (order.status === OrderStatus.ORDER_STATUS_DELIVERED) {
+    return true;
+  }
+  if (typeof order.status === 'string') {
+    const normalized = order.status.trim().toUpperCase();
+    return normalized === 'PAID' || normalized === 'DELIVERED';
+  }
+  return false;
+};
 
 const grantedSkusFromOrder = (order: PaymentOrderPayload): string[] =>
   order.products

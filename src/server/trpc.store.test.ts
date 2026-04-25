@@ -219,6 +219,7 @@ describe('profile.joinCommunity', () => {
       dailySolveTimeTotalSec: 0,
       endlessSolveTimeTotalSec: 0,
       bestOverallRank: 0,
+      communityJoinRecorded: false,
       communityJoinRewardClaimed: false,
       unlockedFlairs: [],
       activeFlair: '',
@@ -245,6 +246,7 @@ describe('profile.joinCommunity', () => {
       success: true,
       joined: true,
       rewardCoins: 100,
+      reason: 'Community joined.',
       profile: expect.objectContaining({
         coins: 125,
         communityJoinRewardClaimed: true,
@@ -252,7 +254,270 @@ describe('profile.joinCommunity', () => {
     });
   });
 
-  it('returns the saved joined state without rewarding twice', async () => {
+  it('returns a friendly error when subscribe permission is not granted', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRecorded: false,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+    subscribeToCurrentSubredditMock.mockRejectedValue(
+      new Error('not allowed to run as user: permission not granted for [SUBSCRIBE_TO_SUBREDDIT]')
+    );
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(1);
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      joined: false,
+      rewardCoins: 0,
+      reason:
+        'Subscribe is unavailable for this player in playtest. After app approval, it works for all users.',
+      profile: expect.objectContaining({
+        communityJoinRecorded: false,
+        communityJoinRewardClaimed: false,
+      }),
+    });
+  });
+
+  it('returns a friendly error when subscribe action is unauthenticated in playtest', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRecorded: false,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+    subscribeToCurrentSubredditMock.mockRejectedValue(
+      new Error(
+        '16 UNAUTHENTICATED: failed to authenticate plugin request; upstream request missing or timed out'
+      )
+    );
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(2);
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      joined: false,
+      rewardCoins: 0,
+      reason: 'Unable to join the community right now. Please try again in a moment.',
+      profile: expect.objectContaining({
+        communityJoinRecorded: false,
+        communityJoinRewardClaimed: false,
+      }),
+    });
+  });
+
+  it('retries once for transient subscribe auth failures and succeeds on the second attempt', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRecorded: false,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+    subscribeToCurrentSubredditMock
+      .mockRejectedValueOnce(
+        new Error(
+          '16 UNAUTHENTICATED: failed to authenticate plugin request; upstream request missing or timed out'
+        )
+      )
+      .mockResolvedValueOnce(undefined);
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(2);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_u_test',
+      expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
+        communityJoinRewardClaimed: true,
+      })
+    );
+    expect(result).toMatchObject({
+      success: true,
+      joined: true,
+      rewardCoins: 100,
+      reason: 'Community joined.',
+      profile: expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
+        communityJoinRewardClaimed: true,
+      }),
+    });
+  });
+
+  it('treats already-subscribed responses as a successful join outcome', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRecorded: false,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+    subscribeToCurrentSubredditMock.mockRejectedValue(
+      new Error('already subscribed to this subreddit')
+    );
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.joinCommunity();
+
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(1);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_u_test',
+      expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
+        communityJoinRewardClaimed: true,
+      })
+    );
+    expect(result).toMatchObject({
+      success: true,
+      joined: true,
+      rewardCoins: 100,
+      reason: 'Community joined.',
+      profile: expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
+        communityJoinRewardClaimed: true,
+      }),
+    });
+  });
+
+  it('attempts subscribe again and does not reward twice when already recorded', async () => {
     getUserProfileMock.mockResolvedValue({
       coins: 125,
       hearts: 3,
@@ -281,10 +546,13 @@ describe('profile.joinCommunity', () => {
       dailySolveTimeTotalSec: 0,
       endlessSolveTimeTotalSec: 0,
       bestOverallRank: 0,
+      communityJoinRecorded: true,
       communityJoinRewardClaimed: true,
       unlockedFlairs: [],
       activeFlair: '',
     });
+
+    subscribeToCurrentSubredditMock.mockResolvedValue(undefined);
 
     const caller = appRouter.createCaller({
       userId: 't2_u_test',
@@ -294,13 +562,23 @@ describe('profile.joinCommunity', () => {
     });
     const result = await caller.profile.joinCommunity();
 
-    expect(subscribeToCurrentSubredditMock).not.toHaveBeenCalled();
-    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(subscribeToCurrentSubredditMock).toHaveBeenCalledTimes(1);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_u_test',
+      expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
+        communityJoinRewardClaimed: true,
+      })
+    );
     expect(result).toMatchObject({
       success: true,
       joined: true,
       rewardCoins: 0,
+      reason: 'Community joined.',
       profile: expect.objectContaining({
+        coins: 125,
+        communityJoinRecorded: true,
         communityJoinRewardClaimed: true,
       }),
     });

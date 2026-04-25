@@ -627,3 +627,71 @@ body,
     box-shadow: 0 0 0 0 rgba(255, 45, 74, 0);
   }
 }
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+.btn-quest {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn-quest:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: 0 6px 16px rgba(251, 191, 36, 0.5), 0 0 24px rgba(251, 191, 36, 0.4) !important;
+}
+
+/* Quest Book Tag Button */
+.quest-book-tag {
+  position: relative;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.quest-book-tag:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quest-book-tag:not(:disabled):active {
+  transform: translateX(2px) !important;
+}
+
+/* Add a subtle border to make it look like a tag */
+.quest-book-tag::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-left: none;
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+  pointer-events: none;
+}
+
+/* Add a subtle inner glow */
+.quest-book-tag::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+  pointer-events: none;
+}
+
+.btn-quest:active:not(:disabled) {
+  transform: scale(0.98);
+}

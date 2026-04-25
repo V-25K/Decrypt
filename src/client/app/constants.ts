@@ -6,6 +6,7 @@ export const lockEmoji = '\u{1F512}';
 export const wordContinuationGlyph = '\u{21B3}';
 export const heartEmoji = '\u{2764}\u{FE0F}';
 export const emptyHeartGlyph = '\u2661';
+export const infiniteHeartsIcon = '\u267E\u{FE0F}';
 
 export const heartRefillIntervalMs = 30 * 60 * 1000;
 export const challengeHeartbeatIntervalMs = 10 * 1000;
@@ -19,11 +20,22 @@ export const powerupLabel: Record<PowerupType, string> = {
   rocket: 'Rocket',
 };
 
-export const powerupCost: Record<PowerupType, number> = {
-  hammer: 60,
-  shield: 110,
-  wand: 170,
-  rocket: 240,
+export const coinHeartRefillCost = 350;
+export const coinHeartTopUpCost = 150;
+export const maxCoinHeartPurchasesPerDay = 2;
+
+export const dailyRetryCostFirst = 80;
+export const dailyRetryCostSecond = 140;
+export const dailyRetryCostCap = 200;
+
+export const getDailyRetryCost = (retryCount: number): number => {
+  if (retryCount <= 0) {
+    return dailyRetryCostFirst;
+  }
+  if (retryCount === 1) {
+    return dailyRetryCostSecond;
+  }
+  return dailyRetryCostCap;
 };
 
 export const powerupIcon: Record<PowerupType, string> = {
@@ -75,8 +87,6 @@ export const endlessPreviewLevels = Array.from(
 
 export const maxOutcomeCrowdAvatars = 20;
 export const outcomeCrowdScale = 0.75;
-export const outcomeCrowdCollisionPadding = 2;
-export const outcomeCrowdCollisionPasses = 2;
 
 export const confettiPalette = [
   '#6e5400',

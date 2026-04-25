@@ -15,10 +15,21 @@ export const authedProcedure = publicProcedure.use(async ({ ctx, next }) => {
 });
 
 export const adminProcedure = authedProcedure.use(async ({ ctx, next }) => {
-  const allowed = await hasAdminAccess({
-    subredditName: ctx.subredditName,
-    username: ctx.username,
-  });
+  let allowed = false;
+  try {
+    allowed = await hasAdminAccess({
+      subredditName: ctx.subredditName,
+      username: ctx.username,
+    });
+  } catch (error) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message:
+        error instanceof Error && error.message.trim().length > 0
+          ? `Unable to verify moderator access: ${error.message}`
+          : 'Unable to verify moderator access right now.',
+    });
+  }
   if (!allowed) {
     throw new TRPCError({
       code: 'FORBIDDEN',

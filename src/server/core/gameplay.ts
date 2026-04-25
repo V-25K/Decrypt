@@ -1,4 +1,5 @@
 import type { PuzzlePrivate, SessionState } from '../../shared/game.ts';
+import { mulberry32, type Rng } from './rng';
 
 export type RevealedTile = {
   index: number;
@@ -278,8 +279,32 @@ export const applyWand = (
 
 export const applyRocket = (
   puzzle: PuzzlePrivate,
-  session: SessionState
+  session: SessionState,
+  rng?: Rng
 ): RevealPayload => {
+  const mixSeed = (seed: number, value: number): number => {
+    let next = seed ^ (value >>> 0);
+    next = Math.imul(next, 16777619) >>> 0;
+    return next >>> 0;
+  };
+  const deriveSeed = (): number => {
+    let seed = 2166136261;
+    for (const char of puzzle.levelId) {
+      seed = mixSeed(seed, char.charCodeAt(0));
+    }
+    seed = mixSeed(seed, session.startTimestamp);
+    seed = mixSeed(seed, session.usedPowerups);
+    seed = mixSeed(seed, session.guessCount);
+    seed = mixSeed(seed, session.mistakesMade);
+    seed = mixSeed(seed, session.wrongGuesses);
+    const revealed = [...new Set(session.revealedIndices)].sort((a, b) => a - b);
+    for (const index of revealed) {
+      seed = mixSeed(seed, index);
+    }
+    return seed >>> 0;
+  };
+  const random = rng ?? mulberry32(deriveSeed());
+
   const revealedSet = new Set(session.revealedIndices);
   const unresolvedUnlockedIndices = puzzle.tiles
     .filter(
@@ -298,7 +323,7 @@ export const applyRocket = (
   const targetCount = Math.min(4, candidateIndices.length);
   const selectedTargetIndices: number[] = [];
   for (let i = 0; i < targetCount; i += 1) {
-    const pick = Math.floor(Math.random() * candidateIndices.length);
+    const pick = Math.floor(random() * candidateIndices.length);
     const selected = candidateIndices.splice(pick, 1)[0];
     if (selected !== undefined) {
       selectedTargetIndices.push(selected);

@@ -13,9 +13,17 @@ coverage
 .vite
 .cache
 
+# TypeScript build artifacts (but keep hand-written .d.ts files)
+**/*.js
+**/*.js.map
+!vite.config.js
+!eslint.config.js
+!**/*.d.ts
+
 # Local editor / IDE files
 .vscode/
 .idea/
+./kiro
 
 # Local environment and secrets
 .env

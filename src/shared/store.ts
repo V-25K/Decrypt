@@ -28,6 +28,8 @@ export const promotedOfferPrioritySkus = ['rookie_stash', 'decoder_pack'] as con
 const offerPromotionLabels: Record<string, string> = {
   rookie_stash: 'One-Time Offer',
   decoder_pack: 'Popular',
+  heart_rush_30m: '30 MIN ∞',
+  heart_surge_2h: '2 HR ∞',
 };
 
 export const bundleCatalog: Record<string, BundleCatalogEntry> = {
@@ -67,6 +69,30 @@ export const bundleCatalog: Record<string, BundleCatalogEntry> = {
       infiniteHeartsHours: 24,
     },
   },
+  heart_rush_30m: {
+    isOneTime: false,
+    perks: {
+      coins: 0,
+      hearts: 0,
+      hammer: 0,
+      wand: 0,
+      shield: 0,
+      rocket: 0,
+      infiniteHeartsHours: 0.5,
+    },
+  },
+  heart_surge_2h: {
+    isOneTime: false,
+    perks: {
+      coins: 0,
+      hearts: 0,
+      hammer: 0,
+      wand: 0,
+      shield: 0,
+      rocket: 0,
+      infiniteHeartsHours: 2,
+    },
+  },
 };
 
 export const oneTimeOfferSkus = Object.entries(bundleCatalog)
@@ -103,3 +129,16 @@ export const getUsdApproxFromGold = (goldAmount: number): number | null =>
 
 export const getOfferPromotionLabel = (sku: string): string =>
   offerPromotionLabels[sku] ?? 'Offer';
+
+export const isInfiniteHeartSku = (sku: string): boolean => {
+  const entry = bundleCatalog[sku];
+  return entry !== undefined && entry.perks.infiniteHeartsHours > 0;
+};
+
+export const getInfiniteHeartsDurationMs = (sku: string): number => {
+  const entry = bundleCatalog[sku];
+  if (!entry || entry.perks.infiniteHeartsHours <= 0) {
+    return 0;
+  }
+  return Math.round(entry.perks.infiniteHeartsHours * 60 * 60 * 1000);
+};

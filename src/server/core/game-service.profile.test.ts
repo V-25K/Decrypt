@@ -32,6 +32,7 @@ const profileFixture = (): UserProfile => ({
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
   audioEnabled: true,
+  communityJoinRecorded: false,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',
@@ -55,8 +56,10 @@ describe('updateProfileOnCompletion', () => {
       solveSeconds: 30,
       mistakes: 0,
       rewardCoins: 100,
-      dateKey: '2026-03-16',
+      currentDateKey: '2026-03-16',
       hadPriorFailure: false,
+      isCurrentDaily: true,
+      isRecoveryRun: false,
     });
     expect(updated.dailyModeClears).toBe(1);
     expect(updated.dailyFlawlessWins).toBe(1);
@@ -83,11 +86,105 @@ describe('updateProfileOnCompletion', () => {
       solveSeconds: 140,
       mistakes: 1,
       rewardCoins: 100,
-      dateKey: '2026-03-16',
+      currentDateKey: '2026-03-16',
       hadPriorFailure: true,
+      isCurrentDaily: false,
+      isRecoveryRun: false,
     });
     expect(updated.endlessModeClears).toBe(1);
     expect(updated.endlessFirstTryWins).toBe(0);
     expect(updated.endlessCurrentStreak).toBe(1);
+  });
+
+  it('skips daily prestige counters on recovery clears', () => {
+    const puzzle = buildPuzzle({
+      levelId: 'lvl_7777',
+      dateKey: '2026-03-16',
+      text: 'HELLO AGAIN',
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    }).puzzlePrivate;
+    const updated = updateProfileOnCompletion({
+      profile: profileFixture(),
+      puzzle,
+      mode: 'daily',
+      solveSeconds: 45,
+      mistakes: 0,
+      rewardCoins: 35,
+      currentDateKey: '2026-03-16',
+      hadPriorFailure: true,
+      isCurrentDaily: true,
+      isRecoveryRun: true,
+    });
+    expect(updated.dailyModeClears).toBe(1);
+    expect(updated.dailyFirstTryWins).toBe(0);
+    expect(updated.dailyFlawlessWins).toBe(0);
+    expect(updated.dailySpeedWins).toBe(0);
+  });
+
+  it('treats older daily clears as lifetime progress without daily reward behavior', () => {
+    const puzzle = buildPuzzle({
+      levelId: 'lvl_8888',
+      dateKey: '2026-03-15',
+      text: 'SOLVE IT',
+      author: 'UNKNOWN',
+      difficulty: 4,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    }).puzzlePrivate;
+    const updated = updateProfileOnCompletion({
+      profile: profileFixture(),
+      puzzle,
+      mode: 'daily',
+      solveSeconds: 50,
+      mistakes: 0,
+      rewardCoins: 0,
+      currentDateKey: '2026-03-16',
+      hadPriorFailure: false,
+      isCurrentDaily: false,
+      isRecoveryRun: false,
+    });
+    expect(updated.coins).toBe(0);
+    expect(updated.totalLevelsCompleted).toBe(1);
+    expect(updated.dailyModeClears).toBe(1);
+    expect(updated.dailyCurrentStreak).toBe(0);
+    expect(updated.dailyFirstTryWins).toBe(0);
+    expect(updated.dailyFlawlessWins).toBe(0);
+    expect(updated.dailySpeedWins).toBe(0);
+    expect(updated.lastPlayedDateKey).toBe('');
+  });
+
+  it('resets the daily streak after a missed calendar day', () => {
+    const puzzle = buildPuzzle({
+      levelId: 'lvl_9999',
+      dateKey: '2026-03-18',
+      text: 'KEEP GOING',
+      author: 'UNKNOWN',
+      difficulty: 4,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    }).puzzlePrivate;
+    const updated = updateProfileOnCompletion({
+      profile: {
+        ...profileFixture(),
+        dailyCurrentStreak: 7,
+        currentStreak: 7,
+        lastPlayedDateKey: '2026-03-16',
+      },
+      puzzle,
+      mode: 'daily',
+      solveSeconds: 40,
+      mistakes: 0,
+      rewardCoins: 50,
+      currentDateKey: '2026-03-18',
+      hadPriorFailure: false,
+      isCurrentDaily: true,
+      isRecoveryRun: false,
+    });
+
+    expect(updated.dailyCurrentStreak).toBe(1);
+    expect(updated.currentStreak).toBe(1);
   });
 });

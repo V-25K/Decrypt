@@ -6,6 +6,7 @@ const startSessionMutation = vi.fn();
 const heartbeatMutation = vi.fn().mockResolvedValue({ ok: true });
 const getCurrentViewQuery = vi.fn();
 const submitGuessMutation = vi.fn();
+const submitGuessesMutation = vi.fn();
 const completeSessionMutation = vi.fn();
 const powerupPurchaseMutation = vi.fn();
 const powerupUseMutation = vi.fn();
@@ -32,6 +33,7 @@ vi.mock('./trpc', () => ({
       heartbeat: { mutate: heartbeatMutation },
       getCurrentView: { query: getCurrentViewQuery },
       submitGuess: { mutate: submitGuessMutation },
+      submitGuesses: { mutate: submitGuessesMutation },
       completeSession: { mutate: completeSessionMutation },
     },
     powerup: {
@@ -200,6 +202,11 @@ const primeBaseMocks = (params?: {
     levelId: 'lvl_0001',
     puzzle,
     alreadyCompleted: false,
+    retryCount: 0,
+    nextRetryCost: 35,
+    retryScoreFactor: 1,
+    nextRetryScoreFactor: 1,
+    requiresPaidRetry: false,
     challengeMetrics: {
       plays: 42,
       wins: 21,
@@ -250,7 +257,6 @@ const primeBaseMocks = (params?: {
     progress: {
       dailyPlayCount: 0,
       dailyFastWin: false,
-      dailyUnder5Min: false,
       dailyNoPowerup: false,
       dailyNoMistake: false,
       dailyShareCount: 0,
@@ -330,6 +336,16 @@ const typeLetterWithProxy = (letter: string): boolean => {
   return true;
 };
 
+const deferredPromise = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 afterEach(() => {
   bootstrapQuery.mockReset();
   loadLevelQuery.mockReset();
@@ -338,6 +354,7 @@ afterEach(() => {
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();
   submitGuessMutation.mockReset();
+  submitGuessesMutation.mockReset();
   completeSessionMutation.mockReset();
   powerupPurchaseMutation.mockReset();
   powerupUseMutation.mockReset();
@@ -618,7 +635,7 @@ describe('Game', { timeout: 15000 }, () => {
   });
 
   it('buys powerups with quantity dialog without auto-using', async () => {
-    primeBaseMocks({ mode: 'expanded', coins: 600 });
+    primeBaseMocks({ mode: 'expanded', coins: 700 });
     powerupPurchaseMutation.mockResolvedValue({
       success: true,
       reason: null,
@@ -637,11 +654,15 @@ describe('Game', { timeout: 15000 }, () => {
     const qty3 = document.querySelector('[data-testid="buy-quantity-3"]');
     const confirm = document.querySelector('[data-testid="buy-confirm"]');
     qty3?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await waitFor(() => (document.body.textContent ?? '').includes('Total: 510'));
+    await waitFor(() => (document.body.textContent ?? '').includes('Total: 612'));
     confirm?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     await waitFor(() => powerupPurchaseMutation.mock.calls.length > 0);
-    expect(powerupPurchaseMutation).toHaveBeenCalledWith({ itemType: 'wand', quantity: 3 });
+    expect(powerupPurchaseMutation).toHaveBeenCalledWith({
+      levelId: 'lvl_0001',
+      itemType: 'wand',
+      quantity: 3,
+    });
     expect(powerupUseMutation).not.toHaveBeenCalled();
 
     const wandCount = document.querySelector('[data-testid="powerup-count-wand"]');
@@ -859,6 +880,11 @@ describe('Game', { timeout: 15000 }, () => {
       rewardCoins: 150,
       mistakes: 0,
       usedPowerups: 0,
+      retryCount: 0,
+      retryScoreFactor: 1,
+      isRecoveryRun: false,
+      isCurrentDaily: true,
+      rewardNotice: null,
       profile: profileFixture(650),
       inventory: inventoryFixture(),
     });
@@ -874,8 +900,8 @@ describe('Game', { timeout: 15000 }, () => {
     });
     expect(typeLetterWithProxy('H')).toBe(true);
 
-    await waitFor(() => Boolean(document.querySelector('[data-testid="result-screen"]')));
-    expect(document.body.textContent ?? '').toContain('Level Completed');
+    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
+    expect(document.body.textContent ?? '').toContain('Challenge Completed');
     expect(document.querySelector('[data-testid="outcome-overlay-quote"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="outcome-time-pill"]')).toBeTruthy();
   });
@@ -920,5 +946,398 @@ describe('Game', { timeout: 15000 }, () => {
     await new Promise((resolve) => setTimeout(resolve, 1300));
     const fadedTileButton = document.querySelector('[data-testid="puzzle-token-wrap"] button');
     expect(fadedTileButton?.getAttribute('data-tile-state')).not.toBe('wrong');
+  });
+
+  it('skips a stale rapid second guess on the same tile after a correct reveal', async () => {
+    primeBaseMocks({ mode: 'expanded' });
+    const firstGuess = deferredPromise<{
+      ok: true;
+      isCorrect: true;
+      errorCode: null;
+      revealedTiles: Array<{ index: number; letter: string }>;
+      revealedIndices: number[];
+      revealedLetter: string;
+      newlyUnlockedChainIds: string[];
+      heartsRemaining: number;
+      shieldConsumed: boolean;
+      isLevelComplete: boolean;
+      isGameOver: boolean;
+    }>();
+    submitGuessMutation.mockImplementationOnce(() => firstGuess.promise);
+
+    await renderGame();
+    await openChallengeFromHome();
+
+    const tileButton = document.querySelector('[data-testid="puzzle-token-wrap"] button');
+    tileButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => {
+      const selectedTile = document.querySelector('[data-testid="puzzle-token-wrap"] button');
+      return selectedTile?.getAttribute('data-tile-state') === 'selected';
+    });
+
+    expect(typeLetterWithProxy('S')).toBe(true);
+    expect(typeLetterWithProxy('A')).toBe(true);
+    await waitFor(() => submitGuessMutation.mock.calls.length === 1);
+
+    firstGuess.resolve({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [{ index: 0, letter: 'S' }],
+      revealedIndices: [0],
+      revealedLetter: 'S',
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await waitFor(() => {
+      const solvedTile = document.querySelector('[data-testid="puzzle-token-wrap"] button');
+      return solvedTile?.textContent?.includes('S') ?? false;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(submitGuessMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips stale sibling input when the first correct guess auto-fills matching cipher tiles', async () => {
+    const siblingPuzzle = {
+      levelId: 'lvl_0001',
+      dateKey: '2026-02-24',
+      author: 'UNKNOWN',
+      words: ['SEE'],
+      heartsMax: 3,
+      tiles: [
+        {
+          index: 0,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 9,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 1,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 9,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 2,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 3,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+      ],
+    };
+    primeBaseMocks({ mode: 'expanded', puzzle: siblingPuzzle });
+    const firstGuess = deferredPromise<{
+      ok: true;
+      isCorrect: true;
+      errorCode: null;
+      revealedTiles: Array<{ index: number; letter: string }>;
+      revealedIndices: number[];
+      revealedLetter: string;
+      newlyUnlockedChainIds: string[];
+      heartsRemaining: number;
+      shieldConsumed: boolean;
+      isLevelComplete: boolean;
+      isGameOver: boolean;
+    }>();
+    submitGuessMutation.mockImplementationOnce(() => firstGuess.promise);
+
+    await renderGame();
+    await openChallengeFromHome();
+
+    const puzzleButtons = () =>
+      Array.from(document.querySelectorAll('[data-testid="puzzle-token-wrap"] button'));
+
+    puzzleButtons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => puzzleButtons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('S')).toBe(true);
+
+    puzzleButtons()[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => puzzleButtons()[1]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('A')).toBe(true);
+    await waitFor(() => submitGuessMutation.mock.calls.length === 1);
+
+    firstGuess.resolve({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [
+        { index: 0, letter: 'S' },
+        { index: 1, letter: 'S' },
+      ],
+      revealedIndices: [0, 1],
+      revealedLetter: 'S',
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await waitFor(() => {
+      const buttons = puzzleButtons();
+      return (
+        (buttons[0]?.textContent?.includes('S') ?? false) &&
+        (buttons[1]?.textContent?.includes('S') ?? false)
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(submitGuessMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters stale queued guesses during burst typing while first request is in flight', async () => {
+    const burstPuzzle = {
+      levelId: 'lvl_0001',
+      dateKey: '2026-02-24',
+      author: 'UNKNOWN',
+      words: ['SAX'],
+      heartsMax: 3,
+      tiles: [
+        {
+          index: 0,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 7,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 1,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 7,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 2,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 2,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+      ],
+    };
+
+    primeBaseMocks({ mode: 'expanded', puzzle: burstPuzzle });
+    const firstGuess = deferredPromise<{
+      ok: true;
+      isCorrect: true;
+      errorCode: null;
+      revealedTiles: Array<{ index: number; letter: string }>;
+      revealedIndices: number[];
+      revealedLetter: string;
+      newlyUnlockedChainIds: string[];
+      heartsRemaining: number;
+      shieldConsumed: boolean;
+      isLevelComplete: boolean;
+      isGameOver: boolean;
+    }>();
+    submitGuessMutation.mockImplementationOnce(() => firstGuess.promise);
+    submitGuessMutation.mockResolvedValueOnce({
+      ok: true,
+      isCorrect: false,
+      errorCode: null,
+      revealedTiles: [],
+      revealedIndices: [],
+      revealedLetter: null,
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 2,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await renderGame();
+    await openChallengeFromHome();
+
+    const puzzleButtons = () =>
+      Array.from(document.querySelectorAll('[data-testid="puzzle-token-wrap"] button'));
+
+    puzzleButtons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => puzzleButtons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('S')).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    puzzleButtons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => puzzleButtons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('A')).toBe(true);
+
+    puzzleButtons()[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => puzzleButtons()[2]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('Z')).toBe(true);
+    await waitFor(() => submitGuessMutation.mock.calls.length === 1);
+
+    firstGuess.resolve({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [
+        { index: 0, letter: 'S' },
+        { index: 1, letter: 'S' },
+      ],
+      revealedIndices: [0, 1],
+      revealedLetter: 'S',
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await waitFor(() => submitGuessMutation.mock.calls.length === 2);
+    const submittedTileIndices = submitGuessMutation.mock.calls.map((call) => call[0]?.tileIndex);
+    expect(submittedTileIndices).toEqual([0, 2]);
+  });
+
+  it('auto-advances selection to the next empty tile after a correct reveal', async () => {
+    const multiTilePuzzle = {
+      levelId: 'lvl_0001',
+      dateKey: '2026-02-24',
+      author: 'UNKNOWN',
+      words: ['ABC'],
+      heartsMax: 3,
+      tiles: [
+        {
+          index: 0,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 1,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 1,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 2,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 2,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 3,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+      ],
+    };
+    primeBaseMocks({ mode: 'expanded', puzzle: multiTilePuzzle });
+    submitGuessMutation.mockResolvedValueOnce({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [{ index: 0, letter: 'A' }],
+      revealedIndices: [0],
+      revealedLetter: 'A',
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await renderGame();
+    await openChallengeFromHome();
+
+    const buttons = () =>
+      Array.from(document.querySelectorAll('[data-testid="puzzle-token-wrap"] button'));
+    buttons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => buttons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('A')).toBe(true);
+
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    await waitFor(() => buttons()[1]?.getAttribute('data-tile-state') === 'selected');
+  });
+
+  it('auto-advances past same-number auto-filled siblings', async () => {
+    const siblingPuzzle = {
+      levelId: 'lvl_0001',
+      dateKey: '2026-02-24',
+      author: 'UNKNOWN',
+      words: ['AAB'],
+      heartsMax: 3,
+      tiles: [
+        {
+          index: 0,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 7,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 1,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 7,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+        {
+          index: 2,
+          isLetter: true,
+          displayChar: '_',
+          cipherNumber: 9,
+          isBlind: false,
+          isGold: false,
+          isLocked: false,
+        },
+      ],
+    };
+    primeBaseMocks({ mode: 'expanded', puzzle: siblingPuzzle });
+    submitGuessMutation.mockResolvedValueOnce({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [
+        { index: 0, letter: 'A' },
+        { index: 1, letter: 'A' },
+      ],
+      revealedIndices: [0, 1],
+      revealedLetter: 'A',
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await renderGame();
+    await openChallengeFromHome();
+
+    const buttons = () =>
+      Array.from(document.querySelectorAll('[data-testid="puzzle-token-wrap"] button'));
+    buttons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => buttons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('A')).toBe(true);
+
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    await waitFor(() => buttons()[2]?.getAttribute('data-tile-state') === 'selected');
   });
 });

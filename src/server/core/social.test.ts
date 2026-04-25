@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { computeScoreMock, contextState, submitCommentMock } = vi.hoisted(() => ({
-  computeScoreMock: vi.fn(() => 321),
+const { contextState, submitCommentMock } = vi.hoisted(() => ({
   contextState: {
     postId: 't3_testpost' as string | undefined,
   },
@@ -15,16 +14,11 @@ vi.mock('@devvit/web/server', () => ({
   },
 }));
 
-vi.mock('./leaderboard', () => ({
-  computeScore: computeScoreMock,
-}));
-
 import { shareResultAsComment } from './social';
 
 afterEach(() => {
   contextState.postId = 't3_testpost';
   submitCommentMock.mockReset();
-  computeScoreMock.mockClear();
 });
 
 describe('shareResultAsComment', () => {
@@ -37,17 +31,20 @@ describe('shareResultAsComment', () => {
       mistakes: 1,
       heartsRemaining: 2,
       usedPowerups: 3,
-      score: null,
+      score: 321,
     });
 
-    expect(computeScoreMock).toHaveBeenCalledWith({
-      solveSeconds: 95,
-      mistakes: 1,
-      usedPowerups: 3,
-    });
     expect(submitCommentMock).toHaveBeenCalledWith({
       id: 't3_testpost',
-      text: 'Cleared the challenge!\nScore: 321\nPowerups used: 3\nMistakes: 1\nTime: 01:35',
+      text:
+        '- Score: **321**\n' +
+        '- Time: **01:35**\n' +
+        '- Mistakes: **1**\n' +
+        '- Powerups: **3**\n' +
+        '\n' +
+        'Highlights: **Strong finish**\n' +
+        '\n' +
+        'Can you beat this run?',
       runAs: 'USER',
     });
     expect(result).toEqual({
@@ -93,6 +90,33 @@ describe('shareResultAsComment', () => {
       success: false,
       reason: 'Missing post context.',
       commentId: null,
+    });
+  });
+
+  it('adds stronger highlight badges for flawless no-powerup clears', async () => {
+    submitCommentMock.mockResolvedValue({ id: 't1_shared' });
+
+    await shareResultAsComment({
+      levelId: 'lvl_0042',
+      solveSeconds: 88,
+      mistakes: 0,
+      heartsRemaining: 3,
+      usedPowerups: 0,
+      score: 777,
+    });
+
+    expect(submitCommentMock).toHaveBeenCalledWith({
+      id: 't3_testpost',
+      text:
+        '- Score: **777**\n' +
+        '- Time: **01:28**\n' +
+        '- Mistakes: **0**\n' +
+        '- Powerups: **0**\n' +
+        '\n' +
+        'Highlights: **Flawless | No powerups | Strong finish**\n' +
+        '\n' +
+        'Can you beat this run?',
+      runAs: 'USER',
     });
   });
 });

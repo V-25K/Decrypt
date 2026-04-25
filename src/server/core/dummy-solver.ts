@@ -2,8 +2,8 @@ import type { PuzzlePrivate, PuzzleTile } from '../../shared/game.ts';
 
 const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
 const suffixHints = ['ING', 'TION'] as const;
-const maxBranchExpansions = 2000;
-const maxSolverMs = 40;
+const defaultMaxBranchExpansions = 2000;
+const defaultMaxSolverMs = 40;
 
 type SolverResult = {
   solvable: boolean;
@@ -33,6 +33,9 @@ type SolverContext = {
   branchExpansions: number;
   budgetExceeded: boolean;
   bestRatio: number;
+  targetRatio: number;
+  maxSearchMs: number;
+  maxBranchExpansions: number;
 };
 
 const countKnown = (knownLetters: Array<string | null>): number =>
@@ -83,7 +86,10 @@ const isWithinBudget = (context: SolverContext): boolean => {
     return false;
   }
   const elapsed = Date.now() - context.startedAtMs;
-  if (elapsed > maxSolverMs || context.branchExpansions >= maxBranchExpansions) {
+  if (
+    elapsed > context.maxSearchMs ||
+    context.branchExpansions >= context.maxBranchExpansions
+  ) {
     context.budgetExceeded = true;
     return false;
   }
@@ -390,7 +396,7 @@ const searchSolve = (params: {
 
   const ratio = solveRatio(params.state.solvedIndices, params.totalLetters);
   params.context.bestRatio = Math.max(params.context.bestRatio, ratio);
-  if (ratio >= 0.8) {
+  if (ratio >= params.context.targetRatio) {
     return params.state;
   }
 
@@ -430,6 +436,9 @@ export const runDummySolver = (params: {
   puzzle: PuzzlePrivate;
   revealedIndices: number[];
   forbiddenIndices?: number[];
+  requiredSolveRatio?: number;
+  maxSearchMs?: number;
+  maxBranchExpansions?: number;
 }): SolverResult => {
   const forbiddenSet = new Set(params.forbiddenIndices ?? []);
   const cipherTiles = buildCipherTiles(params.puzzle, forbiddenSet);
@@ -477,6 +486,19 @@ export const runDummySolver = (params: {
     branchExpansions: 0,
     budgetExceeded: false,
     bestRatio: solveRatio(state.solvedIndices, totalLetters),
+    targetRatio: Math.max(
+      0.5,
+      Math.min(0.95, params.requiredSolveRatio ?? 0.8)
+    ),
+    maxSearchMs:
+      typeof params.maxSearchMs === 'number' && Number.isFinite(params.maxSearchMs)
+        ? Math.max(1, Math.floor(params.maxSearchMs))
+        : defaultMaxSolverMs,
+    maxBranchExpansions:
+      typeof params.maxBranchExpansions === 'number' &&
+      Number.isFinite(params.maxBranchExpansions)
+        ? Math.max(1, Math.floor(params.maxBranchExpansions))
+        : defaultMaxBranchExpansions,
   };
   const solved = searchSolve({
     state,
@@ -489,9 +511,9 @@ export const runDummySolver = (params: {
   if (solved && !context.budgetExceeded) {
     const ratio = solveRatio(solved.solvedIndices, totalLetters);
     return {
-      solvable: ratio >= 0.8,
+      solvable: ratio >= context.targetRatio,
       solvedRatio: ratio,
-      blindGuessRequired: ratio < 0.8,
+      blindGuessRequired: ratio < context.targetRatio,
     };
   }
 

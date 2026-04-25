@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
   zRangeMock,
+  zRankMock,
+  zCardMock,
+  zIncrByMock,
   hGetMock,
   hGetAllMock,
+  hIncrByMock,
   hSetMock,
   hDelMock,
   zAddMock,
@@ -14,8 +18,12 @@ const {
   getShareCompletionReceiptMock,
 } = vi.hoisted(() => ({
   zRangeMock: vi.fn(),
+  zRankMock: vi.fn(),
+  zCardMock: vi.fn(),
+  zIncrByMock: vi.fn(),
   hGetMock: vi.fn(),
   hGetAllMock: vi.fn(),
+  hIncrByMock: vi.fn(),
   hSetMock: vi.fn(),
   hDelMock: vi.fn(),
   zAddMock: vi.fn(),
@@ -29,8 +37,12 @@ const {
 vi.mock('@devvit/web/server', () => ({
   redis: {
     zRange: zRangeMock,
+    zRank: zRankMock,
+    zCard: zCardMock,
+    zIncrBy: zIncrByMock,
     hGet: hGetMock,
     hGetAll: hGetAllMock,
+    hIncrBy: hIncrByMock,
     hSet: hSetMock,
     hDel: hDelMock,
     zAdd: zAddMock,
@@ -47,12 +59,22 @@ vi.mock('./share-receipts', () => ({
   getShareCompletionReceipt: getShareCompletionReceiptMock,
 }));
 
-import { computeScore, getDailyTop, getLevelTop, getUserRankSummary } from './leaderboard';
+import {
+  computeScore,
+  getDailyTop,
+  getLevelTop,
+  getUserRankSummary,
+  recordDailyScore,
+} from './leaderboard';
 
 afterEach(() => {
   zRangeMock.mockReset();
+  zRankMock.mockReset();
+  zCardMock.mockReset();
+  zIncrByMock.mockReset();
   hGetMock.mockReset();
   hGetAllMock.mockReset();
+  hIncrByMock.mockReset();
   hSetMock.mockReset();
   hDelMock.mockReset();
   zAddMock.mockReset();
@@ -91,18 +113,8 @@ describe('computeScore', () => {
 
 describe('getUserRankSummary', () => {
   it('returns ranks and chooses best current rank', async () => {
-    hGetMock.mockResolvedValue(null);
-    zRangeMock
-      .mockResolvedValueOnce([
-        { member: 'u_top', score: 9 },
-        { member: 'u_mid', score: 7 },
-        { member: 'u_test', score: 6 },
-      ])
-      .mockResolvedValueOnce([
-        { member: 'u_top', score: 9 },
-        { member: 'u_mid', score: 7 },
-        { member: 'u_test', score: 6 },
-      ]);
+    zRankMock.mockResolvedValueOnce(0).mockResolvedValueOnce(undefined);
+    zCardMock.mockResolvedValueOnce(3).mockResolvedValueOnce(0);
 
     const summary = await getUserRankSummary({
       userId: 'u_test',
@@ -117,13 +129,28 @@ describe('getUserRankSummary', () => {
   });
 
   it('returns null ranks when user is unranked', async () => {
-    hGetMock.mockResolvedValue(null);
-    zRangeMock
-      .mockResolvedValueOnce([{ member: 'u_top', score: 9 }])
-      .mockResolvedValueOnce([{ member: 'u_top', score: 9 }]);
+    zRankMock.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    zCardMock.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
 
     const summary = await getUserRankSummary({
       userId: 'u_missing',
+      dateKey: '2026-03-16',
+    });
+
+    expect(summary).toEqual({
+      dailyRank: null,
+      endlessRank: null,
+      currentRank: null,
+    });
+  });
+
+  it('hides endless rank when user has zero endless clears', async () => {
+    zRankMock.mockResolvedValueOnce(undefined).mockResolvedValueOnce(2);
+    zCardMock.mockResolvedValueOnce(10).mockResolvedValueOnce(10);
+    hGetMock.mockResolvedValue('0');
+
+    const summary = await getUserRankSummary({
+      userId: 'u_zero',
       dateKey: '2026-03-16',
     });
 
@@ -208,30 +235,12 @@ describe('getUserRankSummary', () => {
 
   it('computes daily average time from stored totals without forcing receipt repair', async () => {
     zRangeMock.mockResolvedValue([{ member: 'u_avg', score: 880 }]);
-    hGetMock.mockImplementation(async (key: string, field: string) => {
-      if (key.endsWith(':stats')) {
-        if (field === 'u_avg') {
-          return JSON.stringify({
-            solveSeconds: 300,
-            mistakes: 4,
-            usedPowerups: 2,
-            runs: 3,
-          });
-        }
-        if (field === 'u_avg:solveSeconds') {
-          return '300';
-        }
-        if (field === 'u_avg:mistakes') {
-          return '4';
-        }
-        if (field === 'u_avg:usedPowerups') {
-          return '2';
-        }
-        if (field === 'u_avg:runs') {
-          return '3';
-        }
-      }
-      return null;
+    hGetMock.mockResolvedValue(null);
+    hGetAllMock.mockResolvedValue({
+      'u_avg:solveSeconds': '300',
+      'u_avg:mistakes': '4',
+      'u_avg:usedPowerups': '2',
+      'u_avg:runs': '3',
     });
     getUserByIdMock.mockResolvedValue({ username: 'u_avg' });
     getSnoovatarUrlMock.mockResolvedValue('https://example.com/u_avg.png');
@@ -249,36 +258,56 @@ describe('getUserRankSummary', () => {
         usedPowerups: 1,
       },
     ]);
-    expect(hGetAllMock).not.toHaveBeenCalled();
+    expect(hGetAllMock).toHaveBeenCalledWith('decrypt:leaderboard:daily:2026-03-25:stats');
+    expect(getShareCompletionReceiptMock).not.toHaveBeenCalled();
+  });
+
+  it('reads legacy JSON stats when per-field counters are missing', async () => {
+    zRangeMock.mockResolvedValue([{ member: 'u_legacy_json', score: 812 }]);
+    hGetMock.mockResolvedValue(null);
+    hGetAllMock.mockResolvedValue({
+      u_legacy_json: JSON.stringify({
+        solveSeconds: 240,
+        mistakes: 3,
+        usedPowerups: 1,
+        runs: 2,
+      }),
+    });
+    getUserByIdMock.mockResolvedValue({ username: 'u_legacy_json' });
+    getSnoovatarUrlMock.mockResolvedValue(
+      'https://example.com/u_legacy_json.png'
+    );
+
+    const top = await getDailyTop('2026-03-25', 10);
+
+    expect(top).toEqual([
+      {
+        userId: 'u_legacy_json',
+        username: 'u_legacy_json',
+        score: 812,
+        snoovatarUrl: 'https://example.com/u_legacy_json.png',
+        solveSeconds: 120,
+        mistakes: 2,
+        usedPowerups: 1,
+      },
+    ]);
     expect(getShareCompletionReceiptMock).not.toHaveBeenCalled();
   });
 
   it('treats zero legacy run counts as one run for average display', async () => {
     zRangeMock.mockResolvedValue([{ member: 'u_legacy', score: 845 }]);
-    hGetMock.mockImplementation(async (key: string, field: string) => {
-      if (key.endsWith(':stats')) {
-        if (field === 'u_legacy') {
-          return JSON.stringify({
-            solveSeconds: 125,
-            mistakes: 2,
-            usedPowerups: 1,
-            runs: 0,
-          });
-        }
-        if (field === 'u_legacy:solveSeconds') {
-          return '125';
-        }
-        if (field === 'u_legacy:mistakes') {
-          return '2';
-        }
-        if (field === 'u_legacy:usedPowerups') {
-          return '1';
-        }
-        if (field === 'u_legacy:runs') {
-          return '0';
-        }
-      }
-      return null;
+    hGetMock.mockResolvedValue(null);
+    hGetAllMock.mockResolvedValue({
+      u_legacy: JSON.stringify({
+        solveSeconds: 125,
+        mistakes: 2,
+        usedPowerups: 1,
+        runs: 0,
+      }),
+      'u_legacy:solveSeconds': '125',
+      'u_legacy:mistakes': '2',
+      'u_legacy:usedPowerups': '1',
+      'u_legacy:runs': '0',
     });
     getUserByIdMock.mockResolvedValue({ username: 'u_legacy' });
     getSnoovatarUrlMock.mockResolvedValue('https://example.com/u_legacy.png');
@@ -296,7 +325,6 @@ describe('getUserRankSummary', () => {
         usedPowerups: 1,
       },
     ]);
-    expect(hGetAllMock).not.toHaveBeenCalled();
     expect(getShareCompletionReceiptMock).not.toHaveBeenCalled();
   });
 
@@ -365,5 +393,43 @@ describe('getUserRankSummary', () => {
         usedPowerups: 1,
       },
     ]);
+  });
+
+  it('records daily score without writing legacy per-user JSON blobs', async () => {
+    hGetMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          solveSeconds: 50,
+          mistakes: 1,
+          usedPowerups: 0,
+          runs: 1,
+        })
+      );
+    zIncrByMock.mockResolvedValue(555);
+    hIncrByMock
+      .mockResolvedValueOnce(150)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(2);
+    expireMock.mockResolvedValue(true);
+
+    await recordDailyScore({
+      dateKey: '2026-03-25',
+      userId: 'u_write',
+      score: 500,
+      solveSeconds: 100,
+      mistakes: 1,
+      usedPowerups: 1,
+    });
+
+    expect(hSetMock).toHaveBeenCalledTimes(1);
+    const payload = hSetMock.mock.calls[0]?.[1] as Record<string, string> | undefined;
+    if (!payload) {
+      throw new Error('Expected a stats seed payload');
+    }
+    expect(payload['u_write']).toBeUndefined();
+    expect(payload['u_write:solveSeconds']).toBeDefined();
+    expect(payload['u_write:runs']).toBeDefined();
   });
 });

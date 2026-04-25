@@ -9,6 +9,11 @@ import {
 import { normalizePadlockChains } from './puzzle';
 import {
   keyDailyPointer,
+  keyLevelIdCounter,
+  keyPublishedAutoDailyPuzzlesByDate,
+  keyPublishedAutoDailyPuzzlesByDateInitialized,
+  keyPuzzleMapping,
+  keyPuzzlePublicationReceipt,
   keyPuzzlePublishedPost,
   keyPuzzleStaged,
   keyPuzzlePrivate,
@@ -16,7 +21,28 @@ import {
   keyPuzzlesByDate,
   keyPuzzlesIndex,
   keyUsedStrings,
+  keyUsedSignatureMeta,
+  keyUsedSignatureRecent,
 } from './keys';
+
+const puzzleMappingSchema = z.record(z.string(), z.number());
+const transactionCommitted = (result: unknown): boolean =>
+  result !== null && result !== undefined;
+const maxSavePuzzleRetries = 3;
+
+export class PuzzleLevelAllocationConflictError extends Error {
+  readonly expectedLevelId: string;
+  readonly actualLevelId: string;
+
+  constructor(params: { expectedLevelId: string; actualLevelId: string }) {
+    super(
+      `Puzzle level allocation changed from ${params.expectedLevelId} to ${params.actualLevelId}`
+    );
+    this.name = 'PuzzleLevelAllocationConflictError';
+    this.expectedLevelId = params.expectedLevelId;
+    this.actualLevelId = params.actualLevelId;
+  }
+}
 
 export const getDailyPointer = async (): Promise<string | null> => {
   const value = await redis.get(keyDailyPointer);
@@ -27,9 +53,29 @@ export const setDailyPointer = async (levelId: string): Promise<void> => {
   await redis.set(keyDailyPointer, levelId);
 };
 
+const ensureLevelIdCounterSeeded = async (): Promise<number> => {
+  const currentCounterRaw = await redis.get(keyLevelIdCounter);
+  if (currentCounterRaw === null) {
+    const existingCount = await redis.zCard(keyPuzzlesIndex);
+    await redis.set(keyLevelIdCounter, `${existingCount}`, { nx: true });
+    return existingCount;
+  }
+  const currentCounter = Number(currentCounterRaw);
+  if (!Number.isFinite(currentCounter) || currentCounter < 0) {
+    throw new Error('Invalid level id counter state');
+  }
+  return Math.floor(currentCounter);
+};
+
+export const peekNextLevelId = async (): Promise<string> => {
+  const currentCounter = await ensureLevelIdCounterSeeded();
+  const next = currentCounter + 1;
+  return `lvl_${`${next}`.padStart(4, '0')}`;
+};
+
 export const getNextLevelId = async (): Promise<string> => {
-  const count = await redis.zCard(keyPuzzlesIndex);
-  const next = count + 1;
+  await ensureLevelIdCounterSeeded();
+  const next = await redis.incrBy(keyLevelIdCounter, 1);
   return `lvl_${`${next}`.padStart(4, '0')}`;
 };
 
@@ -47,6 +93,31 @@ const readJsonWithSchema = async <T>(
     return null;
   }
   return parsed.data;
+};
+
+const cleanupPuzzlePersistence = async (params: {
+  levelId: string;
+  dateKey?: string;
+  signature?: string;
+}): Promise<void> => {
+  await redis.del(keyPuzzlePrivate(params.levelId));
+  await redis.del(keyPuzzlePublic(params.levelId));
+  await redis.del(keyPuzzleMapping(params.levelId));
+  await redis.del(keyPuzzlePublicationReceipt(params.levelId));
+  await redis.del(keyPuzzlePublishedPost(params.levelId));
+  await redis.zRem(keyPuzzlesIndex, [params.levelId]);
+  if (params.dateKey) {
+    await redis.zRem(keyPuzzlesByDate(params.dateKey), [params.levelId]);
+    await redis.zRem(keyPublishedAutoDailyPuzzlesByDate(params.dateKey), [params.levelId]);
+  }
+  if (params.signature) {
+    const existing = await redis.hGet(keyUsedStrings, params.signature);
+    if (existing === params.levelId) {
+      await redis.hDel(keyUsedStrings, [params.signature]);
+      await redis.hDel(keyUsedSignatureMeta, [params.signature]);
+      await redis.zRem(keyUsedSignatureRecent, [params.signature]);
+    }
+  }
 };
 
 export const getPuzzlePrivate = async (
@@ -73,35 +144,108 @@ export const getPuzzlePublic = async (
 ): Promise<PuzzlePublic | null> =>
   readJsonWithSchema(keyPuzzlePublic(levelId), puzzlePublicSchema);
 
+export const getPuzzleMapping = async (
+  levelId: string
+): Promise<Record<string, number> | null> =>
+  readJsonWithSchema(keyPuzzleMapping(levelId), puzzleMappingSchema);
+
 export const savePuzzle = async (params: {
   puzzlePrivate: PuzzlePrivate;
   puzzlePublic: PuzzlePublic;
   normalizedSignature: string;
-}): Promise<void> => {
-  await redis.set(
-    keyPuzzlePrivate(params.puzzlePrivate.levelId),
-    JSON.stringify(params.puzzlePrivate)
-  );
-  await redis.set(
-    keyPuzzlePublic(params.puzzlePublic.levelId),
-    JSON.stringify(params.puzzlePublic)
-  );
-  await redis.zAdd(keyPuzzlesIndex, {
-    member: params.puzzlePrivate.levelId,
-    score: params.puzzlePrivate.createdAt,
-  });
-  if (
-    params.puzzlePrivate.source === 'AUTO_DAILY' ||
-    params.puzzlePrivate.source === 'MANUAL_INJECTED'
-  ) {
-    await redis.zAdd(keyPuzzlesByDate(params.puzzlePrivate.dateKey), {
-      member: params.puzzlePrivate.levelId,
-      score: params.puzzlePrivate.createdAt,
-    });
+  tokenSignature?: string | null;
+  expectedLevelId?: string;
+}): Promise<string> => {
+  for (let attempt = 0; attempt < maxSavePuzzleRetries; attempt += 1) {
+    const tx = await redis.watch(keyLevelIdCounter, keyPuzzlesIndex);
+    let transactionStarted = false;
+    let execAttempted = false;
+    try {
+      const currentCounterRaw = await redis.get(keyLevelIdCounter);
+      const currentCounter =
+        currentCounterRaw === null
+          ? await redis.zCard(keyPuzzlesIndex)
+          : Number(currentCounterRaw);
+      if (!Number.isFinite(currentCounter) || currentCounter < 0) {
+        await tx.unwatch();
+        throw new Error('Invalid level id counter state');
+      }
+      const nextCounter = Math.floor(currentCounter) + 1;
+      const allocatedLevelId = `lvl_${`${nextCounter}`.padStart(4, '0')}`;
+      if (params.expectedLevelId && params.expectedLevelId !== allocatedLevelId) {
+        await tx.unwatch();
+        throw new PuzzleLevelAllocationConflictError({
+          expectedLevelId: params.expectedLevelId,
+          actualLevelId: allocatedLevelId,
+        });
+      }
+
+      const puzzlePrivate: PuzzlePrivate = {
+        ...params.puzzlePrivate,
+        levelId: allocatedLevelId,
+      };
+      const puzzlePublic: PuzzlePublic = {
+        ...params.puzzlePublic,
+        levelId: allocatedLevelId,
+      };
+
+      await tx.multi();
+      transactionStarted = true;
+      if (currentCounterRaw === null) {
+        await tx.set(keyLevelIdCounter, `${Math.floor(currentCounter)}`, { nx: true });
+      }
+      await tx.incrBy(keyLevelIdCounter, 1);
+      await tx.set(keyPuzzlePrivate(allocatedLevelId), JSON.stringify(puzzlePrivate));
+      await tx.set(keyPuzzlePublic(allocatedLevelId), JSON.stringify(puzzlePublic));
+      await tx.set(keyPuzzleMapping(allocatedLevelId), JSON.stringify(puzzlePrivate.mapping));
+      await tx.zAdd(keyPuzzlesIndex, {
+        member: allocatedLevelId,
+        score: puzzlePrivate.createdAt,
+      });
+      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED') {
+        await tx.zAdd(keyPuzzlesByDate(puzzlePrivate.dateKey), {
+          member: allocatedLevelId,
+          score: puzzlePrivate.createdAt,
+        });
+      }
+      await tx.hSet(keyUsedStrings, {
+        [params.normalizedSignature]: allocatedLevelId,
+      });
+      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED') {
+        await tx.zAdd(keyUsedSignatureRecent, {
+          member: params.normalizedSignature,
+          score: puzzlePrivate.createdAt,
+        });
+        if (typeof params.tokenSignature === 'string' && params.tokenSignature.length > 0) {
+          await tx.hSet(keyUsedSignatureMeta, {
+            [params.normalizedSignature]: params.tokenSignature,
+          });
+        }
+      }
+
+      execAttempted = true;
+      const execResult = await tx.exec();
+      if (!transactionCommitted(execResult)) {
+        continue;
+      }
+      return allocatedLevelId;
+    } catch (error) {
+      if (error instanceof PuzzleLevelAllocationConflictError) {
+        throw error;
+      }
+      if (!execAttempted) {
+        if (transactionStarted && 'discard' in tx && typeof tx.discard === 'function') {
+          await tx.discard();
+        } else {
+          await tx.unwatch();
+        }
+      }
+      if (attempt >= maxSavePuzzleRetries - 1) {
+        throw error;
+      }
+    }
   }
-  await redis.hSet(keyUsedStrings, {
-    [params.normalizedSignature]: params.puzzlePrivate.levelId,
-  });
+  throw new Error('Failed to save puzzle after transaction retries.');
 };
 
 export const getPuzzlePublishedPostId = async (
@@ -113,9 +257,53 @@ export const getPuzzlePublishedPostId = async (
 
 export const setPuzzlePublishedPostId = async (
   levelId: string,
-  postId: string
+  postId: string,
+  dateKey?: string
 ): Promise<void> => {
   await redis.set(keyPuzzlePublishedPost(levelId), postId);
+  const stored = await readJsonWithSchema(
+    keyPuzzlePrivate(levelId),
+    puzzlePrivateStoredSchema
+  );
+  if (!stored || stored.source !== 'AUTO_DAILY') {
+    return;
+  }
+  const effectiveDateKey = dateKey ?? stored.dateKey;
+  await redis.zAdd(keyPublishedAutoDailyPuzzlesByDate(effectiveDateKey), {
+    member: levelId,
+    score: stored.createdAt,
+  });
+  await redis.set(
+    keyPublishedAutoDailyPuzzlesByDateInitialized(effectiveDateKey),
+    '1'
+  );
+};
+
+type PuzzlePublicationReceipt = {
+  postId: string;
+  dateKey: string;
+  publishedAt: number;
+};
+
+const puzzlePublicationReceiptSchema = z.object({
+  postId: z.string().min(1),
+  dateKey: z.string().min(1),
+  publishedAt: z.number().int().nonnegative(),
+});
+
+export const getPuzzlePublicationReceipt = async (
+  levelId: string
+): Promise<PuzzlePublicationReceipt | null> =>
+  readJsonWithSchema(
+    keyPuzzlePublicationReceipt(levelId),
+    puzzlePublicationReceiptSchema
+  );
+
+export const setPuzzlePublicationReceipt = async (
+  levelId: string,
+  receipt: PuzzlePublicationReceipt
+): Promise<void> => {
+  await redis.set(keyPuzzlePublicationReceipt(levelId), JSON.stringify(receipt));
 };
 
 export const reserveUsedSignature = async (
@@ -140,7 +328,47 @@ export const clearUsedSignature = async (
   const existing = await redis.hGet(keyUsedStrings, signature);
   if (existing === levelId) {
     await redis.hDel(keyUsedStrings, [signature]);
+    await redis.hDel(keyUsedSignatureMeta, [signature]);
+    await redis.zRem(keyUsedSignatureRecent, [signature]);
   }
+};
+
+export const getRecentUsedSignatureEntries = async (
+  limit = 600
+): Promise<Array<{ normalizedSignature: string; tokenSignature: string | null }>> => {
+  const safeLimit = Math.max(0, Math.min(2000, Math.floor(limit)));
+  if (safeLimit === 0) {
+    return [];
+  }
+  const entries = await redis.zRange(keyUsedSignatureRecent, 0, safeLimit - 1, {
+    by: 'rank',
+    reverse: true,
+  });
+  const signatures = entries.map((entry) => entry.member).filter((value) => value.length > 0);
+  let tokenSignatures: Array<string | null> = [];
+  if (signatures.length > 0) {
+    try {
+      tokenSignatures = await redis.hMGet(keyUsedSignatureMeta, signatures);
+    } catch (error) {
+      // Devvit documents hMGet as allowlisted on some installs, so preserve
+      // correctness with a fallback when the batched hash read is unavailable.
+      console.warn(
+        `[getRecentUsedSignatureEntries] hMGet unavailable, falling back to hGet fan-out: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`
+      );
+      tokenSignatures = await Promise.all(
+        signatures.map(async (signature) => {
+          const raw = await redis.hGet(keyUsedSignatureMeta, signature);
+          return raw ?? null;
+        })
+      );
+    }
+  }
+  return signatures.map((normalizedSignature, index) => ({
+    normalizedSignature,
+    tokenSignature: tokenSignatures[index] ?? null,
+  }));
 };
 
 export const deletePuzzleData = async (params: {
@@ -148,16 +376,7 @@ export const deletePuzzleData = async (params: {
   dateKey?: string;
   signature?: string;
 }): Promise<void> => {
-  await redis.del(keyPuzzlePrivate(params.levelId));
-  await redis.del(keyPuzzlePublic(params.levelId));
-  await redis.del(keyPuzzlePublishedPost(params.levelId));
-  await redis.zRem(keyPuzzlesIndex, [params.levelId]);
-  if (params.dateKey) {
-    await redis.zRem(keyPuzzlesByDate(params.dateKey), [params.levelId]);
-  }
-  if (params.signature) {
-    await clearUsedSignature(params.signature, params.levelId);
-  }
+  await cleanupPuzzlePersistence(params);
 };
 
 export const setStagedLevelId = async (levelId: string): Promise<void> => {
@@ -184,6 +403,9 @@ export const countPuzzlesForDate = async (dateKey: string): Promise<number> => {
   if (indexedCount > 0) {
     return indexedCount;
   }
+  console.error(
+    `[countPuzzlesForDate] date index missing for ${dateKey}, running full scan`
+  );
 
   const levelIds = await getAllLevelIds();
   let count = 0;
@@ -203,6 +425,80 @@ export const countPuzzlesForDate = async (dateKey: string): Promise<number> => {
     });
   }
 
+  return count;
+};
+
+export const getAutoDailyLevelIdsForDate = async (
+  dateKey: string
+): Promise<string[]> => {
+  const dateKeyIndex = keyPuzzlesByDate(dateKey);
+  const indexedCount = await redis.zCard(dateKeyIndex);
+  const levelIds =
+    indexedCount > 0
+      ? (await redis.zRange(dateKeyIndex, 0, -1, { by: 'rank' })).map(
+          (entry) => entry.member
+        )
+      : await getAllLevelIds();
+
+  if (indexedCount === 0) {
+    console.error(`[getAutoDailyLevelIdsForDate] date index missing for ${dateKey}, running full scan`);
+  }
+
+  const autoDailyLevelIds: string[] = [];
+  for (const levelId of levelIds) {
+    const puzzle = await getPuzzlePrivate(levelId);
+    if (!puzzle || puzzle.dateKey !== dateKey || puzzle.source !== 'AUTO_DAILY') {
+      continue;
+    }
+    autoDailyLevelIds.push(levelId);
+    if (indexedCount === 0) {
+      await redis.zAdd(dateKeyIndex, {
+        member: levelId,
+        score: puzzle.createdAt,
+      });
+    }
+  }
+
+  return autoDailyLevelIds;
+};
+
+export const countPublishedAutoDailyPuzzlesForDate = async (
+  dateKey: string
+): Promise<number> => {
+  const indexKey = keyPublishedAutoDailyPuzzlesByDate(dateKey);
+  const [indexedCount, initialized] = await Promise.all([
+    redis.zCard(indexKey),
+    redis.get(keyPublishedAutoDailyPuzzlesByDateInitialized(dateKey)),
+  ]);
+  if (indexedCount > 0 || initialized === '1') {
+    return indexedCount;
+  }
+
+  const levelIds = await getAutoDailyLevelIdsForDate(dateKey);
+  if (levelIds.length === 0) {
+    await redis.set(keyPublishedAutoDailyPuzzlesByDateInitialized(dateKey), '1');
+    return 0;
+  }
+
+  const postIds = await redis.mGet(levelIds.map((levelId) => keyPuzzlePublishedPost(levelId)));
+  const puzzles = await Promise.all(levelIds.map(async (levelId) => getPuzzlePrivate(levelId)));
+  let count = 0;
+
+  for (let index = 0; index < levelIds.length; index += 1) {
+    const levelId = levelIds[index];
+    const postId = postIds[index];
+    const puzzle = puzzles[index];
+    if (!levelId || !postId || !puzzle || puzzle.source !== 'AUTO_DAILY') {
+      continue;
+    }
+    count += 1;
+    await redis.zAdd(indexKey, {
+      member: levelId,
+      score: puzzle.createdAt,
+    });
+  }
+
+  await redis.set(keyPublishedAutoDailyPuzzlesByDateInitialized(dateKey), '1');
   return count;
 };
 

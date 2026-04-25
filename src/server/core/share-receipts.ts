@@ -94,3 +94,10 @@ export const markLevelSharedOnce = async (
   const inserted = await redis.hSetNX(keySharedLevels(userId), levelId, '1');
   return inserted === 1;
 };
+
+export const clearLevelSharedMark = async (
+  userId: string,
+  levelId: string
+): Promise<void> => {
+  await redis.hDel(keySharedLevels(userId), [levelId]);
+};

@@ -14,7 +14,7 @@ describe('triggers route', () => {
     expect(body).toEqual({
       status: 'success',
       message:
-        'Bootstrap trigger received (AppInstall); no immediate post created. Daily automation runs only via scheduler.',
+        'Bootstrap trigger received (AppInstall); no immediate AI warmup or post creation was performed.',
     });
   });
 
@@ -30,7 +30,7 @@ describe('triggers route', () => {
     expect(body).toEqual({
       status: 'success',
       message:
-        'Bootstrap trigger received (AppUpgrade); no immediate post created. Daily automation runs only via scheduler.',
+        'Bootstrap trigger received (AppUpgrade); no immediate AI warmup or post creation was performed.',
     });
   });
 });

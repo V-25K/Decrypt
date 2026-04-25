@@ -6,8 +6,12 @@ import {
 } from '../../shared/quests';
 import {
   getDailyQuestProgress,
+  getInventory,
   getLifetimeQuestProgress,
+  getUserProfile,
+  saveInventory,
   saveDailyQuestProgress,
+  saveUserProfile,
   saveLifetimeQuestProgress,
 } from './state';
 import { keyUserQuestDaily, keyUserQuestLifetime } from './keys';
@@ -15,16 +19,8 @@ import { redis } from '@devvit/web/server';
 
 const claimField = (questId: string) => `claim:${questId}`;
 
-const isClaimed = async (key: string, questId: string): Promise<boolean> => {
-  const value = await redis.hGet(key, claimField(questId));
-  return value === '1';
-};
-
-const markClaimed = async (key: string, questId: string): Promise<void> => {
-  await redis.hSet(key, {
-    [claimField(questId)]: '1',
-  });
-};
+const markClaimed = async (key: string, questId: string): Promise<boolean> =>
+  (await redis.hSetNX(key, claimField(questId), '1')) === 1;
 
 const claimedQuestIdsFromHash = (hash: Record<string, string>): string[] =>
   Object.entries(hash)
@@ -40,22 +36,24 @@ export const updateQuestProgressOnCompletion = async (params: {
   usedPowerups: number;
   isLogical: boolean;
   mode: 'daily' | 'endless';
+  isCurrentDaily: boolean;
+  isRecoveryRun: boolean;
 }): Promise<void> => {
-  const daily = await getDailyQuestProgress(params.userId, params.dateKey);
   const lifetime = await getLifetimeQuestProgress(params.userId);
+  const daily =
+    params.mode === 'daily' && params.isCurrentDaily
+      ? await getDailyQuestProgress(params.userId, params.dateKey)
+      : null;
 
-  if (params.mode === 'daily') {
+  if (daily) {
     daily.dailyPlayCount += 1;
-    if (params.solveSeconds <= 120) {
+    if (!params.isRecoveryRun && params.solveSeconds <= 180) {
       daily.dailyFastWin = true;
     }
-    if (params.solveSeconds <= 300) {
-      daily.dailyUnder5Min = true;
-    }
-    if (params.usedPowerups === 0) {
+    if (!params.isRecoveryRun && params.usedPowerups === 0) {
       daily.dailyNoPowerup = true;
     }
-    if (params.mistakes === 0) {
+    if (!params.isRecoveryRun && params.mistakes === 0) {
       daily.dailyNoMistake = true;
     }
   }
@@ -71,7 +69,9 @@ export const updateQuestProgressOnCompletion = async (params: {
     lifetime.lifetimeEndlessClears += 1;
   }
 
-  await saveDailyQuestProgress(params.userId, params.dateKey, daily);
+  if (daily) {
+    await saveDailyQuestProgress(params.userId, params.dateKey, daily);
+  }
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 
@@ -180,8 +180,6 @@ export const claimQuest = async (params: {
   userId: string;
   dateKey: string;
   questId: string;
-  profile: UserProfile;
-  inventory: Inventory;
 }): Promise<{
   success: boolean;
   reason: string | null;
@@ -189,24 +187,17 @@ export const claimQuest = async (params: {
   profile: UserProfile;
   inventory: Inventory;
 }> => {
-  const daily = await getDailyQuestProgress(params.userId, params.dateKey);
-  const lifetime = await getLifetimeQuestProgress(params.userId);
+  const [daily, lifetime, currentProfile, currentInventory] = await Promise.all([
+    getDailyQuestProgress(params.userId, params.dateKey),
+    getLifetimeQuestProgress(params.userId),
+    getUserProfile(params.userId),
+    getInventory(params.userId),
+  ]);
   const dailyKey = keyUserQuestDaily(params.userId, params.dateKey);
   const lifetimeKey = keyUserQuestLifetime(params.userId);
 
   const useDailyKey = params.questId.startsWith('daily_');
   const claimKey = useDailyKey ? dailyKey : lifetimeKey;
-  const alreadyClaimed = await isClaimed(claimKey, params.questId);
-  if (alreadyClaimed) {
-    return {
-      success: false,
-      reason: 'Quest already claimed.',
-      rewardCoins: 0,
-      profile: params.profile,
-      inventory: params.inventory,
-    };
-  }
-
   const complete = isQuestComplete({
     questId: params.questId,
     daily,
@@ -217,38 +208,62 @@ export const claimQuest = async (params: {
       success: false,
       reason: 'Quest not complete.',
       rewardCoins: 0,
-      profile: params.profile,
-      inventory: params.inventory,
+      profile: currentProfile,
+      inventory: currentInventory,
     };
   }
 
   const reward = getQuestReward(params.questId);
-  const unlockedFlairs =
-    reward.flair && !params.profile.unlockedFlairs.includes(reward.flair)
-      ? [...params.profile.unlockedFlairs, reward.flair]
-      : params.profile.unlockedFlairs;
-  const profile = {
-    ...params.profile,
-    coins: params.profile.coins + reward.coins,
-    questsCompleted: params.profile.questsCompleted + 1,
-    unlockedFlairs,
-    activeFlair: params.profile.activeFlair,
-  };
-  const inventory = {
-    ...params.inventory,
-    hammer: params.inventory.hammer + (reward.inventory.hammer ?? 0),
-    wand: params.inventory.wand + (reward.inventory.wand ?? 0),
-    shield: params.inventory.shield + (reward.inventory.shield ?? 0),
-    rocket: params.inventory.rocket + (reward.inventory.rocket ?? 0),
-  };
-
-  await markClaimed(claimKey, params.questId);
-
-  return {
-    success: true,
-    reason: null,
-    rewardCoins: reward.coins,
-    profile,
-    inventory,
-  };
+  const claimed = await markClaimed(claimKey, params.questId);
+  if (!claimed) {
+    const [latestProfile, latestInventory] = await Promise.all([
+      getUserProfile(params.userId),
+      getInventory(params.userId),
+    ]);
+    return {
+      success: false,
+      reason: 'Quest already claimed.',
+      rewardCoins: 0,
+      profile: latestProfile,
+      inventory: latestInventory,
+    };
+  }
+  try {
+    const [latestProfile, latestInventory] = await Promise.all([
+      getUserProfile(params.userId),
+      getInventory(params.userId),
+    ]);
+    const unlockedFlairs =
+      reward.flair && !latestProfile.unlockedFlairs.includes(reward.flair)
+        ? [...latestProfile.unlockedFlairs, reward.flair]
+        : latestProfile.unlockedFlairs;
+    const profile = {
+      ...latestProfile,
+      coins: latestProfile.coins + reward.coins,
+      questsCompleted: latestProfile.questsCompleted + 1,
+      unlockedFlairs,
+      activeFlair: latestProfile.activeFlair,
+    };
+    const inventory = {
+      ...latestInventory,
+      hammer: latestInventory.hammer + (reward.inventory.hammer ?? 0),
+      wand: latestInventory.wand + (reward.inventory.wand ?? 0),
+      shield: latestInventory.shield + (reward.inventory.shield ?? 0),
+      rocket: latestInventory.rocket + (reward.inventory.rocket ?? 0),
+    };
+    await Promise.all([
+      saveUserProfile(params.userId, profile),
+      saveInventory(params.userId, inventory),
+    ]);
+    return {
+      success: true,
+      reason: null,
+      rewardCoins: reward.coins,
+      profile,
+      inventory,
+    };
+  } catch (error) {
+    await redis.hDel(claimKey, [claimField(params.questId)]);
+    throw error;
+  }
 };

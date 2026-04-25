@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SessionState, UserProfile } from '../../shared/game';
+import type { PuzzlePrivate, SessionState, UserProfile } from '../../shared/game';
 
 const {
   contextMock,
   getCompletedLevelsMock,
+  hasFailedLevelMock,
   getPuzzlePrivateMock,
   getSessionStateMock,
   getUserProfileMock,
@@ -30,6 +31,7 @@ const {
     postData: {},
   },
   getCompletedLevelsMock: vi.fn(),
+  hasFailedLevelMock: vi.fn(),
   getPuzzlePrivateMock: vi.fn(),
   getSessionStateMock: vi.fn(),
   getUserProfileMock: vi.fn(),
@@ -55,9 +57,11 @@ vi.mock('@devvit/web/server', () => ({
 
 vi.mock('./state', () => ({
   getCompletedLevels: getCompletedLevelsMock,
+  getDailyRetryCount: vi.fn(),
   getInventory: vi.fn(),
   getUserProfile: getUserProfileMock,
-  hasFailedLevel: vi.fn(),
+  hasFailedLevel: hasFailedLevelMock,
+  incrementDailyRetryCount: vi.fn(),
   markLevelCompleted: vi.fn(),
   markLevelFailed: vi.fn(),
   registerKnownUser: vi.fn(),
@@ -71,6 +75,7 @@ vi.mock('./session', () => ({
   getSessionState: getSessionStateMock,
   heartsRemaining: heartsRemainingMock,
   saveSessionState: saveSessionStateMock,
+  saveSessionTimingState: vi.fn(),
 }));
 
 vi.mock('./puzzle-store', () => ({
@@ -102,7 +107,11 @@ vi.mock('./hearts', () => ({
   consumeHeartOnFailure: vi.fn((profile) => profile),
 }));
 
-import { startSessionForLevel, submitGuessForSession } from './game-service';
+import {
+  getCurrentPuzzleView,
+  startSessionForLevel,
+  submitGuessForSession,
+} from './game-service';
 
 const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   coins: 0,
@@ -133,6 +142,7 @@ const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
   audioEnabled: true,
+  communityJoinRecorded: false,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',
@@ -156,8 +166,40 @@ const sessionFixture = (
   ...overrides,
 });
 
+const puzzleFixture = (): PuzzlePrivate => ({
+  levelId: 'lvl_0001',
+  dateKey: '2026-04-08',
+  targetText: 'A B',
+  author: 'TEST',
+  challengeType: 'QUOTE',
+  source: 'AUTO_DAILY',
+  cipherType: 'random',
+  shiftAmount: null,
+  mapping: { A: 1, B: 2 },
+  reverseMapping: { '1': 'A', '2': 'B' },
+  tiles: [
+    { index: 0, char: 'A', isLetter: true, wordIndex: 0 },
+    { index: 1, char: ' ', isLetter: false, wordIndex: 0 },
+    { index: 2, char: 'B', isLetter: true, wordIndex: 1 },
+  ],
+  words: ['A', 'B'],
+  prefilledIndices: [],
+  revealedIndices: [],
+  revealed_indices: [],
+  lockIndices: [],
+  blindIndices: [],
+  goldIndex: null,
+  padlockChains: [],
+  difficulty: 3,
+  targetTimeSeconds: 60,
+  starThresholds: { '3_star': 60, '2_star': 90, '1_star': 120 },
+  isLogical: false,
+  createdAt: 0,
+});
+
 afterEach(() => {
   getCompletedLevelsMock.mockReset();
+  hasFailedLevelMock.mockReset();
   getPuzzlePrivateMock.mockReset();
   getSessionStateMock.mockReset();
   getUserProfileMock.mockReset();
@@ -211,6 +253,7 @@ describe('startSessionForLevel', () => {
 
     getUserProfileMock.mockResolvedValue(profile);
     getCompletedLevelsMock.mockResolvedValue(new Set<string>());
+    hasFailedLevelMock.mockResolvedValue(false);
     getSessionStateMock.mockResolvedValue(null);
     canStartChallengeMock.mockReturnValue(true);
     getPuzzlePrivateMock.mockResolvedValue({ prefilledIndices: [0] });
@@ -239,6 +282,7 @@ describe('startSessionForLevel', () => {
     });
 
     getUserProfileMock.mockResolvedValue(profile);
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>());
     getSessionStateMock.mockResolvedValue(null);
     canStartChallengeMock.mockReturnValue(true);
     getPuzzlePrivateMock.mockResolvedValue({ prefilledIndices: [] });
@@ -250,6 +294,31 @@ describe('startSessionForLevel', () => {
     expect(result.ok).toBe(true);
     expect(recordLevelPlayMock).not.toHaveBeenCalled();
     expect(saveUserProfileMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks free replay for failed daily challenges', async () => {
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getSessionStateMock.mockResolvedValue(null);
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>());
+    hasFailedLevelMock.mockResolvedValue(true);
+
+    await expect(startSessionForLevel('lvl_0001', 'daily')).rejects.toThrow(
+      'Daily retry requires coins.'
+    );
+
+    expect(createSessionStateMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks replaying already completed endless levels', async () => {
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getSessionStateMock.mockResolvedValue(null);
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>(['endless_0001']));
+
+    await expect(
+      startSessionForLevel('endless_0001', 'endless')
+    ).rejects.toThrow('Endless level already completed.');
+
+    expect(createSessionStateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -350,7 +419,7 @@ describe('submitGuessForSession', () => {
     expect(result.ok).toBe(true);
     expect(recordLevelPlayMock).not.toHaveBeenCalled();
     expect(saveUserProfileMock).not.toHaveBeenCalled();
-    expect(recordQualifiedLevelPlayMock).toHaveBeenCalledWith('lvl_0001', 't2_test');
+    expect(recordQualifiedLevelPlayMock).not.toHaveBeenCalled();
     expect(saveSessionStateMock).toHaveBeenCalledWith(
       't2_test',
       't3_test',
@@ -359,5 +428,54 @@ describe('submitGuessForSession', () => {
         guessCount: 3,
       })
     );
+  });
+});
+
+describe('getCurrentPuzzleView', () => {
+  it('ignores caller-provided revealedIndices when no active session exists', async () => {
+    getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+    getSessionStateMock.mockResolvedValue(null);
+    checkPadlockStatusMock.mockReturnValue({
+      lockedIndexSet: new Set<number>(),
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+      lockedIndices: [],
+    });
+
+    const base = await getCurrentPuzzleView({
+      levelId: 'lvl_0001',
+    });
+    const forged = await getCurrentPuzzleView({
+      levelId: 'lvl_0001',
+      revealedIndices: [0, 2],
+    });
+
+    expect(forged).toEqual(base);
+  });
+
+  it('uses session revealed indices even when caller provides forged indices', async () => {
+    getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({
+        activeLevelId: 'lvl_0001',
+        revealedIndices: [2],
+      })
+    );
+    checkPadlockStatusMock.mockReturnValue({
+      lockedIndexSet: new Set<number>(),
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+      lockedIndices: [],
+    });
+
+    const fromSession = await getCurrentPuzzleView({
+      levelId: 'lvl_0001',
+    });
+    const forged = await getCurrentPuzzleView({
+      levelId: 'lvl_0001',
+      revealedIndices: [0],
+    });
+
+    expect(forged).toEqual(fromSession);
   });
 });

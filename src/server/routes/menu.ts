@@ -3,6 +3,7 @@ import type { UiResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
 import {
+  formatModeratorRerollError,
   getLastGeneratedChallengeDetails,
   publishLastGeneratedChallenge,
   rerollAndPublish,
@@ -64,10 +65,11 @@ menu.post('/mod-reroll', async (c) => {
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown error';
+    const modMessage = formatModeratorRerollError(error);
     console.error(`Error rerolling puzzle: ${reason}`);
     return c.json<UiResponse>(
       {
-        showToast: `Failed to reroll puzzle: ${reason}`,
+        showToast: modMessage,
       },
       200
     );
@@ -133,19 +135,27 @@ menu.post('/mod-inject', async (c) => {
                 'Use multiple unique words. Minimum unique words and letters scale with difficulty. Letters, numbers, and punctuation are allowed.',
             },
             {
+              type: 'string',
+              name: 'author',
+              label: 'Author',
+              required: true,
+              helpText: 'Displayed as the quote/challenge author (max 28 characters).',
+            },
+            {
               type: 'select',
               name: 'difficulty',
               label: 'Difficulty Profile',
               required: true,
               multiSelect: false,
-              defaultValue: ['standard'],
+              defaultValue: ['medium'],
               options: [
                 { label: 'Warmup (1-3)', value: 'warmup' },
-                { label: 'Standard (4-6)', value: 'standard' },
-                { label: 'Challenging (7-8)', value: 'challenging' },
+                { label: 'Medium (4-5)', value: 'medium' },
+                { label: 'Hard (6-8)', value: 'hard' },
                 { label: 'Expert (9-10)', value: 'expert' },
               ],
-              helpText: 'This controls puzzle tuning, not source complexity.',
+              helpText:
+                'This controls puzzle tuning, not source complexity. If the quote is naturally tougher or easier, the submit step will tell you before publish.',
             },
             {
               type: 'select',

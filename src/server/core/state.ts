@@ -10,6 +10,8 @@ import {
 import {
   keyKnownUsersIndex,
   keyUserCompleted,
+  keyUserDailyRetryCounts,
+  keyUserEndlessCursor,
   keyUserFailedLevels,
   keyUserInventory,
   keyUserPurchases,
@@ -115,6 +117,7 @@ export const defaultUserProfile = (): UserProfile =>
     endlessSolveTimeTotalSec: 0,
     bestOverallRank: 0,
     audioEnabled: true,
+    communityJoinRecorded: false,
     communityJoinRewardClaimed: false,
     unlockedFlairs: [],
     activeFlair: '',
@@ -132,7 +135,6 @@ const defaultQuestProgress = (): QuestProgress =>
   questProgressSchema.parse({
     dailyPlayCount: 0,
     dailyFastWin: false,
-    dailyUnder5Min: false,
     dailyNoPowerup: false,
     dailyNoMistake: false,
     dailyShareCount: 0,
@@ -146,6 +148,25 @@ const defaultQuestProgress = (): QuestProgress =>
     lifetimeEndlessClears: 0,
   });
 
+type DailyQuestProgress = Pick<
+  QuestProgress,
+  | 'dailyPlayCount'
+  | 'dailyFastWin'
+  | 'dailyNoPowerup'
+  | 'dailyNoMistake'
+  | 'dailyShareCount'
+  | 'socialShareCount'
+>;
+
+const dailyQuestProgressSchema = questProgressSchema.pick({
+  dailyPlayCount: true,
+  dailyFastWin: true,
+  dailyNoPowerup: true,
+  dailyNoMistake: true,
+  dailyShareCount: true,
+  socialShareCount: true,
+});
+
 export const registerKnownUser = async (userId: string): Promise<void> => {
   await redis.hSet(keyKnownUsersIndex, {
     [userId]: '1',
@@ -156,46 +177,22 @@ export const getKnownUserIds = async (): Promise<string[]> =>
   await redis.hKeys(keyKnownUsersIndex);
 
 export const getUserProfile = async (userId: string): Promise<UserProfile> => {
-  const hash = await redis.hGetAll(keyUserProfile(userId));
+  const profileKey = keyUserProfile(userId);
+  let hash = await redis.hGetAll(profileKey);
   if (Object.keys(hash).length === 0) {
     const profile = defaultUserProfile();
-    await redis.hSet(keyUserProfile(userId), {
-      coins: `${profile.coins}`,
-      hearts: `${profile.hearts}`,
-      lastHeartRefillTs: `${profile.lastHeartRefillTs}`,
-      infiniteHeartsExpiryTs: `${profile.infiniteHeartsExpiryTs}`,
-      currentStreak: `${profile.currentStreak}`,
-      dailyCurrentStreak: `${profile.dailyCurrentStreak}`,
-      endlessCurrentStreak: `${profile.endlessCurrentStreak}`,
-      lastPlayedDateKey: profile.lastPlayedDateKey,
-      totalWordsSolved: `${profile.totalWordsSolved}`,
-      logicTasksCompleted: `${profile.logicTasksCompleted}`,
-      totalLevelsCompleted: `${profile.totalLevelsCompleted}`,
-      flawlessWins: `${profile.flawlessWins}`,
-      speedWins: `${profile.speedWins}`,
-      dailyFlawlessWins: `${profile.dailyFlawlessWins}`,
-      endlessFlawlessWins: `${profile.endlessFlawlessWins}`,
-      dailySpeedWins: `${profile.dailySpeedWins}`,
-      endlessSpeedWins: `${profile.endlessSpeedWins}`,
-      dailyChallengesPlayed: `${profile.dailyChallengesPlayed}`,
-      endlessChallengesPlayed: `${profile.endlessChallengesPlayed}`,
-      dailyFirstTryWins: `${profile.dailyFirstTryWins}`,
-      endlessFirstTryWins: `${profile.endlessFirstTryWins}`,
-      questsCompleted: `${profile.questsCompleted}`,
-      dailyModeClears: `${profile.dailyModeClears}`,
-      endlessModeClears: `${profile.endlessModeClears}`,
-      dailySolveTimeTotalSec: `${profile.dailySolveTimeTotalSec}`,
-      endlessSolveTimeTotalSec: `${profile.endlessSolveTimeTotalSec}`,
-      bestOverallRank: `${profile.bestOverallRank}`,
-      audioEnabled: profile.audioEnabled ? '1' : '0',
-      communityJoinRewardClaimed: profile.communityJoinRewardClaimed ? '1' : '0',
-      unlockedFlairs: JSON.stringify(profile.unlockedFlairs),
-      activeFlair: profile.activeFlair,
-    });
-    return profile;
+    const created = await redis.hSetNX(profileKey, 'coins', `${profile.coins}`);
+    if (created === 1) {
+      await saveUserProfile(userId, profile);
+      return profile;
+    }
+    hash = await redis.hGetAll(profileKey);
+    if (Object.keys(hash).length === 0) {
+      return profile;
+    }
   }
 
-  const parsed = userProfileSchema.parse({
+  const parsedResult = userProfileSchema.safeParse({
     coins: numberFromHash(hash, 'coins', 0),
     hearts: numberFromHash(hash, 'hearts', 3),
     lastHeartRefillTs: numberFromHash(hash, 'lastHeartRefillTs', Date.now()),
@@ -224,11 +221,18 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
     endlessSolveTimeTotalSec: numberFromHash(hash, 'endlessSolveTimeTotalSec', 0),
     bestOverallRank: numberFromHash(hash, 'bestOverallRank', 0),
     audioEnabled: stringFromHash(hash, 'audioEnabled', '1') === '1',
+    communityJoinRecorded: stringFromHash(hash, 'communityJoinRecorded', '0') === '1',
     communityJoinRewardClaimed:
       stringFromHash(hash, 'communityJoinRewardClaimed', '0') === '1',
     unlockedFlairs: stringArrayFromHash(hash, 'unlockedFlairs'),
     activeFlair: stringFromHash(hash, 'activeFlair', ''),
   });
+  if (!parsedResult.success) {
+    const fallback = defaultUserProfile();
+    await saveUserProfile(userId, fallback);
+    return fallback;
+  }
+  const parsed = parsedResult.data;
   const normalized = normalizeUnlockedFlairs(normalizeHearts(parsed));
   if (
     JSON.stringify(normalized.unlockedFlairs) !== JSON.stringify(parsed.unlockedFlairs) ||
@@ -275,6 +279,7 @@ export const saveUserProfile = async (
     endlessSolveTimeTotalSec: `${normalizedProfile.endlessSolveTimeTotalSec}`,
     bestOverallRank: `${normalizedProfile.bestOverallRank}`,
     audioEnabled: normalizedProfile.audioEnabled ? '1' : '0',
+    communityJoinRecorded: normalizedProfile.communityJoinRecorded ? '1' : '0',
     communityJoinRewardClaimed: normalizedProfile.communityJoinRewardClaimed
       ? '1'
       : '0',
@@ -284,24 +289,33 @@ export const saveUserProfile = async (
 };
 
 export const getInventory = async (userId: string): Promise<Inventory> => {
-  const hash = await redis.hGetAll(keyUserInventory(userId));
+  const inventoryKey = keyUserInventory(userId);
+  let hash = await redis.hGetAll(inventoryKey);
   if (Object.keys(hash).length === 0) {
     const inventory = defaultInventory();
-    await redis.hSet(keyUserInventory(userId), {
-      hammer: `${inventory.hammer}`,
-      wand: `${inventory.wand}`,
-      shield: `${inventory.shield}`,
-      rocket: `${inventory.rocket}`,
-    });
-    return inventory;
+    const created = await redis.hSetNX(inventoryKey, 'hammer', `${inventory.hammer}`);
+    if (created === 1) {
+      await saveInventory(userId, inventory);
+      return inventory;
+    }
+    hash = await redis.hGetAll(inventoryKey);
+    if (Object.keys(hash).length === 0) {
+      return inventory;
+    }
   }
 
-  return inventorySchema.parse({
+  const parsedResult = inventorySchema.safeParse({
     hammer: numberFromHash(hash, 'hammer', 0),
     wand: numberFromHash(hash, 'wand', 0),
     shield: numberFromHash(hash, 'shield', 0),
     rocket: numberFromHash(hash, 'rocket', 0),
   });
+  if (!parsedResult.success) {
+    const fallback = defaultInventory();
+    await saveInventory(userId, fallback);
+    return fallback;
+  }
+  return parsedResult.data;
 };
 
 export const saveInventory = async (
@@ -381,48 +395,60 @@ export const markLevelFailed = async (
   });
 };
 
+export const getDailyRetryCount = async (
+  userId: string,
+  levelId: string
+): Promise<number> => {
+  const raw = await redis.hGet(keyUserDailyRetryCounts(userId), levelId);
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(parsed));
+};
+
+export const incrementDailyRetryCount = async (
+  userId: string,
+  levelId: string
+): Promise<number> => {
+  const next = await redis.hIncrBy(keyUserDailyRetryCounts(userId), levelId, 1);
+  return Math.max(0, Math.floor(next));
+};
+
 export const getDailyQuestProgress = async (
   userId: string,
   dateKey: string
 ): Promise<QuestProgress> => {
-  const hash = await redis.hGetAll(keyUserQuestDaily(userId, dateKey));
+  const dailyKey = keyUserQuestDaily(userId, dateKey);
+  const hash = await redis.hGetAll(dailyKey);
   if (Object.keys(hash).length === 0) {
     const progress = defaultQuestProgress();
-    await redis.hSet(keyUserQuestDaily(userId, dateKey), {
+    await redis.hSet(dailyKey, {
       dailyPlayCount: '0',
       dailyFastWin: '0',
-      dailyUnder5Min: '0',
       dailyNoPowerup: '0',
       dailyNoMistake: '0',
       dailyShareCount: '0',
       socialShareCount: '0',
-      lifetimeWordsmith: '0',
-      lifetimeLogicalSolved: '0',
-      lifetimeFlawless: '0',
-      lifetimeCoinsSpent: '0',
-      lifetimePurchases: '0',
-      lifetimeDailyTopRanks: '0',
-      lifetimeEndlessClears: '0',
     });
-    await redis.expire(keyUserQuestDaily(userId, dateKey), dailyDataTtlSeconds);
+    await redis.expire(dailyKey, dailyDataTtlSeconds);
     return progress;
   }
 
-  return questProgressSchema.parse({
+  const dailyProgress: DailyQuestProgress = dailyQuestProgressSchema.parse({
     dailyPlayCount: numberFromHash(hash, 'dailyPlayCount', 0),
     dailyFastWin: numberFromHash(hash, 'dailyFastWin', 0) === 1,
-    dailyUnder5Min: numberFromHash(hash, 'dailyUnder5Min', 0) === 1,
     dailyNoPowerup: numberFromHash(hash, 'dailyNoPowerup', 0) === 1,
     dailyNoMistake: numberFromHash(hash, 'dailyNoMistake', 0) === 1,
     dailyShareCount: numberFromHash(hash, 'dailyShareCount', 0),
     socialShareCount: numberFromHash(hash, 'socialShareCount', 0),
-    lifetimeWordsmith: numberFromHash(hash, 'lifetimeWordsmith', 0),
-    lifetimeLogicalSolved: numberFromHash(hash, 'lifetimeLogicalSolved', 0),
-    lifetimeFlawless: numberFromHash(hash, 'lifetimeFlawless', 0),
-    lifetimeCoinsSpent: numberFromHash(hash, 'lifetimeCoinsSpent', 0),
-    lifetimePurchases: numberFromHash(hash, 'lifetimePurchases', 0),
-    lifetimeDailyTopRanks: numberFromHash(hash, 'lifetimeDailyTopRanks', 0),
-    lifetimeEndlessClears: numberFromHash(hash, 'lifetimeEndlessClears', 0),
+  });
+  return questProgressSchema.parse({
+    ...defaultQuestProgress(),
+    ...dailyProgress,
   });
 };
 
@@ -432,14 +458,9 @@ export const getLifetimeQuestProgress = async (
   const hash = await redis.hGetAll(keyUserQuestLifetime(userId));
   if (Object.keys(hash).length === 0) {
     const progress = defaultQuestProgress();
+    // Only initialize lifetime-specific fields. Daily fields live in
+    // keyUserQuestDaily and must not be stored in the lifetime hash.
     await redis.hSet(keyUserQuestLifetime(userId), {
-      dailyPlayCount: '0',
-      dailyFastWin: '0',
-      dailyUnder5Min: '0',
-      dailyNoPowerup: '0',
-      dailyNoMistake: '0',
-      dailyShareCount: '0',
-      socialShareCount: '0',
       lifetimeWordsmith: '0',
       lifetimeLogicalSolved: '0',
       lifetimeFlawless: '0',
@@ -454,7 +475,6 @@ export const getLifetimeQuestProgress = async (
   return questProgressSchema.parse({
     dailyPlayCount: numberFromHash(hash, 'dailyPlayCount', 0),
     dailyFastWin: numberFromHash(hash, 'dailyFastWin', 0) === 1,
-    dailyUnder5Min: numberFromHash(hash, 'dailyUnder5Min', 0) === 1,
     dailyNoPowerup: numberFromHash(hash, 'dailyNoPowerup', 0) === 1,
     dailyNoMistake: numberFromHash(hash, 'dailyNoMistake', 0) === 1,
     dailyShareCount: numberFromHash(hash, 'dailyShareCount', 0),
@@ -474,37 +494,25 @@ export const saveDailyQuestProgress = async (
   dateKey: string,
   progress: QuestProgress
 ): Promise<void> => {
-  await redis.hSet(keyUserQuestDaily(userId, dateKey), {
+  const dailyKey = keyUserQuestDaily(userId, dateKey);
+  await redis.hSet(dailyKey, {
     dailyPlayCount: `${progress.dailyPlayCount}`,
     dailyFastWin: progress.dailyFastWin ? '1' : '0',
-    dailyUnder5Min: progress.dailyUnder5Min ? '1' : '0',
     dailyNoPowerup: progress.dailyNoPowerup ? '1' : '0',
     dailyNoMistake: progress.dailyNoMistake ? '1' : '0',
     dailyShareCount: `${progress.dailyShareCount}`,
     socialShareCount: `${progress.socialShareCount}`,
-    lifetimeWordsmith: `${progress.lifetimeWordsmith}`,
-    lifetimeLogicalSolved: `${progress.lifetimeLogicalSolved}`,
-    lifetimeFlawless: `${progress.lifetimeFlawless}`,
-    lifetimeCoinsSpent: `${progress.lifetimeCoinsSpent}`,
-    lifetimePurchases: `${progress.lifetimePurchases}`,
-    lifetimeDailyTopRanks: `${progress.lifetimeDailyTopRanks}`,
-    lifetimeEndlessClears: `${progress.lifetimeEndlessClears}`,
   });
-  await redis.expire(keyUserQuestDaily(userId, dateKey), dailyDataTtlSeconds);
+  await redis.expire(dailyKey, dailyDataTtlSeconds);
 };
 
 export const saveLifetimeQuestProgress = async (
   userId: string,
   progress: QuestProgress
 ): Promise<void> => {
+  // Only persist lifetime-specific counters. Daily fields are managed
+  // exclusively by saveDailyQuestProgress / keyUserQuestDaily.
   await redis.hSet(keyUserQuestLifetime(userId), {
-    dailyPlayCount: `${progress.dailyPlayCount}`,
-    dailyFastWin: progress.dailyFastWin ? '1' : '0',
-    dailyUnder5Min: progress.dailyUnder5Min ? '1' : '0',
-    dailyNoPowerup: progress.dailyNoPowerup ? '1' : '0',
-    dailyNoMistake: progress.dailyNoMistake ? '1' : '0',
-    dailyShareCount: `${progress.dailyShareCount}`,
-    socialShareCount: `${progress.socialShareCount}`,
     lifetimeWordsmith: `${progress.lifetimeWordsmith}`,
     lifetimeLogicalSolved: `${progress.lifetimeLogicalSolved}`,
     lifetimeFlawless: `${progress.lifetimeFlawless}`,
@@ -513,4 +521,48 @@ export const saveLifetimeQuestProgress = async (
     lifetimeDailyTopRanks: `${progress.lifetimeDailyTopRanks}`,
     lifetimeEndlessClears: `${progress.lifetimeEndlessClears}`,
   });
+};
+
+export const getUserEndlessCursor = async (userId: string): Promise<number> => {
+  const raw = await redis.get(keyUserEndlessCursor(userId));
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(parsed));
+};
+
+export const incrementUserEndlessCursor = async (userId: string): Promise<number> => {
+  const current = await getUserEndlessCursor(userId);
+  const next = current + 1;
+  await redis.set(keyUserEndlessCursor(userId), next.toString());
+  return next;
+};
+
+export const initializeUserEndlessCursor = async (
+  userId: string,
+  catalogVersion: string,
+  keyEndlessCatalogSequence: (version: string) => string
+): Promise<number> => {
+  const completed = await getCompletedLevels(userId);
+  const catalogEntries = await redis.zRange(
+    keyEndlessCatalogSequence(catalogVersion),
+    0,
+    -1,
+    { by: 'rank' }
+  );
+  
+  let cursor = 0;
+  for (const entry of catalogEntries) {
+    if (!completed.has(entry.member)) {
+      break;
+    }
+    cursor++;
+  }
+  
+  await redis.set(keyUserEndlessCursor(userId), cursor.toString());
+  return cursor;
 };

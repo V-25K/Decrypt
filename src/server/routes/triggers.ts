@@ -18,7 +18,7 @@ const handleAutomationBootstrapTrigger = async (
   return {
     body: {
       status: 'success',
-      message: `Bootstrap trigger received (${input.type}); no immediate post created. Daily automation runs only via scheduler.`,
+      message: `Bootstrap trigger received (${input.type}); no immediate AI warmup or post creation was performed.`,
     },
     statusCode: 200,
   };
