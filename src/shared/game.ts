@@ -545,6 +545,7 @@ export const adminInjectInputSchema = z.object({
   text: z.string().min(3),
   difficulty: z.number().int().min(1).max(10),
   challengeType: challengeTypeSchema.default('QUOTE'),
+  author: z.string().min(1).optional(),
 });
 
 export const adminActionResponseSchema = z.object({

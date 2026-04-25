@@ -81,7 +81,7 @@ export const adminRouter = router({
     try {
       const injected = await injectAndPublishManualPuzzle({
         text: input.text,
-        author: 'MODERATOR',
+        author: input.author ?? 'MODERATOR',
         difficulty: input.difficulty,
         challengeType: input.challengeType,
       });
