@@ -9,7 +9,7 @@ export const powerupRouter = router({
     .input(powerupPurchaseInputSchema)
     .mutation(async ({ input, ctx }) => {
       return await purchasePowerup({
-        userId: ctx.userId!,
+        userId: ctx.userId,
         postId: ctx.postId ?? undefined,
         levelId: input.levelId,
         itemType: input.itemType,
@@ -21,7 +21,7 @@ export const powerupRouter = router({
       levelId: input.levelId,
       itemType: input.itemType,
       targetIndex: input.targetIndex ?? null,
-      userId: ctx.userId!,
+      userId: ctx.userId,
       postId: ctx.postId ?? undefined,
     });
   }),

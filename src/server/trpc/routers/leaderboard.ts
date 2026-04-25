@@ -90,10 +90,10 @@ export const leaderboardRouter = router({
       // bypassing it with a raw Redis hGet.
       const [summary, profile] = await Promise.all([
         getUserRankSummary({
-          userId: ctx.userId!,
+          userId: ctx.userId,
           dateKey,
         }),
-        getUserProfile(ctx.userId!),
+        getUserProfile(ctx.userId),
       ]);
       const bestOverallRank = profile.bestOverallRank;
       return leaderboardRankSummarySchema.parse({

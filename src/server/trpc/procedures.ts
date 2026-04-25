@@ -11,7 +11,12 @@ export const authedProcedure = publicProcedure.use(async ({ ctx, next }) => {
       message: 'You must be logged in.',
     });
   }
-  return next();
+  return next({
+    ctx: {
+      ...ctx,
+      userId: ctx.userId,
+    },
+  });
 });
 
 export const adminProcedure = authedProcedure.use(async ({ ctx, next }) => {

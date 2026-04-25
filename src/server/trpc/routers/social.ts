@@ -14,7 +14,7 @@ export const socialRouter = router({
   shareResult: authedProcedure
     .input(socialShareInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const puzzle = await getPuzzlePrivate(input.levelId);
       if (!puzzle) {
         return {

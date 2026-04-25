@@ -66,7 +66,7 @@ export const balanceABTestingRouter = router({
   getUserBalanceConfig: authedProcedure
     .output(balanceConfigOutputSchema)
     .query(async ({ ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const { config, variant, testName } = balanceABTestingConfig.getBalanceConfigForUser(userId);
       const testInfo = balanceSystemFactory.getUserTestInfo(userId);
 
@@ -86,7 +86,7 @@ export const balanceABTestingRouter = router({
     .input(getUserBalanceConfigInputSchema)
     .output(balanceConfigOutputSchema)
     .query(async ({ input, ctx }) => {
-      const userId = input.userId || ctx.userId!;
+      const userId = input.userId || ctx.userId;
       const { config, variant, testName } = balanceABTestingConfig.getBalanceConfigForUser(userId);
       const testInfo = balanceSystemFactory.getUserTestInfo(userId);
 
@@ -105,7 +105,7 @@ export const balanceABTestingRouter = router({
   recordBalanceMetrics: authedProcedure
     .input(recordMetricsInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       recordUserBalanceMetrics(userId, input.type, input.data);
       
       return { success: true };
@@ -134,7 +134,7 @@ export const balanceABTestingRouter = router({
    */
   getUserBalanceSystems: authedProcedure
     .query(async ({ ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const systems = balanceSystemFactory;
 
       // Get current configurations for the user
@@ -181,7 +181,7 @@ export const balanceABTestingRouter = router({
       baseCost: z.number().min(1)
     }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const calculator = balanceSystemFactory.getRetryCostCalculator(userId);
       
       const cost = calculator.calculateRetryCost(
@@ -202,7 +202,7 @@ export const balanceABTestingRouter = router({
       originalScore: z.number().min(0)
     }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const engine = balanceSystemFactory.getScorePenaltyEngine(userId);
       
       const penalty = engine.calculatePenalty(input.retryNumber, input.originalScore);
@@ -224,7 +224,7 @@ export const balanceABTestingRouter = router({
       baseScore: z.number().min(0)
     }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const system = balanceSystemFactory.getFastSolveBonusSystem(userId);
       
       const bonus = system.calculateBonus(
@@ -252,7 +252,7 @@ export const balanceABTestingRouter = router({
       remainingLetters: z.number().min(0)
     }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const engine = balanceSystemFactory.getPowerupPricingEngine(userId);
       
       const cost = engine.calculatePowerupCost(

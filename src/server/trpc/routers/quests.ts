@@ -9,7 +9,7 @@ export const questsRouter = router({
   getStatus: authedProcedure
     .input(z.object({ dateKey: z.string().optional() }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const dateKey = input.dateKey ?? formatDateKey(new Date());
       const [status, claimedQuestIds] = await Promise.all([
         getQuestStatus({ userId, dateKey }),
@@ -30,7 +30,7 @@ export const questsRouter = router({
     }),
   claim: authedProcedure.input(questClaimInputSchema).mutation(async ({ input, ctx }) => {
     const dateKey = formatDateKey(new Date());
-    const userId = ctx.userId!;
+    const userId = ctx.userId;
     const claimed = await claimQuest({
       userId,
       dateKey,

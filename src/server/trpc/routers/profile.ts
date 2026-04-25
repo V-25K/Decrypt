@@ -85,7 +85,7 @@ const subscribeCurrentCommunity = async (): Promise<void> => {
 
 export const profileRouter = router({
   joinCommunity: authedProcedure.mutation(async ({ ctx }) => {
-    const userId = ctx.userId!;
+    const userId = ctx.userId;
     const profile = await getUserProfile(userId);
     try {
       await subscribeCurrentCommunity();
@@ -124,17 +124,17 @@ export const profileRouter = router({
     });
   }),
   purchaseCoinRefill: authedProcedure.mutation(async ({ ctx }) => {
-    const result = await purchaseCoinHeartRefill({ userId: ctx.userId! });
+    const result = await purchaseCoinHeartRefill({ userId: ctx.userId });
     return heartPurchaseResponseSchema.parse(result);
   }),
   purchaseCoinTopUp: authedProcedure.mutation(async ({ ctx }) => {
-    const result = await purchaseCoinHeartTopUp({ userId: ctx.userId! });
+    const result = await purchaseCoinHeartTopUp({ userId: ctx.userId });
     return heartPurchaseResponseSchema.parse(result);
   }),
   setActiveFlair: authedProcedure
     .input(profileSetActiveFlairInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const profile = await getUserProfile(userId);
       const nextFlair = input.flair.trim();
       if (nextFlair.length > 0 && !profile.unlockedFlairs.includes(nextFlair)) {
@@ -174,7 +174,7 @@ export const profileRouter = router({
   setAudioEnabled: authedProcedure
     .input(profileSetAudioEnabledInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const userId = ctx.userId!;
+      const userId = ctx.userId;
       const profile = await getUserProfile(userId);
       const updatedProfile = {
         ...profile,

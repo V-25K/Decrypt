@@ -100,7 +100,7 @@ export const gameRouter = router({
   getCompletionReceipt: authedProcedure
     .input(z.object({ levelId: z.string().min(1) }))
     .query(async ({ input, ctx }) => {
-      const receipt = await getShareCompletionReceipt(ctx.userId!, input.levelId);
+      const receipt = await getShareCompletionReceipt(ctx.userId, input.levelId);
       return {
         solveSeconds: receipt?.solveSeconds ?? null,
       };
