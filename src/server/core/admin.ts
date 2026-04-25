@@ -44,6 +44,7 @@ import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
 import { getDecryptSettings } from './config';
 import { deriveSeed, mulberry32 } from './rng';
 import { formatDateKey } from './serde';
+import { trackDifficultyAdjustment } from './metrics';
 import { createValidationPipeline } from './validation-pipeline';
 
 // Manual Challenge Types
@@ -348,17 +349,6 @@ export const injectAndPublishManualPuzzle = async (params: {
   }
   
   if (allowAdjustment) {
-    if (!params.skipPreflight) {
-      const preflight = await preflightManualChallengeForPublish({
-        text: params.text,
-        difficulty: params.difficulty,
-        challengeType: params.challengeType,
-      });
-      if (!preflight.valid) {
-        throw new ManualChallengePreflightFailedError(preflight);
-      }
-    }
-
     // Use new flow with adjustment
     const result = await injectManualChallengeWithAdjustment({
       text: params.text,
@@ -366,7 +356,7 @@ export const injectAndPublishManualPuzzle = async (params: {
       targetDifficulty: params.difficulty,
       challengeType: params.challengeType,
       allowAdjustment: true,
-      skipPreflight: true,
+      skipPreflight: params.skipPreflight,
     });
     
     if (!result.success || !result.puzzle) {
@@ -1044,7 +1034,6 @@ export const injectManualChallengeWithAdjustment = async (params: {
           rng,
         });
 
-        const { trackDifficultyAdjustment } = await import('./metrics.ts');
         trackDifficultyAdjustment({
           success: adjusted.success,
           iterations: adjusted.adjustmentLog.length,
