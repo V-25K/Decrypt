@@ -19,19 +19,7 @@ import { normalizeHearts } from './hearts';
 import { getSessionState } from './session';
 import { getPuzzlePrivate } from './puzzle-store';
 
-const parseNumber = (value: string | undefined, fallback: number): number => {
-  if (value === undefined) {
-    return fallback;
-  }
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    return fallback;
-  }
-  return parsed;
-};
-
-const transactionCommitted = (result: unknown): boolean =>
-  result !== null && result !== undefined;
+import { parseNumber, transactionCommitted } from './redis-util';
 
 const maxOptimisticRetries = 3;
 

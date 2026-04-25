@@ -116,19 +116,7 @@ const getPostLevelId = (): string | null => {
   return parsed.data.levelId ?? null;
 };
 
-const parseNumber = (value: string | undefined, fallback: number): number => {
-  if (value === undefined) {
-    return fallback;
-  }
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    return fallback;
-  }
-  return parsed;
-};
-
-const transactionCommitted = (result: unknown): boolean =>
-  result !== null && result !== undefined;
+import { parseNumber, transactionCommitted } from './redis-util';
 
 const maxOptimisticRetries = 3;
 
