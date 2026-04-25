@@ -284,39 +284,13 @@ export const rerollAndPublish = async (): Promise<{
   };
 };
 
-export const getLastGeneratedChallengeDetails = async (): Promise<{
-  levelId: string;
-  dateKey: string;
-  difficulty: number;
-  challengeType: string;
-  author: string;
-  text: string;
-  wordCount: number;
-  characterCount: number;
-  alreadyPosted: boolean;
-  postId: string | null;
-}> => {
-  const challenge = await findPendingGeneratedChallenge();
-  if (!challenge) {
-    throw new Error('No generated daily challenge is waiting to be posted.');
-  }
-  return {
-    levelId: challenge.levelId,
-    dateKey: challenge.puzzle.dateKey,
-    difficulty: challenge.puzzle.difficulty,
-    challengeType: challenge.puzzle.challengeType,
-    author: challenge.puzzle.author,
-    text: challenge.puzzle.targetText,
-    wordCount: challenge.puzzle.words.length,
-    characterCount: challenge.puzzle.targetText.length,
-    alreadyPosted: challenge.postId !== null,
-    postId: challenge.postId,
-  };
-};
+
 
 export const publishLastGeneratedChallenge = async (): Promise<{
   levelId: string;
   dateKey: string;
+  difficulty: number;
+  challengeType: string;
   postId: string;
   alreadyPublished: boolean;
 }> => {
@@ -332,6 +306,8 @@ export const publishLastGeneratedChallenge = async (): Promise<{
     return {
       levelId: challenge.levelId,
       dateKey: challenge.puzzle.dateKey,
+      difficulty: challenge.puzzle.difficulty,
+      challengeType: challenge.puzzle.challengeType,
       postId: challenge.postId,
       alreadyPublished: true,
     };
@@ -347,6 +323,8 @@ export const publishLastGeneratedChallenge = async (): Promise<{
   return {
     levelId: challenge.levelId,
     dateKey: challenge.puzzle.dateKey,
+    difficulty: challenge.puzzle.difficulty,
+    challengeType: challenge.puzzle.challengeType,
     postId,
     alreadyPublished: false,
   };

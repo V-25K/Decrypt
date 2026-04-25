@@ -4,7 +4,6 @@ import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
 import {
   formatModeratorRerollError,
-  getLastGeneratedChallengeDetails,
   publishLastGeneratedChallenge,
   rerollAndPublish,
 } from '../core/admin';
@@ -83,7 +82,6 @@ menu.post('/mod-post-last-generated', async (c) => {
     return c.json<UiResponse>(deny, 200);
   }
   try {
-    const details = await getLastGeneratedChallengeDetails();
     const published = await publishLastGeneratedChallenge();
     if (published.alreadyPublished) {
       return c.json<UiResponse>(
@@ -97,7 +95,7 @@ menu.post('/mod-post-last-generated', async (c) => {
 
     return c.json<UiResponse>(
       {
-        showToast: `Posted ${published.levelId}: ${details.challengeType} (${details.difficulty}/10)`,
+        showToast: `Posted ${published.levelId}: ${published.challengeType} (${published.difficulty}/10)`,
         navigateTo: `https://reddit.com/comments/${published.postId}`,
       },
       200
