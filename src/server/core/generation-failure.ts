@@ -111,7 +111,9 @@ export const reportAutomatedGenerationFailure = async (params: {
       happenedAt,
     };
 
-    await redis.set(keyGenerationFailureLatest, JSON.stringify(record));
+    await redis.set(keyGenerationFailureLatest, JSON.stringify(record), {
+      expiration: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
 
     const notifiedKey = keyGenerationFailureNotified(params.dateKey);
     const wasNotified = await redis.get(notifiedKey);
