@@ -10,17 +10,6 @@ vi.mock('@devvit/web/server', () => ({
   },
 }));
 
-vi.mock('../../shared/performance', () => ({
-  defaultPerformanceConfig: {
-    cleanup: {
-      maxAgeMs: 90 * 24 * 60 * 60 * 1000, // 90 days
-      minRetainCount: 100,
-      batchSize: 1000,
-      scheduleHours: [2, 3, 4, 5], // 2-6 AM UTC
-    },
-  },
-}));
-
 vi.mock('./state', () => ({
   getKnownUserIds: vi.fn(),
   getCompletedLevels: vi.fn(),

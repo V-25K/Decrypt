@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generatePuzzlePhrase } from './ai';
 
 type GeneratePuzzlePhraseParams = Parameters<typeof generatePuzzlePhrase>[0];
@@ -27,6 +27,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
 describe('generatePuzzlePhrase', () => {
   it('throws when API key is missing', async () => {
     await expect(
@@ -37,20 +43,73 @@ describe('generatePuzzlePhrase', () => {
     ).rejects.toThrow('Gemini API key missing');
   });
 
-  it('performs one API call per invocation', async () => {
+  it('performs API calls with retry on transient failures', async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            name: 'models/gemini-2.5-flash',
+          }),
+          { status: 200 }
+        )
+      )
       .mockResolvedValue(new Response('upstream error', { status: 500 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(generatePuzzlePhrase(baseParams())).rejects.toThrow(
       'response status=500'
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(
+      fetchMock.mock.calls.filter(([, request]) => request?.method === 'POST')
+    ).toHaveLength(3);
+  });
+
+  it('redacts API keys from nested Gemini request errors before logging or rethrowing', async () => {
+    const leakedKey = 'AIzaSyAYbAoypG5dlcwy5vJYlXDZjsMxhP21--w';
+    const leakedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${leakedKey}`;
+    const fetchError = Object.assign(
+      new Error(
+        `2 UNKNOWN: grpc invocation failed; Post "${leakedUrl}": http status 503 Service Unavailable`
+      ),
+      {
+        code: 2,
+        details: `Post "${leakedUrl}": http status 503 Service Unavailable`,
+        cause: new Error(`Post "${leakedUrl}": http status 503 Service Unavailable`),
+      }
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            name: 'models/gemini-2.5-flash',
+          }),
+          { status: 200 }
+        )
+      )
+      .mockRejectedValue(fetchError);
+    vi.stubGlobal('fetch', fetchMock);
+
+    let thrown: Error | null = null;
+    try {
+      await generatePuzzlePhrase({
+        ...baseParams(),
+        apiKey: leakedKey,
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).toBeTruthy();
+    expect(thrown?.message).toContain('key=[REDACTED]');
+    expect(thrown?.message).not.toContain(leakedKey);
+    expect(thrown?.message).not.toContain(leakedUrl);
   });
 
   it('logs invalid JSON syntax with a dedicated message', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockImplementation(() =>
       new Response(
         JSON.stringify(
           geminiResponseWithText(
@@ -61,10 +120,10 @@ describe('generatePuzzlePhrase', () => {
       )
     );
     vi.stubGlobal('fetch', fetchMock);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn');
 
     await expect(generatePuzzlePhrase(baseParams())).rejects.toThrow(
-      'invalid JSON syntax'
+      '[generatePuzzlePhrase] invalid JSON syntax'
     );
     expect(warnSpy).toHaveBeenCalledWith('[generatePuzzlePhrase] invalid JSON syntax');
   });

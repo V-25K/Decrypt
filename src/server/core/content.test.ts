@@ -82,6 +82,20 @@ describe('content phase1 rules', () => {
     expect(realSuffixHelpers.commonSuffixCount).toBeGreaterThan(0);
   });
 
+  it('uses common bigrams to lower hardness for more predictable text', () => {
+    const commonBigrams = computePhraseDifficultyProfile('THERE ARE OTHER THINGS HERE');
+    const rareBigrams = computePhraseDifficultyProfile('JUMPY FJORDS VEX BLACK WIZARDS');
+
+    expect(commonBigrams.commonBigramRatio).toBeGreaterThan(rareBigrams.commonBigramRatio);
+    expect(commonBigrams.cryptoHardness).toBeLessThan(rareBigrams.cryptoHardness);
+  });
+
+  it('does not treat tiny phrases with all-distinct bigrams as maximal bigram entropy', () => {
+    const shortPhrase = computePhraseDifficultyProfile('ABCD');
+
+    expect(shortPhrase.bigramEntropy).toBeLessThan(0.7);
+  });
+
   it('accepts representative warmup, medium, hard, and expert phrases under the tuned bands', () => {
     expect(validateQuoteForPhase1('TO BE OR NOT TO BE', 2).valid).toBe(true);
     expect(
@@ -146,5 +160,42 @@ describe('near-duplicate detection', () => {
     });
 
     expect(result.duplicate).toBe(true);
+  });
+
+  it('treats one-token extensions of five-word sayings as duplicates', () => {
+    const prior = 'Actions speak louder than words';
+    const candidate = 'Actions speak louder than words do';
+
+    const result = isNearDuplicateSignature({
+      candidateNormalizedSignature: normalizeContent(candidate),
+      candidateTokenSignature: contentTokenSignature(candidate),
+      recent: [
+        {
+          normalizedSignature: normalizeContent(prior),
+          tokenSignature: contentTokenSignature(prior),
+        },
+      ],
+    });
+
+    expect(result.duplicate).toBe(true);
+  });
+
+  it('treats dropped-middle-word variants as duplicates when most words remain in order', () => {
+    const prior = 'Actions speak louder than words';
+    const candidate = 'Actions louder than words';
+
+    const result = isNearDuplicateSignature({
+      candidateNormalizedSignature: normalizeContent(candidate),
+      candidateTokenSignature: contentTokenSignature(candidate),
+      recent: [
+        {
+          normalizedSignature: normalizeContent(prior),
+          tokenSignature: contentTokenSignature(prior),
+        },
+      ],
+    });
+
+    expect(result.duplicate).toBe(true);
+    expect(result.reason).toBe('dropped words variant duplicate');
   });
 });

@@ -26,6 +26,15 @@ import {
 import { challengeTypeSchema, type ChallengeType } from '../../shared/game';
 import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
 import { createValidationPipeline } from './validation-pipeline';
+import {
+  filterCandidateBatch,
+  type FilteredChallengeCandidate,
+} from './candidate-filter';
+import {
+  clearUsedSignature,
+  getRecentUsedSignatureEntries,
+  reserveUsedSignature,
+} from './puzzle-store';
 
 const aiPoolCandidateSchema = z.object({
   id: z.string().min(1),
@@ -230,9 +239,13 @@ const removePoolEntry = async (params: {
   bucketKey: string;
   candidateId: string;
   signature: string | null;
+  clearMainLedgerReservation?: boolean;
 }): Promise<void> => {
   if (typeof params.signature === 'string' && params.signature.length > 0) {
     await clearPoolSignature(params.signature, params.candidateId);
+    if (params.clearMainLedgerReservation ?? true) {
+      await clearUsedSignature(params.signature, params.candidateId);
+    }
   }
   await Promise.all([
     redis.del(keyAIPoolCandidate(params.candidateId)),
@@ -265,12 +278,13 @@ const pruneStalePoolEntries = async (
       bucketKey,
       candidateId,
       signature: signatures[index] ?? null,
+      clearMainLedgerReservation: true,
     });
   });
 };
 
 const savePoolCandidate = async (params: {
-  candidate: ChallengeCandidate;
+  candidate: FilteredChallengeCandidate;
   sourceDifficulty: number;
   tier: DifficultyTier;
 }) => {
@@ -293,6 +307,11 @@ const savePoolCandidate = async (params: {
   if (!reserved) {
     return false;
   }
+  const mainLedgerReserved = await reserveUsedSignature(payload.normalizedSignature, id);
+  if (!mainLedgerReserved) {
+    await clearPoolSignature(payload.normalizedSignature, id);
+    return false;
+  }
 
   try {
     await redis.set(keyAIPoolCandidateSignature(id), payload.normalizedSignature, {
@@ -307,6 +326,7 @@ const savePoolCandidate = async (params: {
     });
     return true;
   } catch (error) {
+    await clearUsedSignature(payload.normalizedSignature, id);
     await clearPoolSignature(payload.normalizedSignature, id);
     await redis.del(keyAIPoolCandidateSignature(id));
     throw error;
@@ -352,23 +372,21 @@ const fillBucket = async (params: {
   });
 
   const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
+  const recentSignatureEntries = await getRecentUsedSignatureEntries(1200);
+  const filtered = filterCandidateBatch({
+    candidates: batch.candidates,
+    preferredType: params.challengeType,
+    difficulty,
+    pipeline,
+    recentSignatureEntries,
+  });
   let stored = 0;
-  for (const candidate of batch.candidates) {
+  for (const decision of filtered.decisions) {
     if (stored >= missing) {
       break;
     }
-    if (candidate.challengeType !== params.challengeType) {
-      continue;
-    }
-    const phase1 = pipeline.phase1(candidate.text, difficulty);
-    if (!phase1.valid) {
-      continue;
-    }
-    const dup = await pipeline.duplicate(
-      candidate.text,
-      `pool_${params.tier}_${params.challengeType}`
-    );
-    if (dup.duplicate) {
+    const candidate = decision.filteredCandidate;
+    if (!decision.accepted || !candidate) {
       continue;
     }
     const saved = await savePoolCandidate({
@@ -414,26 +432,35 @@ export const warmAICandidatePool = async (params?: {
     let remaining = maxCandidatesToGenerate;
     let attempted = 0;
     let generated = 0;
+    const failures: string[] = [];
 
     for (const tier of ['warmup', 'medium', 'hard', 'expert'] as const) {
       for (const challengeType of aiChallengeTypePool) {
         if (remaining <= 0) {
-          return { attempted, generated, locked: false };
+          return { attempted, generated, locked: false, failures };
         }
         attempted += 1;
-        const stored = await fillBucket({
-          tier,
-          challengeType,
-          targetSizePerBucket,
-          maxCandidatesToGenerate: remaining,
-          hardnessBoundsByTier,
-        });
-        generated += stored;
-        remaining -= stored;
+        try {
+          const stored = await fillBucket({
+            tier,
+            challengeType,
+            targetSizePerBucket,
+            maxCandidatesToGenerate: remaining,
+            hardnessBoundsByTier,
+          });
+          generated += stored;
+          remaining -= stored;
+        } catch (error) {
+          failures.push(
+            `${tier}/${challengeType}: ${
+              error instanceof Error ? error.message : 'unknown fill failure'
+            }`
+          );
+        }
       }
     }
 
-    return { attempted, generated, locked: false };
+    return { attempted, generated, locked: false, failures };
   });
 
   return (
@@ -441,6 +468,7 @@ export const warmAICandidatePool = async (params?: {
       attempted: 0,
       generated: 0,
       locked: true,
+      failures: [],
     }
   );
 };
@@ -508,6 +536,7 @@ export const takeAICandidateBatch = async (params: {
                     bucketKey,
                     candidateId,
                     signature: signatures[index] ?? null,
+                    clearMainLedgerReservation: true,
                   });
                   return null;
                 }
@@ -515,11 +544,13 @@ export const takeAICandidateBatch = async (params: {
                   bucketKey,
                   candidateId,
                   signature: parsed.normalizedSignature,
+                  clearMainLedgerReservation: false,
                 });
                 return {
                   text: parsed.text,
                   author: parsed.author,
                   challengeType: parsed.challengeType,
+                  reservationOwnerToken: parsed.id,
                 };
               }
             );

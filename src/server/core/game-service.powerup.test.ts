@@ -102,9 +102,11 @@ vi.mock('./leaderboard', () => ({
 vi.mock('./engagement', () => ({
   getLevelEngagement: vi.fn(),
   recordQualifiedLevelPlay: vi.fn(),
+  recordQualifiedLevelFailure: vi.fn(),
   recordQualifiedLevelWin: vi.fn(),
   recordLevelPlay: vi.fn(),
   recordLevelWin: vi.fn(),
+  touchQualifiedLevelPlay: vi.fn(),
 }));
 
 vi.mock('./quests', () => ({

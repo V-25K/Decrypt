@@ -42,7 +42,7 @@ describe('phase3 obstructions and scaling', () => {
       applyObstructionsOnSkip: true,
     });
 
-    const maxTierBlindCount = 2;
+    const maxTierBlindCount = 1;
     const blocked = new Set([
       ...generated.puzzlePrivate.prefilledIndices,
       ...(generated.puzzlePrivate.lockIndices ?? []),
@@ -95,7 +95,7 @@ describe('phase3 obstructions and scaling', () => {
     }
   });
 
-  it('only accepts lock obstruction when non-lock board stays >=50% solvable', () => {
+  it('only accepts lock obstruction when non-lock board stays above the medium lock threshold', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_3304',
       dateKey: '2026-03-06',
@@ -118,7 +118,7 @@ describe('phase3 obstructions and scaling', () => {
       revealedIndices: generated.puzzlePrivate.prefilledIndices,
       forbiddenIndices: lockIndices,
     });
-    expect(solver.solvedRatio).toBeGreaterThanOrEqual(0.5);
+    expect(solver.solvedRatio).toBeGreaterThanOrEqual(0.52);
   });
 
   it('keeps shift-cipher obstruction load at or below random for the same seed', () => {

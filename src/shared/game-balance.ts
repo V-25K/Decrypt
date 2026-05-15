@@ -1,7 +1,7 @@
 import type { PowerupType } from './game';
-import { rebalancedPowerupPricingEngine } from './rebalanced-powerup-pricing-engine';
-import { rebalancedRetryCostCalculator } from './rebalanced-retry-cost-calculator';
-import { rebalancedScorePenaltyEngine } from './rebalanced-score-penalty-engine';
+import { powerupPricingEngine } from './powerup-pricing-engine';
+import { retryCostCalculator } from './retry-cost-calculator';
+import { scorePenaltyEngine } from './score-penalty-engine';
 
 export type PowerupPricingContext = {
   difficulty: number;
@@ -40,7 +40,7 @@ export const getPowerupPrice = (
   context: Partial<PowerupPricingContext> | null | undefined
 ): number => {
   const normalized = normalizePowerupPricingContext(context);
-  return rebalancedPowerupPricingEngine.calculatePowerupCost(
+  return powerupPricingEngine.calculatePowerupCost(
     powerupType,
     normalized.difficulty,
     normalized.remainingLetters
@@ -54,14 +54,14 @@ export const getDailyRetryQuote = (params: {
   const safeRetryCount = Math.max(0, Math.floor(params.retryCount));
   const difficulty = clampDifficulty(params.difficulty);
   return {
-    retryScoreFactor: rebalancedScorePenaltyEngine.calculatePenaltyFactor(
+    retryScoreFactor: scorePenaltyEngine.calculatePenaltyFactor(
       safeRetryCount
     ),
-    nextRetryCost: rebalancedRetryCostCalculator.calculateRetryCost(
+    nextRetryCost: retryCostCalculator.calculateRetryCost(
       safeRetryCount,
       difficulty
     ),
-    nextRetryScoreFactor: rebalancedScorePenaltyEngine.calculatePenaltyFactor(
+    nextRetryScoreFactor: scorePenaltyEngine.calculatePenaltyFactor(
       safeRetryCount + 1
     ),
   };

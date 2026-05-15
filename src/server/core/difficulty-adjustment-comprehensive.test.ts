@@ -1,9 +1,124 @@
-import { describe, expect, it } from 'vitest';
-import { adjustPuzzleDifficulty, buildPuzzle, computeObstructionBudget, type PuzzleDifficultyContext } from './puzzle';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  adjustPuzzleDifficulty,
+  buildPuzzle,
+  computeObstructionBudget,
+  computeObstructionBudgetSpent,
+  type PuzzleDifficultyContext,
+} from './puzzle';
 import { difficultyToTier, computePhraseDifficultyProfile } from './content';
 import { mulberry32 } from './rng';
 
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('adjustPuzzleDifficulty - comprehensive tests', () => {
+  it('prefers removing real obstructions before adding prefills when lowering a hard board', async () => {
+    const text = 'THREE THOUSAND WORLDS AND NOT A SINGLE WORTHY FOE.';
+    const basePuzzle = buildPuzzle({
+      levelId: 'comp-006',
+      dateKey: '2026-05-09',
+      text,
+      author: 'TEST',
+      challengeType: 'QUOTE',
+      source: 'MANUAL_INJECTED',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+
+    const profile = computePhraseDifficultyProfile(text);
+    const context: PuzzleDifficultyContext = {
+      tier: 'hard',
+      difficulty: 8,
+      cipherType: basePuzzle.puzzlePrivate.cipherType,
+      totalLetters: profile.totalLetters,
+      wordCount: profile.wordCount,
+      uniqueWordCount: profile.uniqueWordCount,
+      uniqueWordRatio: profile.uniqueWordRatio,
+      repeatedWordRatio: profile.repeatedWordRatio,
+      phraseUniqueLetters: profile.uniqueLetterCount,
+      phraseOneLetterWords: profile.oneLetterWordCount,
+      phraseSuffixCount: profile.commonSuffixCount,
+      cryptoHardness: profile.cryptoHardness,
+    };
+
+    const budget = computeObstructionBudget(context);
+    const rng = mulberry32(12345);
+
+    const result = await adjustPuzzleDifficulty({
+      basePuzzle: basePuzzle.puzzlePrivate,
+      targetDifficulty: 5,
+      budget,
+      maxIterations: 5,
+      rng,
+    });
+
+    expect(result.adjustmentLog[0]).toBe(`Remove padlock chain (cost: -18)`);
+  });
+
+  it('refunds spent budget when softening an already-obstructed board', async () => {
+    const text = 'THE LIGHT WILL FALL PREY TO DARKNESS';
+    const basePuzzle = buildPuzzle({
+      levelId: 'comp-007',
+      dateKey: '2026-05-09',
+      text,
+      author: 'TEST',
+      challengeType: 'QUOTE',
+      source: 'MANUAL_INJECTED',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+
+    const profile = computePhraseDifficultyProfile(text);
+    const context: PuzzleDifficultyContext = {
+      tier: 'hard',
+      difficulty: 8,
+      cipherType: basePuzzle.puzzlePrivate.cipherType,
+      totalLetters: profile.totalLetters,
+      wordCount: profile.wordCount,
+      uniqueWordCount: profile.uniqueWordCount,
+      uniqueWordRatio: profile.uniqueWordRatio,
+      repeatedWordRatio: profile.repeatedWordRatio,
+      phraseUniqueLetters: profile.uniqueLetterCount,
+      phraseOneLetterWords: profile.oneLetterWordCount,
+      phraseSuffixCount: profile.commonSuffixCount,
+      cryptoHardness: profile.cryptoHardness,
+    };
+
+    const budgetTemplate = computeObstructionBudget(context);
+    const startingSpent = Math.min(
+      budgetTemplate.total,
+      computeObstructionBudgetSpent(basePuzzle.puzzlePrivate)
+    );
+    const rng = mulberry32(12345);
+
+    const result = await adjustPuzzleDifficulty({
+      basePuzzle: basePuzzle.puzzlePrivate,
+      targetDifficulty: 5,
+      budget: {
+        ...budgetTemplate,
+        spent: startingSpent,
+      },
+      maxIterations: 5,
+      rng,
+    });
+
+    expect(startingSpent).toBeGreaterThan(0);
+    expect(result.budgetUsed).toBeLessThanOrEqual(startingSpent);
+    expect(result.adjustmentLog.length).toBeGreaterThan(0);
+  });
+
   it('should adjust from easy to medium with proper budget', async () => {
     const text = 'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG';
     const basePuzzle = buildPuzzle({

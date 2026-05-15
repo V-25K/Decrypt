@@ -36,7 +36,7 @@ export const createPost = async () => {
     }
   }
 
-  const generated = await generatePuzzleForDate(new Date(), { allowSelectionRefill: true });
+  const generated = await generatePuzzleForDate(new Date());
   const postId = await publishAndActivateDailyPost({
     ...generated,
     runAs: 'APP',

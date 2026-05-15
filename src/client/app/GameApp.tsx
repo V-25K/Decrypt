@@ -23,11 +23,20 @@ import type {
   Options as CanvasConfettiOptions,
 } from 'canvas-confetti';
 import { loadConfettiModule } from '../../shared/bundle-analysis';
-import { chunkPuzzleTokensByWordLimit, cn, tokenizePuzzleTiles } from '../utils';
+import {
+  chunkPuzzleTokensByWordLimit,
+  cn,
+  getPuzzleNavigableTileRows,
+  tokenizePuzzleTiles,
+} from '../utils';
 import {
   getOfferPromotionLabel,
   promotedOfferPrioritySkus,
 } from '../../shared/store';
+import {
+  getChallengeBackgroundAsset,
+  getStableChallengeBackgroundIndex,
+} from './challenge-backgrounds';
 import {
   getQuestProgressValue,
 } from '../../shared/quests';
@@ -50,13 +59,12 @@ import {
   challengeHeartbeatIntervalMs,
   confettiPalette,
   crossMarkEmoji,
-  emptyHeartGlyph,
   heartEmoji,
   infiniteHeartsIcon,
   heartRefillIntervalMs,
   inlineMaxWordsPerLine,
+  maxWordTileColumns,
   maxOutcomeCrowdAvatars,
-  powerupIcon,
   powerupLabel,
 } from './constants';
 import {
@@ -84,8 +92,10 @@ import type {
 } from './types';
 import {
   InfoIcon,
-  SettingsIcon,
 } from '../components/Icons';
+import { HudSprite } from '../components/HudSprite';
+import { PowerupSprite } from '../components/PowerupSprite';
+import { UiSprite } from '../components/UiSprite';
 import { HelpOverlay } from '../components/HelpOverlay';
 import { SettingsOverlay } from '../components/SettingsOverlay';
 import { BuyDialog } from '../components/BuyDialog';
@@ -94,10 +104,12 @@ import { ChallengePuzzleGrid } from '../components/ChallengePuzzleGrid';
 import { OutcomeOverlay } from '../components/OutcomeOverlay';
 import { RetryDialog } from '../components/RetryDialog';
 import { HeartPurchaseDialog } from '../components/HeartPurchaseDialog';
+import { LoadingScreen } from '../components/LoadingScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import {
   clearCorrectGuessIndices,
   consumeExpandedScreenIntent,
+  migrateSessionStorageForUser,
   persistCorrectGuessIndices,
   persistOutcomeState,
   readCorrectGuessIndices,
@@ -131,8 +143,29 @@ import { trpc } from '../trpc';
 
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
-const criticalUiImageAssets = ['/background.webp', '/logo.png', '/snoo.png'];
-const deferredUiImageAssets = ['/result.webp'];
+const criticalUiImageAssets = [
+  getChallengeBackgroundAsset(0),
+  '/backgrounds/home.webp',
+  '/hud_coin.png',
+  '/hud_heart.png',
+  '/loading_glass.png',
+  '/logo.png',
+  '/powerup_hammer.png',
+  '/powerup_wand.png',
+  '/powerup_shield.png',
+  '/powerup_rocket.png',
+  '/char.webp',
+  '/ui_home.png',
+  '/ui_leaderboard.png',
+  '/ui_lock.png',
+  '/ui_question.png',
+  '/ui_quest.png',
+  '/ui_settings.png',
+  '/ui_shop.png',
+  '/ui_sound.png',
+  '/ui_stats.png',
+];
+const deferredUiImageAssets = ['/backgrounds/result.webp'];
 const criticalOutcomeAvatarCount = 3;
 const outcomeCrowdFallbackReadyMs = 650;
 const nonCriticalWarmupDelayMs = 180;
@@ -299,6 +332,32 @@ const buyChips = (maxQuantity: number) => [
 
 const powerupTypes: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
 
+type FeaturedPerk =
+  | { key: 'coins'; sprite: 'coin'; value: number }
+  | { key: 'hearts'; sprite: 'heart'; value: number }
+  | { key: PowerupType; powerup: PowerupType; value: number };
+
+type PowerupValidity = {
+  valid: boolean;
+  reason: string | null;
+};
+
+type HeartPurchaseLimitStatus = {
+  purchasesToday: number;
+  maxPurchasesPerDay: number;
+  limitResetTs: number;
+};
+
+type ChallengeSessionTiming = {
+  guessCount: number;
+  usedPowerups: number;
+  mistakesMade: number;
+  startTimestamp: number;
+};
+
+const hasChallengeActivity = (session: ChallengeSessionTiming): boolean =>
+  session.guessCount > 0 || session.usedPowerups > 0 || session.mistakesMade > 0;
+
 const defaultChallengeMetrics: ChallengeMetrics = {
   plays: 0,
   wins: 0,
@@ -349,6 +408,7 @@ export const GameApp = () => {
   const [levelId, setLevelId] = useState('');
   const [mode, setMode] = useState<'daily' | 'endless'>('daily');
   const [heartsRemaining, setHeartsRemaining] = useState(3);
+  const [isShieldActive, setIsShieldActive] = useState(false);
   const [selectedTile, setSelectedTile] = useState<number | null>(null);
   const [isGameOver, _setIsGameOver] = useState(false);
   const [isComplete, _setIsComplete] = useState(false);
@@ -384,11 +444,12 @@ export const GameApp = () => {
   const [outcomeCrowdBubbles, setOutcomeCrowdBubbles] = useState<OutcomeCrowdBubble[]>([]);
   const [featuredOffer, setFeaturedOffer] = useState<StoreProduct | null>(null);
   const [shopProducts, setShopProducts] = useState<StoreProduct[]>([]);
+  const [shopError, setShopError] = useState<string | null>(null);
   const [offerBusy, setOfferBusy] = useState(false);
   const [webViewMode, setWebViewMode] = useState<'inline' | 'expanded'>(() => getWebViewMode());
   const [activeScreen, setActiveScreen] = useState<AppScreen>(() =>
     getWebViewMode() === 'expanded'
-      ? (readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'home')
+      ? (readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'challenge')
       : 'challenge'
   );
   const [buyDialog, setBuyDialog] = useState<BuyDialogState | null>(null);
@@ -405,6 +466,8 @@ export const GameApp = () => {
   const [requiresPaidRetry, setRequiresPaidRetry] = useState(false);
   const [heartPurchaseBusy, setHeartPurchaseBusy] = useState(false);
   const [coinHeartLimitReached, setCoinHeartLimitReached] = useState(false);
+  const [heartPurchaseLimitStatus, setHeartPurchaseLimitStatus] =
+    useState<HeartPurchaseLimitStatus | null>(null);
   const [heartPurchaseDialogOpen, setHeartPurchaseDialogOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [headerNowTs, setHeaderNowTs] = useState(() => Date.now());
@@ -435,6 +498,8 @@ export const GameApp = () => {
   const [statsTab, setStatsTab] = useState<StatsTab>('daily');
   const [homeTab, setHomeTab] = useState<HomeTab>('daily');
   const [rankSummary, setRankSummary] = useState<RankSummary | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const confettiCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -448,6 +513,7 @@ export const GameApp = () => {
   const settingsCardRef = useRef<HTMLElement | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const wrongGuessTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const currentUserIdRef = useRef<string | null>(null);
   const guessQueueRef = useRef<
     Array<{ levelId: string; tileIndex: number; letter: string }>
   >([]);
@@ -461,6 +527,25 @@ export const GameApp = () => {
     : communityJoinRecorded
       ? 'Joined'
       : 'Subscribe';
+  const isChallengeScreen = activeScreen === 'challenge';
+  const challengeBackgroundKey = puzzle?.levelId || levelId;
+  const challengeBackgroundIndex = useMemo(
+    () => getStableChallengeBackgroundIndex(challengeBackgroundKey),
+    [challengeBackgroundKey]
+  );
+
+  useEffect(() => {
+    if (!isChallengeScreen) {
+      return;
+    }
+    warmImagePreloads([getChallengeBackgroundAsset(challengeBackgroundIndex)], {
+      fetchPriority: 'high',
+    });
+  }, [challengeBackgroundIndex, isChallengeScreen]);
+  const challengeBackgroundClass = useMemo(
+    () => `challenge-backdrop-img-${challengeBackgroundIndex + 1}`,
+    [challengeBackgroundIndex]
+  );
 
   const tokens = useMemo(() => (puzzle ? tokenizePuzzleTiles(puzzle.tiles) : []), [puzzle]);
   const formattedLevel = useMemo(() => formatLevelNumber(levelId), [levelId]);
@@ -614,12 +699,38 @@ export const GameApp = () => {
     puzzleRef.current = puzzle;
   }, [puzzle]);
 
+	  useEffect(() => {
+	    if (!profile) {
+	      return;
+	    }
+	    setSfxEnabled(persistSfxEnabled(profile.audioEnabled));
+	  }, [profile]);
+
   useEffect(() => {
-    if (!profile) {
+    if (!heartPurchaseDialogOpen) {
       return;
     }
-    setSfxEnabled(persistSfxEnabled(profile.audioEnabled));
-  }, [profile]);
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const status = await trpc.profile.getCoinHeartPurchaseStatus.query();
+        if (!cancelled) {
+          setHeartPurchaseLimitStatus(status);
+          setCoinHeartLimitReached(
+            status.purchasesToday >= status.maxPurchasesPerDay
+          );
+        }
+      } catch (_error) {
+        if (!cancelled) {
+          setHeartPurchaseLimitStatus(null);
+        }
+      }
+    };
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [heartPurchaseDialogOpen]);
 
   useEffect(() => {
     guessQueueRef.current = [];
@@ -631,10 +742,13 @@ export const GameApp = () => {
 
   const refreshBootstrapState = useCallback(async () => {
     const bootstrap = await trpc.game.bootstrap.query();
+    currentUserIdRef.current = bootstrap.userId;
+    migrateSessionStorageForUser(bootstrap.userId);
     setProfile(bootstrap.profile);
     setInventory(bootstrap.inventory);
     setSubredditName(bootstrap.subredditName);
     setEndlessCatalogStatus(bootstrap.endlessCatalog);
+    return bootstrap;
   }, []);
 
   const applyDailyRetryState = useCallback(
@@ -718,7 +832,6 @@ export const GameApp = () => {
       setDailyLeaderboardEntries([]);
       setEndlessLeaderboardEntries([]);
       setRankSummary(null);
-      showToast('Unable to load leaderboard.');
     }
   }, []);
 
@@ -732,13 +845,14 @@ export const GameApp = () => {
   }, []);
 
   const loadFeaturedOffer = useCallback(async () => {
+    setShopError(null);
     try {
       const products = await trpc.store.getProducts.query();
       setShopProducts(products.products);
       setFeaturedOffer(pickPromotedOffer(products.products));
     } catch (error) {
       console.error('[client] store.getProducts failed:', error);
-      showToast(
+      setShopError(
         error instanceof Error && error.message.trim().length > 0
           ? `Unable to load store: ${error.message}`
           : 'Unable to load store bundles.'
@@ -749,8 +863,13 @@ export const GameApp = () => {
   }, []);
 
   const restoreCorrectGuessFeedback = useCallback(
-    (activeLevelId: string, view: Puzzle) => {
-      const storedIndices = readCorrectGuessIndices(activeLevelId);
+      (activeLevelId: string, view: Puzzle) => {
+      const storageUserId = currentUserIdRef.current;
+      if (!storageUserId) {
+        setCorrectGuessTileIndices(new Set());
+        return;
+      }
+      const storedIndices = readCorrectGuessIndices(storageUserId, activeLevelId);
       if (storedIndices.length === 0) {
         setCorrectGuessTileIndices(new Set());
         return;
@@ -761,7 +880,7 @@ export const GameApp = () => {
       });
       const restored = new Set(validIndices);
       setCorrectGuessTileIndices(restored);
-      persistCorrectGuessIndices(activeLevelId, restored);
+      persistCorrectGuessIndices(storageUserId, activeLevelId, restored);
     },
     []
   );
@@ -856,9 +975,52 @@ export const GameApp = () => {
     [getCurrentRemainingLetters]
   );
 
-  const findNextGuessableTileIndex = (
+  const getPowerupValidity = useCallback(
+    (item: PowerupType): PowerupValidity => {
+      if (!puzzle) {
+        return { valid: false, reason: 'Level data is unavailable.' };
+      }
+      const unrevealedUnlockedTiles = puzzle.tiles.filter(
+        (tile) => tile.isLetter && tile.displayChar === '_' && !tile.isLocked
+      );
+      const unlockedIncompleteWords = tokens.filter(
+        (token) =>
+          token.type === 'word' &&
+          token.tiles.some(
+            (tile) =>
+              tile.isLetter &&
+              tile.displayChar === '_' &&
+              !tile.isLocked &&
+              !tile.isBlind
+          )
+      );
+
+      switch (item) {
+        case 'hammer':
+          return unrevealedUnlockedTiles.length === 0
+            ? { valid: false, reason: 'No unlocked tiles left to reveal.' }
+            : { valid: true, reason: null };
+        case 'wand':
+          return unlockedIncompleteWords.length === 0
+            ? { valid: false, reason: 'No unlocked words available.' }
+            : { valid: true, reason: null };
+        case 'rocket':
+          return unrevealedUnlockedTiles.length < 3
+            ? { valid: false, reason: 'Not enough unlocked tiles for Rocket.' }
+            : { valid: true, reason: null };
+        case 'shield':
+          return isShieldActive
+            ? { valid: false, reason: 'Shield is already active.' }
+            : { valid: true, reason: null };
+      }
+    },
+    [isShieldActive, puzzle, tokens]
+  );
+
+  const findAdjacentGuessableTileIndex = (
     currentPuzzle: Puzzle | null,
-    fromIndex: number
+    fromIndex: number,
+    direction: 1 | -1
   ): number | null => {
     if (!currentPuzzle) {
       return null;
@@ -872,13 +1034,18 @@ export const GameApp = () => {
         ? fromIndex
         : 0;
     for (let offset = 1; offset <= tileCount; offset += 1) {
-      const index = (startIndex + offset) % tileCount;
+      const index = (startIndex + offset * direction + tileCount) % tileCount;
       if (isGuessableTileAtIndex(currentPuzzle, index)) {
         return index;
       }
     }
     return null;
   };
+
+  const findNextGuessableTileIndex = (
+    currentPuzzle: Puzzle | null,
+    fromIndex: number
+  ): number | null => findAdjacentGuessableTileIndex(currentPuzzle, fromIndex, 1);
 
   const buildDispatchableChunk = (
     entries: Array<{ levelId: string; tileIndex: number; letter: string }>,
@@ -961,16 +1128,24 @@ export const GameApp = () => {
         session.session.guessCount === 0 &&
         session.session.usedPowerups === 0 &&
         session.session.mistakesMade === 0;
+      const storageUserId = currentUserIdRef.current;
       if (isFreshSession) {
-        clearCorrectGuessIndices(activeLevelId);
+        if (storageUserId) {
+          clearCorrectGuessIndices(storageUserId, activeLevelId);
+        }
       }
       setHeartsRemaining(session.heartsRemaining);
+      setIsShieldActive(session.session.shieldIsActive);
       setIsGameOver(false);
       setIsComplete(false);
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
-      setChallengeStartTs(session.session.startTimestamp);
-      persistOutcomeState(null);
+      setChallengeStartTs(
+        hasChallengeActivity(session.session) ? session.session.startTimestamp : null
+      );
+      if (storageUserId) {
+        persistOutcomeState(storageUserId, null);
+      }
       setSelectedTile(null);
       clearTileFeedback();
       return true;
@@ -1001,6 +1176,7 @@ export const GameApp = () => {
   const loadLevel = async (nextMode: 'daily' | 'endless') => {
     setIsComplete(false);
     setIsGameOver(false);
+    setIsShieldActive(false);
     setBusy(true);
     try {
       const loaded = await trpc.game.loadLevel.query({
@@ -1014,37 +1190,46 @@ export const GameApp = () => {
       setSelectedTile(null);
 
       if (loaded.alreadyCompleted) {
-        clearCorrectGuessIndices(loaded.levelId);
+        const storageUserId = currentUserIdRef.current;
+        if (storageUserId) {
+          clearCorrectGuessIndices(storageUserId, loaded.levelId);
+        }
         setIsComplete(true);
         setIsGameOver(false);
         setCompletionResult(null);
         setCompletionSolveSeconds(
           await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
         );
-        persistOutcomeState({
-          levelId: loaded.levelId,
-          isComplete: true,
-          isGameOver: false,
-          completion: null,
-          solveSeconds: null,
-          savedAt: Date.now(),
-        });
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, {
+            levelId: loaded.levelId,
+            isComplete: true,
+            isGameOver: false,
+            completion: null,
+            solveSeconds: null,
+            savedAt: Date.now(),
+          });
+        }
       } else if (nextMode === 'daily' && loaded.requiresPaidRetry) {
+        const storageUserId = currentUserIdRef.current;
         setIsComplete(false);
         setIsGameOver(true);
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
         setChallengeStartTs(null);
         setHeartsRemaining(loaded.puzzle.heartsMax);
+        setIsShieldActive(false);
         clearTileFeedback();
-        persistOutcomeState({
-          levelId: loaded.levelId,
-          isComplete: false,
-          isGameOver: true,
-          completion: null,
-          solveSeconds: null,
-          savedAt: Date.now(),
-        });
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, {
+            levelId: loaded.levelId,
+            isComplete: false,
+            isGameOver: true,
+            completion: null,
+            solveSeconds: null,
+            savedAt: Date.now(),
+          });
+        }
       } else {
         await startLevel(loaded.levelId, nextMode);
       }
@@ -1071,6 +1256,7 @@ export const GameApp = () => {
         levelId: activeLevelId,
         mode: activeMode,
       });
+      const storageUserId = currentUserIdRef.current;
       const completed = result.ok && result.accepted;
       const retryQuote = getDailyRetryQuote({
         retryCount: result.retryCount,
@@ -1092,16 +1278,20 @@ export const GameApp = () => {
           : null;
       setCompletionSolveSeconds(resolvedSolveSeconds);
       if (completed) {
-        persistOutcomeState({
-          levelId: activeLevelId,
-          isComplete: true,
-          isGameOver: false,
-          completion: result,
-          solveSeconds: resolvedSolveSeconds,
-          savedAt: Date.now(),
-        });
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, {
+            levelId: activeLevelId,
+            isComplete: true,
+            isGameOver: false,
+            completion: result,
+            solveSeconds: resolvedSolveSeconds,
+            savedAt: Date.now(),
+          });
+        }
       } else {
-        persistOutcomeState(null);
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, null);
+        }
         showToast('Run not accepted. Starting a fresh attempt.');
         await startLevel(activeLevelId, activeMode);
         await refreshCurrentView(activeLevelId);
@@ -1134,8 +1324,9 @@ export const GameApp = () => {
       if (isComplete) return;
       setLoading(true);
       setBusy(true);
+      setBootstrapError(null);
       try {
-        const [loaded] = await Promise.all([
+        const [loaded, bootstrap] = await Promise.all([
           trpc.game.loadLevel.query({ mode: 'daily' }),
           refreshBootstrapState(),
         ]);
@@ -1155,11 +1346,12 @@ export const GameApp = () => {
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
         setSelectedTile(null);
-        const persistedOutcome = readOutcomeState();
+        const storageUserId = bootstrap.userId;
+        const persistedOutcome = readOutcomeState(storageUserId);
         const canRestorePersisted =
           persistedOutcome !== null && persistedOutcome.levelId === loaded.levelId;
         if (persistedOutcome && persistedOutcome.levelId !== loaded.levelId) {
-          persistOutcomeState(null);
+          persistOutcomeState(storageUserId, null);
         }
         if (canRestorePersisted && persistedOutcome) {
           setIsComplete(persistedOutcome.isComplete);
@@ -1176,6 +1368,7 @@ export const GameApp = () => {
           );
           setChallengeStartTs(null);
           setHeartsRemaining(loaded.puzzle.heartsMax);
+          setIsShieldActive(false);
           clearTileFeedback();
         } else if (loaded.requiresPaidRetry && !loaded.alreadyCompleted) {
           setIsComplete(false);
@@ -1184,8 +1377,9 @@ export const GameApp = () => {
           setCompletionSolveSeconds(null);
           setChallengeStartTs(null);
           setHeartsRemaining(loaded.puzzle.heartsMax);
+          setIsShieldActive(false);
           clearTileFeedback();
-          persistOutcomeState({
+          persistOutcomeState(storageUserId, {
             levelId: loaded.levelId,
             isComplete: false,
             isGameOver: true,
@@ -1194,7 +1388,7 @@ export const GameApp = () => {
             savedAt: Date.now(),
           });
         } else if (loaded.alreadyCompleted) {
-          clearCorrectGuessIndices(loaded.levelId);
+          clearCorrectGuessIndices(storageUserId, loaded.levelId);
           setIsComplete(true);
           setIsGameOver(false);
           setCompletionResult(null);
@@ -1203,6 +1397,7 @@ export const GameApp = () => {
           );
           setChallengeStartTs(null);
           setHeartsRemaining(loaded.puzzle.heartsMax);
+          setIsShieldActive(false);
           clearTileFeedback();
         } else {
           await startLevel(loaded.levelId, 'daily');
@@ -1216,9 +1411,13 @@ export const GameApp = () => {
         setPuzzle(view);
         restoreCorrectGuessFeedback(loaded.levelId, view);
         setSelectedTile(null);
-      } catch (_error) {
+      } catch (error) {
         if (!cancelled) {
-          showToast('Failed to initialize Decrypt.');
+          setBootstrapError(
+            error instanceof Error && error.message.trim().length > 0
+              ? `Unable to start Decrypt: ${error.message}`
+              : 'Unable to start Decrypt right now.'
+          );
         }
       } finally {
         if (!cancelled) {
@@ -1242,6 +1441,7 @@ export const GameApp = () => {
     refreshBootstrapState,
     restoreCorrectGuessFeedback,
     startLevel,
+    bootstrapAttempt,
   ]);
 
   useEffect(() => {
@@ -1323,7 +1523,7 @@ export const GameApp = () => {
     if (webViewMode !== 'expanded') {
       return;
     }
-    const nextScreen = readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'home';
+    const nextScreen = readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'challenge';
     setActiveScreen(nextScreen);
   }, [webViewMode]);
 
@@ -1466,9 +1666,7 @@ export const GameApp = () => {
       }
       const widthRatio = viewport.clientWidth / content.scrollWidth;
       const heightRatio = viewport.clientHeight / content.scrollHeight;
-      const nextScale = webViewMode === 'inline'
-        ? Math.min(1, widthRatio)
-        : Math.min(1, widthRatio, heightRatio);
+      const nextScale = Math.min(1, widthRatio, heightRatio);
       setPuzzleScale(nextScale);
       const scaledContentHeight = content.scrollHeight * nextScale;
       setIsPuzzleVerticallyCentered(scaledContentHeight <= viewport.clientHeight - 6);
@@ -1665,6 +1863,11 @@ export const GameApp = () => {
     tileIndex: number,
     puzzleSnapshot: Puzzle | null
   ): Promise<Puzzle | null> => {
+    setChallengeStartTs(
+      typeof result.sessionStartTimestamp === 'number'
+        ? result.sessionStartTimestamp
+        : null
+    );
     setPendingGuessByTile((previous) => {
       if (previous.size === 0) {
         return previous;
@@ -1697,7 +1900,10 @@ export const GameApp = () => {
         for (const index of revealedIndicesForAnimation) {
           next.add(index);
         }
-        persistCorrectGuessIndices(levelId, next);
+        const storageUserId = currentUserIdRef.current;
+        if (storageUserId) {
+          persistCorrectGuessIndices(storageUserId, levelId, next);
+        }
         return next;
       });
       setSelectedTile((previous) => {
@@ -1715,6 +1921,9 @@ export const GameApp = () => {
       flashWrongTile(tileIndex);
     }
     setHeartsRemaining(result.heartsRemaining);
+    if (result.shieldConsumed) {
+      setIsShieldActive(false);
+    }
     const shouldRefresh =
       result.newlyUnlockedChainIds.length > 0 || result.lockProgressChanged;
     const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
@@ -1729,14 +1938,17 @@ export const GameApp = () => {
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
         await refreshBootstrapState();
-      persistOutcomeState({
-        levelId,
-        isComplete: false,
-        isGameOver: true,
-        completion: null,
-        solveSeconds: null,
-        savedAt: Date.now(),
-      });
+        const storageUserId = currentUserIdRef.current;
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, {
+            levelId,
+            isComplete: false,
+            isGameOver: true,
+            completion: null,
+            solveSeconds: null,
+            savedAt: Date.now(),
+          });
+        }
     } else {
       if (viewPromise) {
         void viewPromise
@@ -1937,16 +2149,16 @@ export const GameApp = () => {
     }
   };
 
-  const enqueueGuess = (letter: string, tileIndex: number) => {
-    setPendingGuessByTile((previous) => {
-      const next = new Map(previous);
-      next.set(tileIndex, letter);
+	  const enqueueGuess = (letter: string, tileIndex: number) => {
+		    setPendingGuessByTile((previous) => {
+		      const next = new Map(previous);
+		      next.set(tileIndex, letter);
       return next;
     });
     guessQueueRef.current.push({ levelId, tileIndex, letter });
-    setQueuedGuessCount(guessQueueRef.current.length);
-    void processGuessQueue();
-  };
+	    setQueuedGuessCount(guessQueueRef.current.length);
+	    void processGuessQueue();
+	  };
 
   const handleUsePowerup = async (item: PowerupType) => {
     if (
@@ -1998,15 +2210,28 @@ export const GameApp = () => {
         itemType: item,
         targetIndex: item === 'hammer' || item === 'wand' ? selectedTile : null,
       });
-      if (!used.success) {
-        showToast(used.reason ?? 'Powerup failed.');
-        return;
-      }
-      const revealedTiles = Array.isArray(used.revealedTiles) ? used.revealedTiles : [];
-      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
-      setProfile(used.profile);
-      setInventory(used.inventory);
-      setPuzzle(nextPuzzle);
+	      if (!used.success) {
+	        showToast(used.reason ?? 'Powerup failed.');
+	        return;
+	      }
+	      const revealedTiles = Array.isArray(used.revealedTiles) ? used.revealedTiles : [];
+	      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
+	      setProfile(used.profile);
+	      setInventory(used.inventory);
+	      setPuzzle(nextPuzzle);
+	      setChallengeStartTs(
+	        hasChallengeActivity(used.session) ? used.session.startTimestamp : null
+	      );
+	      setSelectedTile((previous) => {
+	        if (previous === null) {
+	          return previous;
+        }
+        if (isGuessableTileAtIndex(nextPuzzle, previous)) {
+          return previous;
+        }
+        return findNextGuessableTileIndex(nextPuzzle, previous);
+      });
+      setIsShieldActive(used.session.shieldIsActive);
       if (item === 'shield') {
         showToast('Shield active for next mistake.');
       }
@@ -2093,6 +2318,11 @@ export const GameApp = () => {
       setBuyDialog(null);
       return;
     }
+    const validity = getPowerupValidity(buyDialog.item);
+    if (!validity.valid) {
+      showToast(validity.reason ?? 'This powerup is not useful right now.');
+      return;
+    }
     const quantity = Math.max(1, Math.min(buyDialog.quantity, max));
     setBusy(true);
     try {
@@ -2157,7 +2387,7 @@ export const GameApp = () => {
     }
     setOfferBusy(true);
     try {
-      const result = await purchase([sku]);
+      const result = await purchase(sku);
       if (isSuccessfulOrderStatus(result.status)) {
         showToast('Purchase successful.');
         await Promise.all([refreshBootstrapState(), loadFeaturedOffer()]);
@@ -2336,12 +2566,18 @@ export const GameApp = () => {
   };
 
   const handleSetActiveFlair = async (nextFlair: string) => {
+    if (!profile) {
+      return;
+    }
+    const previousProfile = profile;
     setFlairSaveBusy(true);
+    setProfile({ ...profile, activeFlair: nextFlair });
     try {
       const result = await trpc.profile.setActiveFlair.mutate({
         flair: nextFlair,
       });
       if (!result.success) {
+        setProfile(result.profile);
         showToast(result.reason ?? 'Unable to change flair.');
         return;
       }
@@ -2350,6 +2586,7 @@ export const GameApp = () => {
         nextFlair.length > 0 ? `Flair equipped: ${nextFlair}` : 'Flair cleared.'
       );
     } catch (_error) {
+      setProfile(previousProfile);
       showToast('Unable to change flair.');
     } finally {
       setFlairSaveBusy(false);
@@ -2399,13 +2636,21 @@ export const GameApp = () => {
       setDailyRetryScoreFactor(result.retryScoreFactor);
       setNextDailyRetryScoreFactor(result.nextRetryScoreFactor);
       setRequiresPaidRetry(result.requiresPaidRetry);
-      clearCorrectGuessIndices(levelId);
+      const storageUserId = currentUserIdRef.current;
+      if (storageUserId) {
+        clearCorrectGuessIndices(storageUserId, levelId);
+      }
       setIsGameOver(false);
       setIsComplete(false);
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
-      setChallengeStartTs(result.session.startTimestamp);
-      persistOutcomeState(null);
+      setChallengeStartTs(
+        hasChallengeActivity(result.session) ? result.session.startTimestamp : null
+      );
+      setIsShieldActive(result.session.shieldIsActive);
+      if (storageUserId) {
+        persistOutcomeState(storageUserId, null);
+      }
       setRetryDialog(null);
       setSelectedTile(null);
       clearTileFeedback();
@@ -2429,12 +2674,17 @@ export const GameApp = () => {
       return;
     }
     setHeartPurchaseBusy(true);
-    try {
-      const result = await trpc.profile.purchaseCoinRefill.mutate();
-      if (!result.success) {
-        if (result.reason?.toLowerCase().includes('daily limit')) {
-          setCoinHeartLimitReached(true);
-        }
+	    try {
+	      const result = await trpc.profile.purchaseCoinRefill.mutate();
+      setHeartPurchaseLimitStatus({
+        purchasesToday: result.purchasesToday,
+        maxPurchasesPerDay: result.maxPurchasesPerDay,
+        limitResetTs: result.limitResetTs,
+      });
+	      if (!result.success) {
+	        if (result.reason?.toLowerCase().includes('daily limit')) {
+	          setCoinHeartLimitReached(true);
+	        }
         showToast(result.reason ?? 'Refill failed.');
         return;
       }
@@ -2456,9 +2706,14 @@ export const GameApp = () => {
       return;
     }
     setHeartPurchaseBusy(true);
-    try {
-      const result = await trpc.profile.purchaseCoinTopUp.mutate();
-      if (!result.success) {
+	    try {
+	      const result = await trpc.profile.purchaseCoinTopUp.mutate();
+      setHeartPurchaseLimitStatus({
+        purchasesToday: result.purchasesToday,
+        maxPurchasesPerDay: result.maxPurchasesPerDay,
+        limitResetTs: result.limitResetTs,
+      });
+	      if (!result.success) {
         if (result.reason?.toLowerCase().includes('daily limit')) {
           setCoinHeartLimitReached(true);
         }
@@ -2525,19 +2780,67 @@ export const GameApp = () => {
     return () => cancelAnimationFrame(frame);
   }, [activeScreen, selectedTile, busy, isGameOver, isComplete]);
 
-  if (loading || !profile || !inventory || !puzzle) {
-    return <div className="flex h-full items-center justify-center">Loading Decrypt...</div>;
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
+  if (bootstrapError || !profile || !inventory || !puzzle) {
+    return (
+      <div className="app-surface flex h-full items-center justify-center p-4">
+        <div className="app-surface-strong w-full max-w-[320px] rounded-2xl border app-border px-4 py-5 text-center">
+          <div className="app-text text-sm font-black uppercase tracking-[0.04em]">
+            Decrypt unavailable
+          </div>
+          <p className="app-text-muted mt-2 text-sm font-semibold">
+            {bootstrapError ?? 'Unable to load the current challenge right now.'}
+          </p>
+          <button
+            type="button"
+            data-testid="bootstrap-retry"
+            className="btn-3d btn-primary mt-4 rounded-xl px-4 py-2 text-sm font-black uppercase"
+            onClick={() => setBootstrapAttempt((previous) => previous + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const mistakesMade = Math.max(0, puzzle.heartsMax - heartsRemaining);
+  const protectedMistakeIndex =
+    isShieldActive && mistakesMade < puzzle.heartsMax ? mistakesMade : null;
   const isInlineMode = webViewMode === 'inline';
   const buyMax = buyDialog ? maxPurchasableQuantity(buyDialog.item) : 0;
   const buyDialogUnitPrice = buyDialog
     ? getCurrentPowerupUnitPrice(buyDialog.item, puzzle)
     : 0;
   const buyDialogRemainingLetters = getCurrentRemainingLetters(puzzle);
+  const buyDialogPowerupValidity = buyDialog
+    ? getPowerupValidity(buyDialog.item)
+    : { valid: true, reason: null };
   const hasQueuedGuesses = queuedGuessCount > 0;
   const guessBusy = guessInFlight || hasQueuedGuesses;
+  const fastSolveThresholdSeconds =
+    typeof puzzle.targetTimeSeconds === 'number' && puzzle.targetTimeSeconds > 0
+      ? Math.round(puzzle.targetTimeSeconds)
+      : null;
+  const bonusTimerRemainingMs =
+    fastSolveThresholdSeconds !== null && challengeStartTs !== null
+      ? Math.max(
+          0,
+          challengeStartTs + fastSolveThresholdSeconds * 1000 - headerNowTs
+        )
+      : 0;
+  const bonusTimerSecondsLeft = Math.ceil(bonusTimerRemainingMs / 1000);
+  const showBonusTimer =
+    fastSolveThresholdSeconds !== null &&
+    challengeStartTs !== null &&
+    bonusTimerRemainingMs > 0 &&
+    isChallengeScreen &&
+    !isComplete &&
+    !isGameOver;
+  const bonusTimerCountdownLabel = formatCountdown(bonusTimerRemainingMs);
   const deviceTier: DeviceTier =
     viewportWidth >= 1024 ? 'desktop' : viewportWidth >= 640 ? 'tablet' : 'mobile';
   const inlineTight = viewportWidth < 360;
@@ -2594,23 +2897,29 @@ export const GameApp = () => {
   const punctuationTileMinWidthClass = isInlineMode ? 'min-w-[2px]' : 'min-w-[4px]';
   const offerPromotionLabel = featuredOffer ? getOfferPromotionLabel(featuredOffer.sku) : '';
   const featuredPerks = featuredOffer
-    ? [
-      { key: 'coins', icon: coinEmoji, value: featuredOffer.perks.coins },
-      { key: 'hearts', icon: heartEmoji, value: featuredOffer.perks.hearts },
-      { key: 'hammer', icon: powerupIcon.hammer, value: featuredOffer.perks.hammer },
-      { key: 'wand', icon: powerupIcon.wand, value: featuredOffer.perks.wand },
-      { key: 'shield', icon: powerupIcon.shield, value: featuredOffer.perks.shield },
-      { key: 'rocket', icon: powerupIcon.rocket, value: featuredOffer.perks.rocket },
-    ].filter((entry) => entry.value > 0)
+    ? ([
+      { key: 'coins', sprite: 'coin', value: featuredOffer.perks.coins },
+      { key: 'hearts', sprite: 'heart', value: featuredOffer.perks.hearts },
+      { key: 'hammer', powerup: 'hammer', value: featuredOffer.perks.hammer },
+      { key: 'wand', powerup: 'wand', value: featuredOffer.perks.wand },
+      { key: 'shield', powerup: 'shield', value: featuredOffer.perks.shield },
+      { key: 'rocket', powerup: 'rocket', value: featuredOffer.perks.rocket },
+    ] satisfies FeaturedPerk[]).filter((entry) => entry.value > 0)
     : [];
   const layoutTestId = isInlineMode ? 'layout-inline' : 'layout-expanded-stacked';
-  const isChallengeScreen = activeScreen === 'challenge';
   const isHomeScreen = activeScreen === 'home';
   const isShopScreen = activeScreen === 'shop';
   const isQuestScreen = activeScreen === 'quest';
   const isStatsScreen = activeScreen === 'stats';
   const isLeaderboardScreen = activeScreen === 'leaderboard';
+  const isHubScreen =
+    isHomeScreen ||
+    isShopScreen ||
+    isQuestScreen ||
+    isStatsScreen ||
+    isLeaderboardScreen;
   const showOutcomeOverlay = isChallengeScreen && (isGameOver || isComplete);
+  const showChallengeBackdrop = isChallengeScreen && !showOutcomeOverlay;
   const showSuccessOverlay = isComplete;
   const isDailyComplete = mode === 'daily' && isComplete;
   const showPaidDailyRetryCta = mode === 'daily' && isGameOver && requiresPaidRetry;
@@ -2684,26 +2993,33 @@ export const GameApp = () => {
       ? getVisibleMilestoneIds(questStatus.progress, claimedQuestIdSet)
       : new Set<string>();
   const inlinePromoClusterClass = inlineTight
-    ? 'h-[62px] w-[116px]'
+    ? '-ml-[28px] h-[104px] w-[168px]'
     : deviceTier === 'desktop'
-      ? 'h-[94px] w-[164px]'
+      ? '-ml-[36px] h-[152px] w-[240px]'
       : deviceTier === 'tablet'
-        ? 'h-[84px] w-[146px]'
-        : 'h-[76px] w-[128px]';
+        ? '-ml-[32px] h-[132px] w-[212px]'
+        : '-ml-[28px] h-[116px] w-[186px]';
   const inlineSnooClass = inlineTight
-    ? 'h-[52px] w-[52px]'
+    ? 'h-[104px] w-[104px]'
     : deviceTier === 'desktop'
-      ? 'h-[76px] w-[76px]'
+      ? 'h-[152px] w-[152px]'
       : deviceTier === 'tablet'
-        ? 'h-[66px] w-[66px]'
-        : 'h-[58px] w-[58px]';
+        ? 'h-[132px] w-[132px]'
+        : 'h-[116px] w-[116px]';
+  const inlineSnooDockClass = inlineTight
+    ? 'bottom-[-12px]'
+    : deviceTier === 'desktop'
+      ? 'bottom-[-16px]'
+      : deviceTier === 'tablet'
+        ? 'bottom-[-14px]'
+        : 'bottom-[-13px]';
   const inlineBundleDockClass = inlineTight
-    ? 'left-[34px] bottom-[1px]'
+    ? 'left-[60px] bottom-0'
     : deviceTier === 'desktop'
-      ? 'left-[54px] bottom-[3px]'
+      ? 'left-[96px] bottom-0'
       : deviceTier === 'tablet'
-        ? 'left-[46px] bottom-[2px]'
-        : 'left-[38px] bottom-[2px]';
+        ? 'left-[82px] bottom-0'
+        : 'left-[68px] bottom-0';
   const inlineBundleCardClass = inlineTight
     ? 'h-[78px] w-[74px] rounded-[11px] p-[3px]'
     : deviceTier === 'desktop'
@@ -2725,10 +3041,15 @@ export const GameApp = () => {
       : deviceTier === 'tablet'
         ? 'text-[14px]'
         : 'text-[13px]';
-  const puzzleTokenLines = isInlineMode
-    ? chunkPuzzleTokensByWordLimit(tokens, inlineMaxWordsPerLine)
-    : [tokens];
-  const activeLeaderboardRank =
+	  const puzzleTokenLines = isInlineMode
+	    ? chunkPuzzleTokensByWordLimit(tokens, inlineMaxWordsPerLine)
+	    : [tokens];
+  const puzzleNavigableTileRows = getPuzzleNavigableTileRows(
+    puzzleTokenLines,
+    maxWordTileColumns
+  );
+  const puzzleNavigableTileIndices = puzzleNavigableTileRows.flatMap((row) => row);
+	  const activeLeaderboardRank =
     leaderboardTab === 'daily'
       ? rankSummary?.dailyRank ?? null
       : rankSummary?.endlessRank ?? null;
@@ -2786,13 +3107,20 @@ export const GameApp = () => {
   };
 
   const handleTileSelection = (tileIndex: number) => {
-    setSelectedTile(tileIndex);
+    const currentPuzzle = puzzleRef.current ?? puzzle;
+    const nextTileIndex = isGuessableTileAtIndex(currentPuzzle, tileIndex)
+      ? tileIndex
+      : findNextGuessableTileIndex(currentPuzzle, tileIndex);
+    if (nextTileIndex === null) {
+      return;
+    }
+    setSelectedTile(nextTileIndex);
     focusInlineInputProxy();
   };
 
-  const handleInlineInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget.value.toUpperCase();
-    const lettersOnly = input.replace(/[^A-Z]/g, '');
+	  const handleInlineInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+	    const input = event.currentTarget.value.toUpperCase();
+	    const lettersOnly = input.replace(/[^A-Z]/g, '');
     const letter = lettersOnly.charAt(lettersOnly.length - 1);
     event.currentTarget.value = '';
     if (!letter || busy || isGameOver || isComplete) {
@@ -2806,11 +3134,83 @@ export const GameApp = () => {
     const tile = currentPuzzle.tiles[tileIndex];
     if (!tile || !tile.isLetter || tile.isLocked || tile.displayChar !== '_') {
       return;
+	    }
+	    enqueueGuess(letter, tileIndex);
+	  };
+
+  const moveSelectedTileByArrow = (key: string): boolean => {
+    if (
+      !['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(key) ||
+      busy ||
+      isGameOver ||
+      isComplete ||
+      puzzleNavigableTileIndices.length === 0
+    ) {
+      return false;
     }
-    enqueueGuess(letter, tileIndex);
+
+    if (selectedTile === null) {
+      setSelectedTile(
+        key === 'ArrowLeft' || key === 'ArrowUp'
+          ? (puzzleNavigableTileIndices[puzzleNavigableTileIndices.length - 1] ?? null)
+          : (puzzleNavigableTileIndices[0] ?? null)
+      );
+      focusInlineInputProxy();
+      return true;
+    }
+
+    const currentIndex = puzzleNavigableTileIndices.indexOf(selectedTile);
+    if (currentIndex < 0) {
+      const fallbackTileIndex = findAdjacentGuessableTileIndex(
+        puzzleRef.current ?? puzzle,
+        selectedTile,
+        key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1
+      );
+      setSelectedTile(
+        fallbackTileIndex ??
+          (key === 'ArrowLeft' || key === 'ArrowUp'
+            ? (puzzleNavigableTileIndices[puzzleNavigableTileIndices.length - 1] ?? null)
+            : (puzzleNavigableTileIndices[0] ?? null))
+      );
+      focusInlineInputProxy();
+      return true;
+    }
+
+    let nextTileIndex: number | undefined;
+    if (key === 'ArrowRight' || key === 'ArrowLeft') {
+      nextTileIndex =
+        puzzleNavigableTileIndices[currentIndex + (key === 'ArrowRight' ? 1 : -1)];
+    } else {
+      const currentRowIndex = puzzleNavigableTileRows.findIndex((row) =>
+        row.includes(selectedTile)
+      );
+      const currentRow = puzzleNavigableTileRows[currentRowIndex];
+      const targetRow =
+        puzzleNavigableTileRows[currentRowIndex + (key === 'ArrowDown' ? 1 : -1)];
+      if (!currentRow || !targetRow) {
+        return true;
+      }
+      const columnIndex = currentRow.indexOf(selectedTile);
+      nextTileIndex =
+        targetRow[Math.min(Math.max(columnIndex, 0), targetRow.length - 1)];
+    }
+
+    if (nextTileIndex === undefined) {
+      return true;
+    }
+    setSelectedTile(nextTileIndex);
+    focusInlineInputProxy();
+    return true;
   };
 
-  const handleButtonPointerDownCapture = (
+  const handleInlineInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!moveSelectedTileByArrow(event.key)) {
+      return;
+    }
+    event.preventDefault();
+  };
+
+	  const handleButtonPointerDownCapture = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     const target = event.target;
@@ -2880,7 +3280,11 @@ export const GameApp = () => {
       onKeyDownCapture={handleButtonKeyDownCapture}
       className={cn(
         'theme-app relative h-full w-full overflow-hidden',
-        isChallengeScreen ? 'challenge-backdrop' : '',
+        showChallengeBackdrop ? 'challenge-backdrop' : '',
+        showChallengeBackdrop ? challengeBackgroundClass : '',
+        isHubScreen ? 'home-backdrop' : '',
+        isHubScreen ? 'hub-live' : '',
+        isHomeScreen ? 'home-live' : '',
         showOutcomeOverlay ? 'result-backdrop' : '',
         showOutcomeOverlay ? 'app-surface-subtle' : ''
       )}
@@ -2897,45 +3301,66 @@ export const GameApp = () => {
           data-testid="game-frame"
           data-webview-mode={webViewMode}
         >
-        <div className="flex h-full w-full min-w-0 flex-col overflow-hidden" data-testid={layoutTestId}>
+        <div className="app-fade-in flex h-full w-full min-w-0 flex-col overflow-hidden" data-testid={layoutTestId}>
           {!showOutcomeOverlay && (
             <header className="px-2 pb-[6px] pt-2">
-	              <div className="flex items-center justify-between">
-	                <div className="app-text text-[clamp(14px,4.2vw,16px)] font-bold">{coinEmoji} {profile.coins}</div>
+		              <div className="flex items-center justify-between">
+		                <div className="app-text flex items-center gap-1.5 text-[clamp(14px,4.2vw,16px)] font-bold">
+                      <HudSprite icon="coin" decorative className="h-[18px] w-[18px]" />
+                      <span>{profile.coins}</span>
+                    </div>
 
 	                <div className="text-center">
                   {isChallengeScreen ? (
                     <>
-                      <div className="app-text-muted text-[10px] font-bold uppercase">Mistakes</div>
-                      <div className="flex gap-1" data-testid="mistake-indicator">
-                        {[0, 1, 2].map((index) => (
-                          <span
-                            key={index}
-                            className="app-text flex h-[clamp(20px,6vw,24px)] w-[clamp(20px,6vw,24px)] items-center justify-center rounded-full border app-border-strong text-[clamp(9px,2.3vw,11px)]"
-                          >
-                            {index < mistakesMade ? crossMarkEmoji : ''}
-                          </span>
-                        ))}
-                      </div>
+	                    <div className="app-text-muted text-[10px] font-bold uppercase">Mistakes</div>
+	                      <div className="flex gap-1" data-testid="mistake-indicator">
+	                        {Array.from({ length: puzzle.heartsMax }, (_value, index) => (
+	                          <span
+	                            key={index}
+	                            className="app-text flex h-[clamp(20px,6vw,24px)] w-[clamp(20px,6vw,24px)] items-center justify-center rounded-full border app-border-strong text-[clamp(9px,2.3vw,11px)]"
+	                          >
+	                            {index < mistakesMade ? (
+                                  crossMarkEmoji
+                                ) : index === protectedMistakeIndex ? (
+                                  <PowerupSprite
+                                    powerup="shield"
+                                    decorative
+                                    testId="mistake-shield-indicator"
+                                    className="h-[70%] w-[70%]"
+                                  />
+                                ) : (
+                                  ''
+                                )}
+	                          </span>
+	                        ))}
+	                      </div>
                     </>
                   ) : (
                     <>
                       <div className="app-text-muted text-[10px] font-bold uppercase">Lives</div>
-                      <div className="flex justify-center gap-1" data-testid="life-indicator">
-                        {hasInfiniteHearts ? (
-                          <span className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none">
-                            {infiniteHeartsIcon}
-                          </span>
-                        ) : (
-                          [0, 1, 2].map((index) => (
-                            <span
-                              key={index}
-                              className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none"
-                            >
-                              {index < currentLives ? heartEmoji : emptyHeartGlyph}
-                            </span>
-                          ))
-                        )}
+	                      <div className="flex justify-center gap-1" data-testid="life-indicator">
+	                        {hasInfiniteHearts ? (
+	                          <span className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center text-[clamp(14px,3.6vw,18px)] leading-none">
+	                            {infiniteHeartsIcon}
+	                          </span>
+	                        ) : (
+	                          [0, 1, 2].map((index) => (
+	                            <span
+	                              key={index}
+	                              className="flex h-[clamp(24px,7vw,30px)] w-[clamp(24px,7vw,30px)] items-center justify-center"
+	                            >
+	                              <HudSprite
+                                  icon="heart"
+                                  decorative
+                                  className={cn(
+                                    'h-[clamp(18px,5.2vw,22px)] w-[clamp(18px,5.2vw,22px)]',
+                                    index < currentLives ? '' : 'grayscale brightness-75 opacity-35'
+                                  )}
+                                />
+	                            </span>
+	                          ))
+	                        )}
                       </div>
                       <div className="app-text-muted mt-[2px] text-[9px] font-bold uppercase">{lifeStatusText}</div>
                     </>
@@ -2958,7 +3383,7 @@ export const GameApp = () => {
                     aria-label="Settings"
                     title="Settings"
                   >
-                    <SettingsIcon className={headerIconClass} />
+                    <UiSprite icon="settings" decorative className={headerIconClass} />
                   </button>
                   <button
                     data-testid="info-button"
@@ -2985,14 +3410,37 @@ export const GameApp = () => {
 
           {isChallengeScreen && !showOutcomeOverlay && (
             <div className="app-surface-subtle app-text border-y app-border px-3 py-2">
-	              <div className="flex items-center justify-between gap-2 text-[14px] font-bold uppercase sm:text-[15px] md:text-[16px]">
-	                <span>Plays: {challengeMetrics.plays.toLocaleString()}</span>
-	                <span className="text-[8px] sm:text-[15px] md:text-[16px]">
-	                  {challengeTypeLabel} lines ({difficultyLabel})
-	                </span>
-	                <span>Win: {challengeMetrics.winRatePct}%</span>
-	              </div>
+		              <div className="flex items-center justify-between gap-2 text-[14px] font-bold uppercase sm:text-[15px] md:text-[16px]">
+		                <span>Plays: {challengeMetrics.plays.toLocaleString()}</span>
+		                <span className="text-[8px] sm:text-[15px] md:text-[16px]">
+		                  {challengeTypeLabel} lines ({difficultyLabel})
+		                </span>
+		                <span>Win: {challengeMetrics.winRatePct}%</span>
+		              </div>
             </div>
+          )}
+
+          {showBonusTimer && (
+            <aside
+              data-testid="bonus-timer"
+              aria-label={`Bonus Timer, ${bonusTimerSecondsLeft} seconds left`}
+              className={cn(
+                'pointer-events-none absolute right-2 z-30 rounded-md border border-amber-300/70 bg-zinc-950/70 px-2 py-1 text-right shadow-[0_8px_18px_rgba(0,0,0,0.28)] backdrop-blur-sm',
+                isInlineMode
+                  ? 'top-[104px] w-[82px]'
+                  : 'top-[112px] w-[96px]'
+              )}
+            >
+              <div className="text-[8px] font-black uppercase leading-none tracking-[0.04em] text-amber-200">
+                Bonus Timer
+              </div>
+              <div
+                data-testid="bonus-timer-countdown"
+                className="mt-0.5 font-mono text-[16px] font-black leading-none text-white"
+              >
+                {bonusTimerCountdownLabel}
+              </div>
+            </aside>
           )}
 
           {isChallengeScreen && !showOutcomeOverlay && (
@@ -3060,12 +3508,12 @@ export const GameApp = () => {
                 <div data-testid="inline-promo-cluster" className={`relative justify-self-start ${inlinePromoClusterClass}`}>
                   <img
                     data-testid="snoo-presenter"
-                    src="/snoo.png"
+                    src="/char.webp"
                     alt="Snoo"
                     loading="eager"
                     decoding="async"
                     fetchPriority="high"
-                    className={`pointer-events-none absolute bottom-0 left-0 z-10 object-contain ${inlineSnooClass}`}
+                    className={`pointer-events-none absolute left-[-12px] z-10 object-contain ${inlineSnooDockClass} ${inlineSnooClass}`}
                   />
 	                  {featuredOffer && (
 	                    <section data-testid="inline-bundle-card" className={`absolute z-20 ${inlineBundleDockClass}`}>
@@ -3078,7 +3526,7 @@ export const GameApp = () => {
                         }}
                         disabled={offerBusy}
                         aria-label={`Buy ${featuredOffer.displayName}`}
-	                        title={`${offerPromotionLabel}: ${coinEmoji} x${featuredOffer.perks.coins}, ${powerupIcon.hammer} x${featuredOffer.perks.hammer}, ${powerupIcon.shield} x${featuredOffer.perks.shield}`}
+	                        title={`${offerPromotionLabel}: ${coinEmoji} x${featuredOffer.perks.coins}, ${powerupLabel.hammer} x${featuredOffer.perks.hammer}, ${powerupLabel.shield} x${featuredOffer.perks.shield}`}
 	                      >
 	                        <div className="flex h-full w-full flex-col justify-center">
 	                          <div className="mb-1 flex shrink-0 flex-col">
@@ -3095,11 +3543,23 @@ export const GameApp = () => {
 	                            </span>
 	                          </div>
 	                          <div className={`app-text flex min-h-0 flex-1 flex-col justify-center space-y-0.5 overflow-hidden ${bundleRewardRowTextClass}`}>
-	                            {featuredPerks.slice(0, 3).map((perk) => (
-	                              <div key={perk.key} className="flex items-center font-black leading-none">
-	                                <span>{perk.icon}</span>
-	                                <span className={`ml-1 ${bundleRewardValueTextClass}`}>x{perk.value}</span>
-	                              </div>
+		                            {featuredPerks.slice(0, 3).map((perk) => (
+		                              <div key={perk.key} className="flex items-center font-black leading-none">
+		                                {'powerup' in perk ? (
+	                                      <PowerupSprite
+	                                        powerup={perk.powerup}
+	                                        decorative
+	                                        className="h-[16px] w-[16px]"
+	                                      />
+	                                    ) : (
+	                                      <HudSprite
+                                          icon={perk.sprite}
+                                          decorative
+                                          className="h-[16px] w-[16px]"
+                                        />
+	                                    )}
+		                                <span className={`ml-1 ${bundleRewardValueTextClass}`}>x{perk.value}</span>
+		                              </div>
 	                            ))}
 	                          </div>
 	                        </div>
@@ -3126,8 +3586,14 @@ export const GameApp = () => {
                               onClick={() => handleQuickPowerupTap(item)}
                               disabled={busy || guessBusy || isGameOver || isComplete}
                               title={`${powerupLabel[item]} (${count})`}
+                              aria-label={`${powerupLabel[item]} (${count})`}
                             >
-                              {powerupIcon[item]}
+                              <PowerupSprite
+                                powerup={item}
+                                decorative
+                                testId={`powerup-icon-${item}`}
+                                className="h-[68%] w-[68%]"
+                              />
                             </button>
                             <span
                               data-testid={`powerup-count-${item}`}
@@ -3141,6 +3607,7 @@ export const GameApp = () => {
                               disabled={busy || guessBusy || isGameOver || isComplete}
                               onClick={() => openBuyDialog(item)}
                               title={`Buy ${powerupLabel[item]}`}
+                              aria-label={`Buy ${powerupLabel[item]}`}
                             >
                               +
                             </button>
@@ -3173,7 +3640,6 @@ export const GameApp = () => {
               endlessActiveCatalogVersion={
                 endlessCatalogStatus?.activeCatalogVersion ?? null
               }
-              hasClaimableQuest={hasClaimableQuest}
             />
           )}
 
@@ -3181,8 +3647,10 @@ export const GameApp = () => {
             <Suspense fallback={null}>
               <LazyShopScreen
                 shopProducts={shopProducts}
+                shopError={shopError}
                 offerBusy={offerBusy}
                 onPurchase={(sku) => void handleProductPurchase(sku)}
+                onRetry={() => void loadFeaturedOffer()}
               />
             </Suspense>
           )}
@@ -3268,10 +3736,11 @@ export const GameApp = () => {
           autoCorrect="off"
           autoComplete="off"
           spellCheck={false}
-          className="pointer-events-none absolute -left-[9999px] top-0 h-px w-px opacity-0"
-          onChange={handleInlineInputChange}
-          disabled={busy || isGameOver || isComplete}
-        />
+	          className="pointer-events-none absolute -left-[9999px] top-0 h-px w-px opacity-0"
+	          onChange={handleInlineInputChange}
+	          onKeyDown={handleInlineInputKeyDown}
+	          disabled={busy || isGameOver || isComplete}
+	        />
       )}
 
       {isHelpOpen && (
@@ -3303,6 +3772,7 @@ export const GameApp = () => {
           unitPrice={buyDialogUnitPrice}
           remainingLetters={buyDialogRemainingLetters}
           difficultyLabel={formatDifficultyLabel(puzzle?.difficulty)}
+          powerupValidity={buyDialogPowerupValidity}
           buyChips={buyChips}
           onSelectQuantity={(quantity) =>
             setBuyDialog((previous) =>
@@ -3326,6 +3796,12 @@ export const GameApp = () => {
           coins={profile.coins}
           busy={heartPurchaseBusy}
           limitReached={coinHeartLimitReached}
+          purchasesToday={heartPurchaseLimitStatus?.purchasesToday ?? 0}
+          maxPurchasesPerDay={heartPurchaseLimitStatus?.maxPurchasesPerDay ?? 2}
+          limitResetTs={
+            heartPurchaseLimitStatus?.limitResetTs ??
+            Date.now() + 24 * 60 * 60 * 1000
+          }
           onRefill={() => void handleCoinHeartRefill()}
           onTopUp={() => void handleCoinHeartTopUp()}
           onCancel={() => setHeartPurchaseDialogOpen(false)}

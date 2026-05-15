@@ -13,7 +13,12 @@ import {
   keyUserProfile,
 } from './keys';
 import { formatDateKey } from './serde';
-import { defaultUserProfile, getInventory, getUserProfile } from './state';
+import {
+  defaultUserProfile,
+  getInventory,
+  getUserProfile,
+  trackUserDailyDataDate,
+} from './state';
 import { updateQuestProgressOnCoinSpend } from './quests';
 import { normalizeHearts } from './hearts';
 import { getSessionState } from './session';
@@ -188,17 +193,40 @@ const buildProfileSnapshot = (params: {
     hearts: params.hearts,
     lastHeartRefillTs: params.lastHeartRefillTs,
     infiniteHeartsExpiryTs: params.infiniteHeartsExpiryTs,
-  });
+	  });
+
+const nextUtcMidnightTs = (now: Date): number =>
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+
+export const getCoinHeartPurchaseStatus = async (params: {
+  userId: string;
+}): Promise<{
+  purchasesToday: number;
+  maxPurchasesPerDay: number;
+  limitResetTs: number;
+}> => {
+  const now = new Date();
+  const dateKey = formatDateKey(now);
+  const counterRaw = await redis.get(keyUserCoinHeartPurchases(params.userId, dateKey));
+  return {
+    purchasesToday: Math.max(0, parseNumber(counterRaw ?? undefined, 0)),
+    maxPurchasesPerDay: maxCoinHeartPurchasesPerDay,
+    limitResetTs: nextUtcMidnightTs(now),
+  };
+};
 
 const purchaseCoinHeart = async (params: {
   userId: string;
   cost: number;
   purchaseType: 'refill' | 'topup';
-}): Promise<{
-  success: boolean;
-  reason: string | null;
-  profile: UserProfile;
-}> => {
+	}): Promise<{
+	  success: boolean;
+	  reason: string | null;
+	  profile: UserProfile;
+    purchasesToday: number;
+    maxPurchasesPerDay: number;
+    limitResetTs: number;
+	}> => {
   const profileKey = keyUserProfile(params.userId);
   const dateKey = formatDateKey(new Date());
   const counterKey = keyUserCoinHeartPurchases(params.userId, dateKey);
@@ -230,32 +258,38 @@ const purchaseCoinHeart = async (params: {
     });
     const dailyPurchases = parseNumber(counterRaw ?? undefined, 0);
 
-    if (profile.hearts >= heartsPerRun) {
-      await tx.unwatch();
-      return {
-        success: false,
-        reason: 'Hearts are already full.',
-        profile: await getUserProfile(params.userId),
-      };
-    }
+	    if (profile.hearts >= heartsPerRun) {
+	      await tx.unwatch();
+        const status = await getCoinHeartPurchaseStatus({ userId: params.userId });
+	      return {
+	        success: false,
+	        reason: 'Hearts are already full.',
+	        profile: await getUserProfile(params.userId),
+          ...status,
+	      };
+	    }
 
-    if (profile.coins < params.cost) {
-      await tx.unwatch();
-      return {
-        success: false,
-        reason: 'Not enough coins.',
-        profile: await getUserProfile(params.userId),
-      };
-    }
+	    if (profile.coins < params.cost) {
+	      await tx.unwatch();
+        const status = await getCoinHeartPurchaseStatus({ userId: params.userId });
+	      return {
+	        success: false,
+	        reason: 'Not enough coins.',
+	        profile: await getUserProfile(params.userId),
+          ...status,
+	      };
+	    }
 
-    if (dailyPurchases >= maxCoinHeartPurchasesPerDay) {
-      await tx.unwatch();
-      return {
-        success: false,
-        reason: `Daily limit reached (max ${maxCoinHeartPurchasesPerDay} coin heart purchases per day).`,
-        profile: await getUserProfile(params.userId),
-      };
-    }
+	    if (dailyPurchases >= maxCoinHeartPurchasesPerDay) {
+	      await tx.unwatch();
+        const status = await getCoinHeartPurchaseStatus({ userId: params.userId });
+	      return {
+	        success: false,
+	        reason: `Daily limit reached (max ${maxCoinHeartPurchasesPerDay} coin heart purchases per day).`,
+	        profile: await getUserProfile(params.userId),
+          ...status,
+	      };
+	    }
 
     const nextHearts =
       params.purchaseType === 'refill'
@@ -276,32 +310,40 @@ const purchaseCoinHeart = async (params: {
       continue;
     }
 
+    await trackUserDailyDataDate(params.userId, dateKey);
     await updateQuestProgressOnCoinSpend({
       userId: params.userId,
       amount: params.cost,
     });
 
-    return {
-      success: true,
-      reason: null,
-      profile: await getUserProfile(params.userId),
-    };
-  }
+      const status = await getCoinHeartPurchaseStatus({ userId: params.userId });
+	    return {
+	      success: true,
+	      reason: null,
+	      profile: await getUserProfile(params.userId),
+        ...status,
+	    };
+	  }
 
-  return {
-    success: false,
-    reason: 'Purchase conflicted. Please try again.',
-    profile: await getUserProfile(params.userId),
-  };
-};
+  const status = await getCoinHeartPurchaseStatus({ userId: params.userId });
+	  return {
+	    success: false,
+	    reason: 'Purchase conflicted. Please try again.',
+	    profile: await getUserProfile(params.userId),
+      ...status,
+	  };
+	};
 
 export const purchaseCoinHeartRefill = async (params: {
   userId: string;
-}): Promise<{
-  success: boolean;
-  reason: string | null;
-  profile: UserProfile;
-}> =>
+	}): Promise<{
+	  success: boolean;
+	  reason: string | null;
+	  profile: UserProfile;
+    purchasesToday: number;
+    maxPurchasesPerDay: number;
+    limitResetTs: number;
+	}> =>
   await purchaseCoinHeart({
     userId: params.userId,
     cost: coinHeartRefillCost,
@@ -310,11 +352,14 @@ export const purchaseCoinHeartRefill = async (params: {
 
 export const purchaseCoinHeartTopUp = async (params: {
   userId: string;
-}): Promise<{
-  success: boolean;
-  reason: string | null;
-  profile: UserProfile;
-}> =>
+	}): Promise<{
+	  success: boolean;
+	  reason: string | null;
+	  profile: UserProfile;
+    purchasesToday: number;
+    maxPurchasesPerDay: number;
+    limitResetTs: number;
+	}> =>
   await purchaseCoinHeart({
     userId: params.userId,
     cost: coinHeartTopUpCost,

@@ -1,10 +1,10 @@
-import { createTRPCClient, httpBatchStreamLink } from '@trpc/client';
+import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import type { AppRouter } from '../server/trpc';
 import { transformer } from '../shared/transformer';
 
 export const trpc = createTRPCClient<AppRouter>({
   links: [
-    httpBatchStreamLink({
+    httpBatchLink({
       url: '/api/trpc',
       transformer,
     }),

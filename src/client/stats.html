@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0"
     />
-    <link rel="preload" as="image" href="/background.webp" type="image/webp" fetchpriority="high" />
-    <link rel="preload" as="image" href="/snoo.png" fetchpriority="high" />
+    <link rel="preload" as="image" href="/backgrounds/home.webp" type="image/webp" fetchpriority="high" />
+    <link rel="preload" as="image" href="/loading_glass.png" fetchpriority="high" />
+    <link rel="preload" as="image" href="/char.webp" type="image/webp" fetchpriority="high" />
     <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
     <link rel="preload" as="audio" href="/sounds/buttonClick.wav" type="audio/wav" />
     <link rel="preload" as="audio" href="/sounds/correct.wav" type="audio/wav" />
@@ -30,14 +31,10 @@
         position: fixed;
         inset: 0;
         background:
-          linear-gradient(rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.44)),
-          url('/background.jpg') center / cover no-repeat;
-        background:
-          linear-gradient(rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.44)),
-          image-set(
-            url('/background.webp') type('image/webp'),
-            url('/background.jpg') type('image/jpeg')
-          ) center / cover no-repeat;
+          linear-gradient(rgba(8, 12, 16, 0.26), rgba(10, 18, 11, 0.44)),
+          radial-gradient(circle at 50% 32%, rgba(255, 169, 77, 0.09), transparent 42%),
+          radial-gradient(circle at 50% 58%, rgba(150, 255, 173, 0.1), rgba(7, 12, 8, 0.16)),
+          url('/backgrounds/home.webp') center / cover no-repeat;
       }
 
       #root {
@@ -45,11 +42,68 @@
         z-index: 1;
         min-height: 100%;
       }
+
+      .boot-loading-shell {
+        display: flex;
+        min-height: 100%;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .boot-loading-glass {
+        width: 88px;
+        height: 88px;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.28));
+        transform-origin: 62% 64%;
+        animation: boot-loading-float 2.3s linear infinite;
+      }
+
+      @keyframes boot-loading-float {
+        0% {
+          transform: translate3d(0px, 0px, 0) rotate(-4deg) scale(1);
+        }
+        12.5% {
+          transform: translate3d(6px, -5px, 0) rotate(-2deg) scale(1.01);
+        }
+        25% {
+          transform: translate3d(12px, 0px, 0) rotate(0deg) scale(1.015);
+        }
+        37.5% {
+          transform: translate3d(6px, 5px, 0) rotate(1deg) scale(1.01);
+        }
+        50% {
+          transform: translate3d(0px, 0px, 0) rotate(2deg) scale(1);
+        }
+        62.5% {
+          transform: translate3d(-6px, -5px, 0) rotate(1deg) scale(1.01);
+        }
+        75% {
+          transform: translate3d(-12px, 0px, 0) rotate(0deg) scale(1.015);
+        }
+        87.5% {
+          transform: translate3d(-6px, 5px, 0) rotate(-2deg) scale(1.01);
+        }
+        100% {
+          transform: translate3d(0px, 0px, 0) rotate(-4deg) scale(1);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-loading-glass {
+          animation: none;
+        }
+      }
     </style>
     <title>devvit</title>
   </head>
   <body class="h-full">
-    <div id="root" data-initial-screen="stats" class="h-full"></div>
+    <div id="root" data-initial-screen="stats" class="h-full">
+      <div class="boot-loading-shell" aria-live="polite">
+        <img class="boot-loading-glass" src="/loading_glass.png" alt="" />
+      </div>
+    </div>
     <script type="module" src="game.tsx"></script>
   </body>
 </html>

@@ -22,7 +22,6 @@ import {
 } from './content.ts';
 import { validatePuzzle } from './validation.ts';
 import { getRecentUsedSignatureEntries } from './puzzle-store.ts';
-import { getBundledEndlessReservationOwner } from './endless-reservations.ts';
 
 /**
  * Result of Phase 1 validation (text-only)
@@ -126,7 +125,7 @@ export const createValidationPipeline = (
 
     duplicate: async (
       text: string,
-      levelId?: string
+      _levelId?: string
     ): Promise<DuplicateCheckResult> => {
       const normalizedSignature = normalizeContent(text);
       const tokenSignature = contentTokenSignature(text);
@@ -155,19 +154,6 @@ export const createValidationPipeline = (
           normalizedSignature,
           tokenSignature,
         };
-      }
-
-      // Check endless reservations
-      if (levelId) {
-        const endlessReservationOwner = getBundledEndlessReservationOwner(normalizedSignature);
-        if (endlessReservationOwner && endlessReservationOwner !== levelId) {
-          return {
-            duplicate: true,
-            reason: `reserved by endless level ${endlessReservationOwner}`,
-            normalizedSignature,
-            tokenSignature,
-          };
-        }
       }
 
       return {

@@ -1,11 +1,5 @@
 import { navItemClass } from '../app/ui';
-import {
-  HomeIcon,
-  LeaderboardIcon,
-  QuestIcon,
-  ShopIcon,
-  StatsIcon,
-} from './Icons';
+import { UiSprite } from './UiSprite';
 
 type BottomNavProps = {
   isShopScreen: boolean;
@@ -34,7 +28,10 @@ export const BottomNav = ({
   onOpenStats,
   onOpenLeaderboard,
 }: BottomNavProps) => (
-  <section className="app-surface border-t app-border px-2 py-2" data-testid="bottom-nav">
+  <section
+    className="bottom-nav-shell app-surface border-t app-border px-2 py-2"
+    data-testid="bottom-nav"
+  >
     <div className="flex items-center justify-center gap-5">
       <button
         data-testid="nav-shop"
@@ -43,7 +40,7 @@ export const BottomNav = ({
         aria-label="Shop"
         title="Shop"
       >
-        <ShopIcon className="h-[30px] w-[30px]" />
+        <UiSprite icon="shop" decorative className="h-[30px] w-[30px]" />
       </button>
       <button
         data-testid="nav-home"
@@ -52,7 +49,7 @@ export const BottomNav = ({
         aria-label="Home"
         title="Home"
       >
-        <HomeIcon className="h-[30px] w-[30px]" />
+        <UiSprite icon="home" decorative className="h-[30px] w-[30px]" />
       </button>
       <button
         data-testid="nav-quest"
@@ -61,9 +58,12 @@ export const BottomNav = ({
         aria-label="Quests"
         title="Quests"
       >
-        <QuestIcon className="h-[30px] w-[30px]" />
+        <UiSprite icon="quest" decorative className="h-[30px] w-[30px]" />
         {hasClaimableQuest && (
-          <span className="absolute right-[6px] top-[6px] h-2 w-2 rounded-full bg-red-500" />
+          <span className="pointer-events-none absolute -right-[2px] -top-[2px] flex h-3 w-3 items-center justify-center">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full border border-white/70 bg-red-500"></span>
+          </span>
         )}
       </button>
       <button
@@ -73,7 +73,7 @@ export const BottomNav = ({
         aria-label="Stats"
         title="Stats"
       >
-        <StatsIcon className="h-[30px] w-[30px]" />
+        <UiSprite icon="stats" decorative className="h-[30px] w-[30px]" />
       </button>
       <button
         data-testid="nav-leaderboard"
@@ -82,7 +82,7 @@ export const BottomNav = ({
         aria-label="Leaderboard"
         title="Leaderboard"
       >
-        <LeaderboardIcon className="h-[30px] w-[30px]" />
+        <UiSprite icon="leaderboard" decorative className="h-[30px] w-[30px]" />
       </button>
     </div>
   </section>

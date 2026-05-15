@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   createValidationPipelineMock,
   generatePuzzlePhraseBatchMock,
+  getRecentUsedSignatureEntriesMock,
   getDecryptSettingsMock,
+  clearUsedSignatureMock,
   computeAdaptiveHardnessBoundsMock,
   redisDelMock,
   redisGetMock,
@@ -14,10 +16,13 @@ const {
   redisZCardMock,
   redisZRangeMock,
   redisZRemMock,
+  reserveUsedSignatureMock,
 } = vi.hoisted(() => ({
   createValidationPipelineMock: vi.fn(),
   generatePuzzlePhraseBatchMock: vi.fn(),
+  getRecentUsedSignatureEntriesMock: vi.fn(),
   getDecryptSettingsMock: vi.fn(),
+  clearUsedSignatureMock: vi.fn(),
   computeAdaptiveHardnessBoundsMock: vi.fn(),
   redisDelMock: vi.fn(),
   redisGetMock: vi.fn(),
@@ -28,6 +33,7 @@ const {
   redisZCardMock: vi.fn(),
   redisZRangeMock: vi.fn(),
   redisZRemMock: vi.fn(),
+  reserveUsedSignatureMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -61,6 +67,12 @@ vi.mock('./validation-pipeline', () => ({
   createValidationPipeline: createValidationPipelineMock,
 }));
 
+vi.mock('./puzzle-store', () => ({
+  clearUsedSignature: clearUsedSignatureMock,
+  getRecentUsedSignatureEntries: getRecentUsedSignatureEntriesMock,
+  reserveUsedSignature: reserveUsedSignatureMock,
+}));
+
 import {
   ensureAICandidatePoolSelection,
   takeAICandidateBatch,
@@ -73,6 +85,8 @@ beforeEach(() => {
     contentSafetyMode: 'strict',
   });
   computeAdaptiveHardnessBoundsMock.mockResolvedValue(undefined);
+  getRecentUsedSignatureEntriesMock.mockResolvedValue([]);
+  clearUsedSignatureMock.mockResolvedValue(undefined);
   createValidationPipelineMock.mockReturnValue({
     phase1: () => ({ valid: true, reasons: [] }),
     duplicate: async () => ({
@@ -90,12 +104,15 @@ beforeEach(() => {
   redisDelMock.mockResolvedValue(undefined);
   redisGetMock.mockResolvedValue(null);
   redisMGetMock.mockResolvedValue([]);
+  reserveUsedSignatureMock.mockResolvedValue(true);
 });
 
 afterEach(() => {
   createValidationPipelineMock.mockReset();
   generatePuzzlePhraseBatchMock.mockReset();
+  getRecentUsedSignatureEntriesMock.mockReset();
   getDecryptSettingsMock.mockReset();
+  clearUsedSignatureMock.mockReset();
   computeAdaptiveHardnessBoundsMock.mockReset();
   redisDelMock.mockReset();
   redisGetMock.mockReset();
@@ -106,6 +123,7 @@ afterEach(() => {
   redisZCardMock.mockReset();
   redisZRangeMock.mockReset();
   redisZRemMock.mockReset();
+  reserveUsedSignatureMock.mockReset();
 });
 
 describe('ensureAICandidatePoolSelection', () => {
@@ -154,11 +172,12 @@ describe('ensureAICandidatePoolSelection', () => {
       expect.any(String),
       expect.objectContaining({ nx: true, expiration: expect.any(Date) })
     );
+    expect(reserveUsedSignatureMock).toHaveBeenCalledWith('HELLOWORLD', expect.any(String));
   });
 });
 
 describe('takeAICandidateBatch', () => {
-  it('releases the reserved pool signature when consuming a candidate', async () => {
+  it('releases the reserved pool signature but keeps the main ledger reservation when consuming a candidate', async () => {
     redisZRangeMock.mockResolvedValue([{ member: 'pool_00000001', score: 1 }]);
     redisMGetMock
       .mockResolvedValueOnce([
@@ -192,11 +211,13 @@ describe('takeAICandidateBatch', () => {
         text: 'HELLO WORLD',
         author: 'AUTHOR',
         challengeType: 'QUOTE',
+        reservationOwnerToken: 'pool_00000001',
       },
     ]);
     expect(redisDelMock).toHaveBeenCalledWith(
       'decrypt:ai_pool:reserved_signature:HELLOWORLD'
     );
+    expect(clearUsedSignatureMock).not.toHaveBeenCalledWith('HELLOWORLD', 'pool_00000001');
   });
 
   it('clears stale reservations when the pool entry payload is missing', async () => {
@@ -219,6 +240,7 @@ describe('takeAICandidateBatch', () => {
     expect(redisDelMock).toHaveBeenCalledWith(
       'decrypt:ai_pool:reserved_signature:STALESIGNATURE'
     );
+    expect(clearUsedSignatureMock).toHaveBeenCalledWith('STALESIGNATURE', 'pool_00000002');
   });
 });
 

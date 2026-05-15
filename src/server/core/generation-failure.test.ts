@@ -47,7 +47,8 @@ describe('reportAutomatedGenerationFailure', () => {
 
     expect(redisSetMock).toHaveBeenCalledWith(
       keyGenerationFailureLatest,
-      expect.any(String)
+      expect.any(String),
+      expect.objectContaining({ expiration: expect.any(Date) })
     );
     expect(createModNotificationMock).toHaveBeenCalledTimes(1);
     expect(redisSetMock).toHaveBeenCalledWith(
@@ -69,7 +70,8 @@ describe('reportAutomatedGenerationFailure', () => {
 
     expect(redisSetMock).toHaveBeenCalledWith(
       keyGenerationFailureLatest,
-      expect.any(String)
+      expect.any(String),
+      expect.objectContaining({ expiration: expect.any(Date) })
     );
     expect(createModNotificationMock).not.toHaveBeenCalled();
   });

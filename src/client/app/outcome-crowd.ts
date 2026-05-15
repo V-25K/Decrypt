@@ -33,6 +33,12 @@ export type OutcomeCrowdViewport = {
 
 export const outcomeCrowdCollisionPasses = 5;
 const outcomeCrowdCollisionPadding = 1;
+const outcomeCrowdSpatialHashMinCellSize = 1;
+
+type OutcomeCrowdSpatialHash = {
+  cellSize: number;
+  cells: Map<string, number[]>;
+};
 
 const clampNumber = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -93,6 +99,84 @@ export const resolveOutcomeCrowdCollision = (
   first.vy -= normalY * impulse;
   second.vx += normalX * impulse;
   second.vy += normalY * impulse;
+};
+
+const outcomeCrowdSpatialCellKey = (cellX: number, cellY: number): string =>
+  `${cellX}:${cellY}`;
+
+const buildOutcomeCrowdSpatialHash = (
+  bubbles: OutcomeCrowdBubble[]
+): OutcomeCrowdSpatialHash => {
+  const maxDiameter = bubbles.reduce(
+    (largest, bubble) => Math.max(largest, bubble.radius * 2),
+    outcomeCrowdSpatialHashMinCellSize
+  );
+  const cellSize = Math.max(
+    outcomeCrowdSpatialHashMinCellSize,
+    maxDiameter + outcomeCrowdCollisionPadding
+  );
+  const cells = new Map<string, number[]>();
+
+  bubbles.forEach((bubble, index) => {
+    const cellX = Math.floor(bubble.x / cellSize);
+    const cellY = Math.floor(bubble.y / cellSize);
+    const key = outcomeCrowdSpatialCellKey(cellX, cellY);
+    const existing = cells.get(key);
+    if (existing) {
+      existing.push(index);
+      return;
+    }
+    cells.set(key, [index]);
+  });
+
+  return { cellSize, cells };
+};
+
+export const resolveOutcomeCrowdCollisions = (
+  bubbles: OutcomeCrowdBubble[]
+): void => {
+  if (bubbles.length < 2) {
+    return;
+  }
+
+  const spatialHash = buildOutcomeCrowdSpatialHash(bubbles);
+  for (const [key, bubbleIndices] of spatialHash.cells) {
+    const [rawCellX, rawCellY] = key.split(':');
+    const cellX = Number(rawCellX);
+    const cellY = Number(rawCellY);
+    if (!Number.isFinite(cellX) || !Number.isFinite(cellY)) {
+      continue;
+    }
+
+    for (const firstIndex of bubbleIndices) {
+      const firstBubble = bubbles[firstIndex];
+      if (!firstBubble) {
+        continue;
+      }
+
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const neighborIndices = spatialHash.cells.get(
+            outcomeCrowdSpatialCellKey(cellX + offsetX, cellY + offsetY)
+          );
+          if (!neighborIndices) {
+            continue;
+          }
+
+          for (const secondIndex of neighborIndices) {
+            if (secondIndex <= firstIndex) {
+              continue;
+            }
+            const secondBubble = bubbles[secondIndex];
+            if (!secondBubble) {
+              continue;
+            }
+            resolveOutcomeCrowdCollision(firstBubble, secondBubble);
+          }
+        }
+      }
+    }
+  }
 };
 
 export const settleOutcomeCrowdBoundary = (bubble: OutcomeCrowdBubble): void => {

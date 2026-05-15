@@ -8,7 +8,9 @@ export type AutomatedFailureSource =
   | 'scheduler.generate-daily'
   | 'scheduler.publish-daily'
   | 'scheduler.verify-daily'
-  | 'trigger.on-app-install';
+  | 'scheduler.cleanup-journals'
+  | 'trigger.on-app-install'
+  | 'trigger.on-app-upgrade';
 
 type GenerationFailureRecord = {
   source: AutomatedFailureSource;

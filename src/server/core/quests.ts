@@ -8,6 +8,7 @@ import {
   getDailyQuestProgress,
   getInventory,
   getLifetimeQuestProgress,
+  trackUserDailyDataDate,
   getUserProfile,
   saveInventory,
   saveDailyQuestProgress,
@@ -16,6 +17,7 @@ import {
 } from './state';
 import { keyUserQuestDaily, keyUserQuestLifetime } from './keys';
 import { redis } from '@devvit/web/server';
+import { dailyDataTtlSeconds } from './constants';
 
 const claimField = (questId: string) => `claim:${questId}`;
 
@@ -79,12 +81,13 @@ export const updateQuestProgressOnShare = async (params: {
   userId: string;
   dateKey: string;
 }): Promise<void> => {
-  const daily = await getDailyQuestProgress(params.userId, params.dateKey);
-  const lifetime = await getLifetimeQuestProgress(params.userId);
-  daily.dailyShareCount += 1;
-  lifetime.socialShareCount += 1;
-  await saveDailyQuestProgress(params.userId, params.dateKey, daily);
-  await saveLifetimeQuestProgress(params.userId, lifetime);
+  const dailyKey = keyUserQuestDaily(params.userId, params.dateKey);
+  await trackUserDailyDataDate(params.userId, params.dateKey);
+  await Promise.all([
+    redis.hIncrBy(dailyKey, 'dailyShareCount', 1),
+    redis.expire(dailyKey, dailyDataTtlSeconds),
+    redis.hIncrBy(keyUserQuestLifetime(params.userId), 'socialShareCount', 1),
+  ]);
 };
 
 export const updateQuestProgressOnCoinSpend = async (params: {
@@ -106,9 +109,13 @@ export const updateQuestProgressOnPurchase = async (params: {
 
 export const updateQuestProgressOnRefund = async (params: {
   userId: string;
+  coinsRefunded?: number;
 }): Promise<void> => {
   const lifetime = await getLifetimeQuestProgress(params.userId);
   lifetime.lifetimePurchases = Math.max(0, lifetime.lifetimePurchases - 1);
+  if (params.coinsRefunded && params.coinsRefunded > 0) {
+    lifetime.lifetimeCoinsSpent = Math.max(0, lifetime.lifetimeCoinsSpent - params.coinsRefunded);
+  }
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 

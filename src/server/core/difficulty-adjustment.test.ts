@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adjustPuzzleDifficulty, buildPuzzle, type ObstructionBudget } from './puzzle';
 import { mulberry32 } from './rng';
+
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('adjustPuzzleDifficulty', () => {
   it('should successfully adjust easy puzzle to medium difficulty', async () => {

@@ -31,9 +31,9 @@ export const StatsScreen = ({
   flairSaveBusy,
   onSetActiveFlair,
 }: StatsScreenProps) => (
-  <section className="app-surface flex min-h-0 flex-1 flex-col" data-testid="stats-screen">
+  <section className="hub-screen app-surface flex min-h-0 flex-1 flex-col" data-testid="stats-screen">
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
-      <section className="app-surface-strong mb-3 rounded-xl border app-border px-4 py-3">
+      <section className="hub-header-panel panel-clear mb-3 rounded-xl px-4 py-3">
         <h2 className="app-text text-center text-base font-black uppercase tracking-[0.04em]">
           Stats
         </h2>
@@ -51,7 +51,7 @@ export const StatsScreen = ({
           {visibleStatsCards.map((card) => (
             <article
               key={card.label}
-              className="app-surface rounded-xl border app-border px-3 py-2.5"
+              className="hub-card hub-stat-card panel-clear rounded-xl px-3 py-2.5"
             >
               <div className="app-text-muted text-[10px] font-black uppercase tracking-[0.03em]">
                 {card.label}
@@ -62,7 +62,7 @@ export const StatsScreen = ({
             </article>
           ))}
         </section>
-        <section className="app-surface rounded-xl border app-border px-3 py-3">
+        <section className="hub-card app-surface rounded-xl border app-border px-3 py-3">
           <div className="flex items-center justify-between gap-2">
             <div>
               <h3 className="app-text text-sm font-black uppercase tracking-[0.03em]">
@@ -72,7 +72,7 @@ export const StatsScreen = ({
                 Quest flairs unlock here. Equip any unlocked flair whenever you want.
               </p>
             </div>
-            <div className="app-surface-subtle rounded-lg border app-border px-2 py-1 text-right">
+            <div className="hub-subpanel app-surface-subtle rounded-lg border app-border px-2 py-1 text-right">
               <div className="app-text-muted text-[9px] font-black uppercase">Equipped</div>
               {profile.activeFlair ? (
                 <div
@@ -101,7 +101,7 @@ export const StatsScreen = ({
               <button
                 key={flair}
                 className={cn(
-                  'btn-3d rounded-lg border px-2 py-1 text-xs font-black uppercase',
+                  'btn-3d btn-flair-chip rounded-lg border px-2 py-1 text-xs font-black uppercase',
                   profile.activeFlair === flair ? 'btn-pressed' : ''
                 )}
                 onClick={() => onSetActiveFlair(flair)}

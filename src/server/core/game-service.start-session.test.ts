@@ -4,8 +4,12 @@ import type { PuzzlePrivate, SessionState, UserProfile } from '../../shared/game
 const {
   contextMock,
   getCompletedLevelsMock,
+  getDailyRetryCountMock,
+  getDailyPointerMock,
   hasFailedLevelMock,
   getPuzzlePrivateMock,
+  getPuzzlePublicMock,
+  isPuzzlePublishedVisibleMock,
   getSessionStateMock,
   getUserProfileMock,
   saveUserProfileMock,
@@ -14,6 +18,8 @@ const {
   heartsRemainingMock,
   recordLevelPlayMock,
   recordQualifiedLevelPlayMock,
+  recordQualifiedLevelFailureMock,
+  touchQualifiedLevelPlayMock,
   canStartChallengeMock,
   applyHammerMock,
   applyRocketMock,
@@ -31,8 +37,12 @@ const {
     postData: {},
   },
   getCompletedLevelsMock: vi.fn(),
+  getDailyRetryCountMock: vi.fn(),
+  getDailyPointerMock: vi.fn(),
   hasFailedLevelMock: vi.fn(),
   getPuzzlePrivateMock: vi.fn(),
+  getPuzzlePublicMock: vi.fn(),
+  isPuzzlePublishedVisibleMock: vi.fn(),
   getSessionStateMock: vi.fn(),
   getUserProfileMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
@@ -41,6 +51,8 @@ const {
   heartsRemainingMock: vi.fn(),
   recordLevelPlayMock: vi.fn(),
   recordQualifiedLevelPlayMock: vi.fn(),
+  recordQualifiedLevelFailureMock: vi.fn(),
+  touchQualifiedLevelPlayMock: vi.fn(),
   canStartChallengeMock: vi.fn(),
   applyHammerMock: vi.fn(),
   applyRocketMock: vi.fn(),
@@ -57,7 +69,7 @@ vi.mock('@devvit/web/server', () => ({
 
 vi.mock('./state', () => ({
   getCompletedLevels: getCompletedLevelsMock,
-  getDailyRetryCount: vi.fn(),
+  getDailyRetryCount: getDailyRetryCountMock,
   getInventory: vi.fn(),
   getUserProfile: getUserProfileMock,
   hasFailedLevel: hasFailedLevelMock,
@@ -79,17 +91,20 @@ vi.mock('./session', () => ({
 }));
 
 vi.mock('./puzzle-store', () => ({
-  getDailyPointer: vi.fn(),
+  getDailyPointer: getDailyPointerMock,
   getPuzzlePrivate: getPuzzlePrivateMock,
-  getPuzzlePublic: vi.fn(),
+  getPuzzlePublic: getPuzzlePublicMock,
+  isPuzzlePublishedVisible: isPuzzlePublishedVisibleMock,
 }));
 
 vi.mock('./engagement', () => ({
   getLevelEngagement: vi.fn(),
+  recordQualifiedLevelFailure: recordQualifiedLevelFailureMock,
   recordQualifiedLevelPlay: recordQualifiedLevelPlayMock,
   recordQualifiedLevelWin: vi.fn(),
   recordLevelPlay: recordLevelPlayMock,
   recordLevelWin: vi.fn(),
+  touchQualifiedLevelPlay: touchQualifiedLevelPlayMock,
 }));
 
 vi.mock('./gameplay', () => ({
@@ -108,6 +123,7 @@ vi.mock('./hearts', () => ({
 }));
 
 import {
+  loadLevelForUser,
   getCurrentPuzzleView,
   startSessionForLevel,
   submitGuessForSession,
@@ -199,8 +215,12 @@ const puzzleFixture = (): PuzzlePrivate => ({
 
 afterEach(() => {
   getCompletedLevelsMock.mockReset();
+  getDailyRetryCountMock.mockReset();
+  getDailyPointerMock.mockReset();
   hasFailedLevelMock.mockReset();
   getPuzzlePrivateMock.mockReset();
+  getPuzzlePublicMock.mockReset();
+  isPuzzlePublishedVisibleMock.mockReset();
   getSessionStateMock.mockReset();
   getUserProfileMock.mockReset();
   saveUserProfileMock.mockReset();
@@ -209,6 +229,8 @@ afterEach(() => {
   heartsRemainingMock.mockReset();
   recordLevelPlayMock.mockReset();
   recordQualifiedLevelPlayMock.mockReset();
+  recordQualifiedLevelFailureMock.mockReset();
+  touchQualifiedLevelPlayMock.mockReset();
   canStartChallengeMock.mockReset();
   applyHammerMock.mockReset();
   applyRocketMock.mockReset();
@@ -365,7 +387,11 @@ describe('submitGuessForSession', () => {
 
     expect(result.ok).toBe(true);
     expect(recordLevelPlayMock).toHaveBeenCalledWith('lvl_0001', 't2_test');
-    expect(recordQualifiedLevelPlayMock).toHaveBeenCalledWith('lvl_0001', 't2_test');
+    expect(recordQualifiedLevelPlayMock).toHaveBeenCalledWith(
+      'lvl_0001',
+      't2_test',
+      expect.any(Number)
+    );
     expect(saveUserProfileMock).toHaveBeenCalledWith(
       't2_test',
       expect.objectContaining({
@@ -420,6 +446,11 @@ describe('submitGuessForSession', () => {
     expect(recordLevelPlayMock).not.toHaveBeenCalled();
     expect(saveUserProfileMock).not.toHaveBeenCalled();
     expect(recordQualifiedLevelPlayMock).not.toHaveBeenCalled();
+    expect(touchQualifiedLevelPlayMock).toHaveBeenCalledWith(
+      'lvl_0001',
+      't2_test',
+      expect.any(Number)
+    );
     expect(saveSessionStateMock).toHaveBeenCalledWith(
       't2_test',
       't3_test',
@@ -429,10 +460,61 @@ describe('submitGuessForSession', () => {
       })
     );
   });
+
+  it('records qualified failure telemetry with the active daily retry count on game over', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({
+        activeLevelId: 'lvl_0001',
+        mode: 'daily',
+        guessCount: 1,
+        wrongGuesses: 0,
+        mistakesMade: 0,
+      })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [],
+      targetTimeSeconds: 60,
+    });
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getDailyRetryCountMock.mockResolvedValue(2);
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({
+      isCorrect: false,
+      revealedTiles: [],
+    });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(0);
+
+    const result = await submitGuessForSession({
+      levelId: 'lvl_0001',
+      tileIndex: 0,
+      guessedLetter: 'x',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.isGameOver).toBe(true);
+    expect(recordQualifiedLevelFailureMock).toHaveBeenCalledWith(
+      'lvl_0001',
+      't2_test',
+      expect.objectContaining({
+        mistakes: 1,
+        usedPowerups: 0,
+        retryCount: 2,
+        targetTimeSeconds: 60,
+      })
+    );
+  });
 });
 
 describe('getCurrentPuzzleView', () => {
   it('ignores caller-provided revealedIndices when no active session exists', async () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(true);
     getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
     getSessionStateMock.mockResolvedValue(null);
     checkPadlockStatusMock.mockReturnValue({
@@ -454,6 +536,7 @@ describe('getCurrentPuzzleView', () => {
   });
 
   it('uses session revealed indices even when caller provides forged indices', async () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(true);
     getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
     getSessionStateMock.mockResolvedValue(
       sessionFixture({
@@ -477,5 +560,74 @@ describe('getCurrentPuzzleView', () => {
     });
 
     expect(forged).toEqual(fromSession);
+  });
+
+  it('rejects unpublished puzzle views before loading puzzle data', async () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(false);
+
+    await expect(
+      getCurrentPuzzleView({
+        levelId: 'lvl_9999',
+      })
+    ).rejects.toThrow('Puzzle is unavailable.');
+
+    expect(getPuzzlePrivateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadLevelForUser', () => {
+  it('rejects unpublished requested daily levels', async () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(false);
+
+    await expect(
+      loadLevelForUser({
+        mode: 'daily',
+        requestedLevelId: 'lvl_9999',
+      })
+    ).rejects.toThrow('Puzzle is unavailable.');
+
+    expect(getPuzzlePublicMock).not.toHaveBeenCalled();
+  });
+
+  it('loads a published requested daily level', async () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(true);
+    getPuzzlePublicMock.mockResolvedValue({
+      levelId: 'lvl_0001',
+      dateKey: '2026-04-08',
+      cipherText: '1 2',
+      author: 'TEST',
+      challengeType: 'QUOTE',
+      tiles: [
+        { index: 0, value: '1', isLetter: true, wordIndex: 0 },
+        { index: 1, value: ' ', isLetter: false, wordIndex: 0 },
+        { index: 2, value: '2', isLetter: true, wordIndex: 1 },
+      ],
+      words: ['A', 'B'],
+      prefilledIndices: [],
+      revealedIndices: [],
+      revealed_indices: [],
+      lockIndices: [],
+      blindIndices: [],
+      padlockChains: [],
+      goldIndex: null,
+      difficulty: 3,
+      targetTimeSeconds: 60,
+      starThresholds: { '3_star': 60, '2_star': 90, '1_star': 120 },
+      isLogical: false,
+      source: 'AUTO_DAILY',
+      cipherType: 'random',
+      shiftAmount: null,
+      createdAt: 0,
+    });
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>());
+    getSessionStateMock.mockResolvedValue(null);
+
+    const result = await loadLevelForUser({
+      mode: 'daily',
+      requestedLevelId: 'lvl_0001',
+    });
+
+    expect(result.levelId).toBe('lvl_0001');
+    expect(getPuzzlePublicMock).toHaveBeenCalledWith('lvl_0001');
   });
 });

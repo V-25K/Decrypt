@@ -2,7 +2,7 @@ import { cn } from '../utils';
 
 export const tabButtonClass = (isActive: boolean) =>
   cn(
-    'btn-3d rounded-lg border px-2 py-1 text-xs font-black uppercase',
+    'btn-3d rounded-lg px-2 py-1 text-xs font-black uppercase',
     isActive ? 'btn-secondary btn-pressed' : 'btn-neutral'
   );
 

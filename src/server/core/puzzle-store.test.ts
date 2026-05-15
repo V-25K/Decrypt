@@ -99,16 +99,19 @@ afterEach(() => {
 });
 
 describe('getNextLevelId', () => {
-  it('seeds the counter from the existing index size before incrementing', async () => {
+  it('seeds the counter from the highest indexed level id before incrementing', async () => {
     getMock.mockResolvedValue(null);
-    zCardMock.mockResolvedValue(21);
+    zRangeMock.mockResolvedValue([
+      { member: 'lvl_0007', score: 7 },
+      { member: 'lvl_0021', score: 21 },
+    ]);
     setMock.mockResolvedValue(true);
     incrByMock.mockResolvedValue(22);
 
     const levelId = await getNextLevelId();
 
     expect(levelId).toBe('lvl_0022');
-    expect(zCardMock).toHaveBeenCalledTimes(1);
+    expect(zRangeMock).toHaveBeenCalledWith('decrypt:puzzles:index', 0, -1, { by: 'rank' });
     expect(setMock).toHaveBeenCalledWith('decrypt:state:level_id_counter', '21', {
       nx: true,
     });
@@ -122,22 +125,45 @@ describe('getNextLevelId', () => {
     const levelId = await getNextLevelId();
 
     expect(levelId).toBe('lvl_0023');
-    expect(zCardMock).not.toHaveBeenCalled();
-    expect(setMock).not.toHaveBeenCalled();
+    expect(zRangeMock).toHaveBeenCalledWith('decrypt:puzzles:index', 0, -1, { by: 'rank' });
     expect(incrByMock).toHaveBeenCalledWith('decrypt:state:level_id_counter', 1);
+  });
+
+  it('repairs an invalid counter to the highest indexed level id before incrementing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getMock.mockResolvedValue('broken');
+    zRangeMock.mockResolvedValue([
+      { member: 'lvl_0007', score: 7 },
+      { member: 'lvl_0021', score: 21 },
+    ]);
+    setMock.mockResolvedValue(true);
+    incrByMock.mockResolvedValue(22);
+
+    const levelId = await getNextLevelId();
+
+    expect(levelId).toBe('lvl_0022');
+    expect(setMock).toHaveBeenCalledWith('decrypt:state:level_id_counter', '21');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[level-id-counter] Repairing counter state',
+      expect.objectContaining({ reason: 'invalid (broken)', baselineCounter: 21 })
+    );
+    warnSpy.mockRestore();
   });
 });
 
 describe('peekNextLevelId', () => {
-  it('seeds the counter from the existing index size without incrementing', async () => {
+  it('seeds the counter from the highest indexed level id without incrementing', async () => {
     getMock.mockResolvedValue(null);
-    zCardMock.mockResolvedValue(21);
+    zRangeMock.mockResolvedValue([
+      { member: 'lvl_0007', score: 7 },
+      { member: 'lvl_0021', score: 21 },
+    ]);
     setMock.mockResolvedValue(true);
 
     const levelId = await peekNextLevelId();
 
     expect(levelId).toBe('lvl_0022');
-    expect(zCardMock).toHaveBeenCalledTimes(1);
+    expect(zRangeMock).toHaveBeenCalledWith('decrypt:puzzles:index', 0, -1, { by: 'rank' });
     expect(setMock).toHaveBeenCalledWith('decrypt:state:level_id_counter', '21', {
       nx: true,
     });
@@ -150,9 +176,29 @@ describe('peekNextLevelId', () => {
     const levelId = await peekNextLevelId();
 
     expect(levelId).toBe('lvl_0023');
-    expect(zCardMock).not.toHaveBeenCalled();
-    expect(setMock).not.toHaveBeenCalled();
+    expect(zRangeMock).toHaveBeenCalledWith('decrypt:puzzles:index', 0, -1, { by: 'rank' });
     expect(incrByMock).not.toHaveBeenCalled();
+  });
+
+  it('repairs a stale counter to the highest indexed level id without incrementing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getMock.mockResolvedValue('3');
+    zRangeMock.mockResolvedValue([
+      { member: 'lvl_0007', score: 7 },
+      { member: 'lvl_0021', score: 21 },
+    ]);
+    setMock.mockResolvedValue(true);
+
+    const levelId = await peekNextLevelId();
+
+    expect(levelId).toBe('lvl_0022');
+    expect(setMock).toHaveBeenCalledWith('decrypt:state:level_id_counter', '21');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[level-id-counter] Repairing counter state',
+      expect.objectContaining({ reason: 'stale (3 < 21)', baselineCounter: 21 })
+    );
+    expect(incrByMock).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
 

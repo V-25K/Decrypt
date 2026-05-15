@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPublicPuzzle,
   buildPuzzle,
+  computeObstructionBudgetSpent,
   chooseGoldIndex,
   normalizePadlockChains,
   computeObstructionBudget,
@@ -15,7 +16,7 @@ import {
 } from './puzzle';
 
 describe('puzzle', () => {
-  it('always generates at least one prefilled starter clue for high difficulty', () => {
+  it('keeps expert starter clues to at most one prefilled tile', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0099',
       dateKey: '2026-02-26',
@@ -26,7 +27,41 @@ describe('puzzle', () => {
       skipSolvabilityCheck: true,
     });
 
-    expect(generated.puzzlePrivate.prefilledIndices.length).toBeGreaterThan(0);
+    expect(generated.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(1);
+  });
+
+  it('does not fully prefill a multi-letter starter word', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_0099_anchor',
+      dateKey: '2026-02-26',
+      text: 'THE SIGNAL STAYS',
+      author: 'UNKNOWN',
+      difficulty: 2,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+
+    const firstWordIndices = generated.puzzlePrivate.tiles
+      .filter((tile) => tile.isLetter && tile.wordIndex === 0)
+      .map((tile) => tile.index);
+    const prefilledSet = new Set(generated.puzzlePrivate.prefilledIndices);
+
+    expect(firstWordIndices.length).toBeGreaterThan(1);
+    expect(firstWordIndices.every((index) => prefilledSet.has(index))).toBe(false);
+  });
+
+  it('keeps expert prefills tight on short phrases', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_0099_expert_prefill',
+      dateKey: '2026-02-26',
+      text: 'EASY PEASY',
+      author: 'UNKNOWN',
+      difficulty: 9,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+
+    expect(generated.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(2);
   });
 
   it('shows a fallback starter letter for legacy zero-prefilled puzzles', () => {
@@ -262,7 +297,7 @@ describe('obstruction budget system', () => {
     });
 
     // Easier/helper-rich text now earns more obstruction room instead of less.
-    expect(budget.total).toBe(14);
+    expect(budget.total).toBe(18);
     expect(budget.spent).toBe(0);
   });
 
@@ -277,7 +312,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.5,
     });
 
-    expect(budget.total).toBe(40);
+    expect(budget.total).toBe(59);
     expect(budget.spent).toBe(0);
   });
 
@@ -292,7 +327,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.8,
     });
 
-    expect(budget.total).toBe(75);
+    expect(budget.total).toBe(105);
     expect(budget.spent).toBe(0);
   });
 
@@ -307,7 +342,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.9,
     });
 
-    expect(budget.total).toBe(11);
+    expect(budget.total).toBe(21);
     expect(budget.spent).toBe(0);
   });
 
@@ -322,16 +357,16 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.4,
     });
 
-    expect(budget.total).toBe(37);
+    expect(budget.total).toBe(55);
     expect(budget.spent).toBe(0);
 
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(8);
-    expect(remainingBudget(budget)).toBe(29);
+    expect(remainingBudget(budget)).toBe(47);
 
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(26);
-    expect(remainingBudget(budget)).toBe(11);
+    expect(remainingBudget(budget)).toBe(29);
   });
 
   it('does not exceed total budget when spending', () => {
@@ -345,13 +380,13 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.2,
     });
 
-    expect(budget.total).toBe(9);
+    expect(budget.total).toBe(13);
 
     spendBudget(budget, 10);
-    expect(budget.spent).toBe(9);
+    expect(budget.spent).toBe(10);
 
     spendBudget(budget, 10);
-    expect(budget.spent).toBe(9); // Clamped to total
+    expect(budget.spent).toBe(13); // Clamped to total
     expect(remainingBudget(budget)).toBe(0);
   });
 
@@ -400,25 +435,42 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.6,
     });
 
-    expect(budget.total).toBe(77);
+    expect(budget.total).toBe(105);
 
     // Add 2 padlocks
     spendBudget(budget, PADLOCK_CHAIN_COST);
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(36);
-    expect(remainingBudget(budget)).toBe(41);
+    expect(remainingBudget(budget)).toBe(69);
 
     // Add 3 blind tiles
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(60);
-    expect(remainingBudget(budget)).toBe(17);
+    expect(remainingBudget(budget)).toBe(45);
 
-    // Try to add another padlock (should only spend remaining 8)
+    // Add another padlock and confirm remaining budget still tracks correctly
     spendBudget(budget, PADLOCK_CHAIN_COST);
-    expect(budget.spent).toBe(77);
-    expect(remainingBudget(budget)).toBe(0);
+    expect(budget.spent).toBe(78);
+    expect(remainingBudget(budget)).toBe(27);
+  });
+
+  it('computes non-zero spent budget for already-obstructed puzzles', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_0109',
+      dateKey: '2026-02-26',
+      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+
+    const spent = computeObstructionBudgetSpent(generated.puzzlePrivate);
+
+    expect(spent).toBeGreaterThan(0);
   });
 
   it('gives easier repetitive text more obstruction budget than harder text in the same tier', () => {

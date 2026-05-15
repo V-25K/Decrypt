@@ -1,32 +1,34 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderStatus } from '@devvit/protos/json/devvit/payments/v1alpha/order.js';
 
 const {
   getUserProfileMock,
   getInventoryMock,
-  saveUserProfileMock,
-  saveInventoryMock,
   hasPurchasedSkuMock,
   markSkuPurchasedMock,
   unmarkSkuPurchasedMock,
-  redisGetMock,
-  redisSetMock,
-  redisDelMock,
   updateQuestProgressOnPurchaseMock,
   updateQuestProgressOnRefundMock,
+  watchMock,
+  redisHashState,
+  redisState,
+  tx,
 } = vi.hoisted(() => ({
   getUserProfileMock: vi.fn(),
   getInventoryMock: vi.fn(),
-  saveUserProfileMock: vi.fn(),
-  saveInventoryMock: vi.fn(),
   hasPurchasedSkuMock: vi.fn(),
   markSkuPurchasedMock: vi.fn(),
   unmarkSkuPurchasedMock: vi.fn(),
-  redisGetMock: vi.fn(),
-  redisSetMock: vi.fn(),
-  redisDelMock: vi.fn(),
   updateQuestProgressOnPurchaseMock: vi.fn(),
   updateQuestProgressOnRefundMock: vi.fn(),
+  watchMock: vi.fn(),
+  redisHashState: new Map<string, Record<string, string>>(),
+  redisState: new Map<string, string>(),
+  tx: {
+    multi: vi.fn(),
+    hSet: vi.fn(),
+    exec: vi.fn(),
+  },
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -39,17 +41,31 @@ vi.mock('@devvit/web/server', () => ({
     setUserFlair: vi.fn(),
   },
   redis: {
-    get: redisGetMock,
-    set: redisSetMock,
-    del: redisDelMock,
+    get: vi.fn(async (key: string) => redisState.get(key) ?? null),
+    set: vi.fn(async (key: string, value: string, options?: { nx?: boolean }) => {
+      if (options?.nx && redisState.has(key)) {
+        return null;
+      }
+      redisState.set(key, value);
+      return 'OK';
+    }),
+    del: vi.fn(async (key: string) => {
+      const existed = redisState.delete(key);
+      return existed ? 1 : 0;
+    }),
+    hSet: vi.fn(async (key: string, values: Record<string, string>) => {
+      const existing = redisHashState.get(key) ?? {};
+      redisHashState.set(key, { ...existing, ...values });
+      return Object.keys(values).length;
+    }),
+    hGetAll: vi.fn(async (key: string) => redisHashState.get(key) ?? {}),
+    watch: watchMock,
   },
 }));
 
 vi.mock('../core/state', () => ({
   getUserProfile: getUserProfileMock,
   getInventory: getInventoryMock,
-  saveUserProfile: saveUserProfileMock,
-  saveInventory: saveInventoryMock,
   hasPurchasedSku: hasPurchasedSkuMock,
   markSkuPurchased: markSkuPurchasedMock,
   unmarkSkuPurchased: unmarkSkuPurchasedMock,
@@ -61,57 +77,103 @@ vi.mock('../core/quests', () => ({
 }));
 
 import { paymentsRoutes } from './payments';
+import {
+  keyGrantedOrderSkus,
+  keyOrderGrantRecord,
+  keyPaymentOrderIndex,
+  keyProcessedOrder,
+  keyRefundProcessedOrder,
+  keyUserInventory,
+  keyUserProfile,
+} from '../core/keys';
 
-const profileFixture = () => ({
+const profileFixture = (overrides?: Partial<{
+  coins: number;
+  hearts: number;
+  lastHeartRefillTs: number;
+  infiniteHeartsExpiryTs: number;
+}>): {
+  coins: number;
+  hearts: number;
+  lastHeartRefillTs: number;
+  infiniteHeartsExpiryTs: number;
+} => ({
   coins: 10,
   hearts: 3,
   lastHeartRefillTs: 0,
   infiniteHeartsExpiryTs: 0,
-  currentStreak: 0,
-  lastPlayedDateKey: '',
-  totalWordsSolved: 0,
-  logicTasksCompleted: 0,
-  totalLevelsCompleted: 0,
-  flawlessWins: 0,
-  speedWins: 0,
-  questsCompleted: 0,
-  dailyModeClears: 0,
-  endlessModeClears: 0,
-  dailySolveTimeTotalSec: 0,
-  endlessSolveTimeTotalSec: 0,
-  unlockedFlairs: [],
-  activeFlair: '',
+  ...overrides,
 });
 
-const inventoryFixture = () => ({
+const inventoryFixture = (overrides?: Partial<{
+  hammer: number;
+  wand: number;
+  shield: number;
+  rocket: number;
+}>): {
+  hammer: number;
+  wand: number;
+  shield: number;
+  rocket: number;
+} => ({
   hammer: 0,
   wand: 0,
   shield: 0,
   rocket: 0,
+  ...overrides,
+});
+
+const readOrderRecord = (orderId: string) => {
+  const raw = redisState.get(keyOrderGrantRecord(orderId));
+  return raw ? JSON.parse(raw) : null;
+};
+
+const seedUserState = (params: {
+  userId: string;
+  profile?: ReturnType<typeof profileFixture>;
+  inventory?: ReturnType<typeof inventoryFixture>;
+}) => {
+  const profile = params.profile ?? profileFixture();
+  const inventory = params.inventory ?? inventoryFixture();
+  redisHashState.set(keyUserProfile(params.userId), {
+    coins: `${profile.coins}`,
+    hearts: `${profile.hearts}`,
+    lastHeartRefillTs: `${profile.lastHeartRefillTs}`,
+    infiniteHeartsExpiryTs: `${profile.infiniteHeartsExpiryTs}`,
+  });
+  redisHashState.set(keyUserInventory(params.userId), {
+    hammer: `${inventory.hammer}`,
+    wand: `${inventory.wand}`,
+    shield: `${inventory.shield}`,
+    rocket: `${inventory.rocket}`,
+  });
+};
+
+beforeEach(() => {
+  watchMock.mockResolvedValue(tx);
+  tx.exec.mockResolvedValue(['ok']);
 });
 
 afterEach(() => {
   getUserProfileMock.mockReset();
   getInventoryMock.mockReset();
-  saveUserProfileMock.mockReset();
-  saveInventoryMock.mockReset();
   hasPurchasedSkuMock.mockReset();
   markSkuPurchasedMock.mockReset();
   unmarkSkuPurchasedMock.mockReset();
-  redisGetMock.mockReset();
-  redisSetMock.mockReset();
-  redisDelMock.mockReset();
   updateQuestProgressOnPurchaseMock.mockReset();
   updateQuestProgressOnRefundMock.mockReset();
+  watchMock.mockReset();
+  tx.multi.mockReset();
+  tx.hSet.mockReset();
+  tx.exec.mockReset();
+  redisHashState.clear();
+  redisState.clear();
 });
 
-describe('payments one-time bundle fulfillment', () => {
-  it('applies rookie stash on first fulfillment and marks purchase', async () => {
+describe('paymentsRoutes', () => {
+  it('fulfills a paid order and stores a canonical grant record', async () => {
     hasPurchasedSkuMock.mockResolvedValue(false);
-    getUserProfileMock.mockResolvedValue(profileFixture());
-    getInventoryMock.mockResolvedValue(inventoryFixture());
-    redisGetMock.mockResolvedValue(null);
-    redisSetMock.mockResolvedValue('OK');
+    seedUserState({ userId: 'u_order' });
 
     const response = await paymentsRoutes.request('http://localhost/fulfill', {
       method: 'POST',
@@ -127,27 +189,46 @@ describe('payments one-time bundle fulfillment', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
-      'u_order',
-      expect.objectContaining({ coins: 510 })
-    );
-    expect(saveInventoryMock).toHaveBeenCalledWith(
-      'u_order',
-      expect.objectContaining({ hammer: 1, shield: 1 })
-    );
     expect(markSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
     expect(updateQuestProgressOnPurchaseMock).toHaveBeenCalledWith({ userId: 'u_order' });
-    expect(redisSetMock).toHaveBeenCalledWith(
-      'decrypt:payments:granted_order_skus:order_1',
-      JSON.stringify(['rookie_stash']),
-      expect.any(Object)
+    expect(tx.hSet).toHaveBeenCalledWith(
+      'decrypt:user:u_order:profile',
+      expect.objectContaining({ coins: '510' })
     );
+    expect(tx.hSet).toHaveBeenCalledWith(
+      'decrypt:user:u_order:inventory',
+      expect.objectContaining({ hammer: '1', shield: '1' })
+    );
+    expect(getUserProfileMock).not.toHaveBeenCalled();
+    expect(getInventoryMock).not.toHaveBeenCalled();
+    expect(readOrderRecord('order_1')).toMatchObject({
+      userId: 'u_order',
+      status: 'fulfilled',
+      grantedSkus: ['rookie_stash'],
+      markedOneTimeSkus: ['rookie_stash'],
+    });
+    expect(redisHashState.get(keyPaymentOrderIndex)).toMatchObject({
+      order_1: '1',
+    });
+    expect(redisState.get(keyGrantedOrderSkus('order_1'))).toBe(
+      JSON.stringify(['rookie_stash'])
+    );
+    expect(redisState.get(keyProcessedOrder('order_1'))).toBe('1');
   });
 
-  it('skips rookie stash if already purchased', async () => {
-    hasPurchasedSkuMock.mockResolvedValue(true);
-    redisGetMock.mockResolvedValue(null);
-    redisSetMock.mockResolvedValue('OK');
+  it('treats duplicate fulfill calls as idempotent from the canonical record', async () => {
+    redisState.set(
+      keyOrderGrantRecord('order_2'),
+      JSON.stringify({
+        userId: 'u_order',
+        grantedSkus: ['rookie_stash'],
+        markedOneTimeSkus: ['rookie_stash'],
+        status: 'fulfilled',
+        fulfilledAt: 123,
+        refundedAt: null,
+        updatedAt: 123,
+      })
+    );
 
     const response = await paymentsRoutes.request('http://localhost/fulfill', {
       method: 'POST',
@@ -163,43 +244,73 @@ describe('payments one-time bundle fulfillment', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(saveUserProfileMock).not.toHaveBeenCalled();
-    expect(saveInventoryMock).not.toHaveBeenCalled();
+    expect(watchMock).not.toHaveBeenCalled();
     expect(markSkuPurchasedMock).not.toHaveBeenCalled();
     expect(updateQuestProgressOnPurchaseMock).not.toHaveBeenCalled();
   });
 
-  it('rejects non-paid orders without granting entitlements', async () => {
+  it('rolls back granted entitlements when fulfillment fails after granting', async () => {
+    hasPurchasedSkuMock.mockResolvedValue(false);
+    seedUserState({ userId: 'u_order' });
+    updateQuestProgressOnPurchaseMock.mockRejectedValue(new Error('quest failure'));
+
     const response = await paymentsRoutes.request('http://localhost/fulfill', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        id: 'order_3',
+        id: 'order_rollback',
         userId: 'u_order',
-        status: OrderStatus.ORDER_STATUS_CANCELED,
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(unmarkSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(readOrderRecord('order_rollback')).toBeNull();
+    expect(redisState.has(keyGrantedOrderSkus('order_rollback'))).toBe(false);
+    expect(redisState.has(keyProcessedOrder('order_rollback'))).toBe(false);
+  });
+
+  it('treats refund-before-fulfill as a safe no-op', async () => {
+    const response = await paymentsRoutes.request('http://localhost/refund', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'order_refund_none',
+        userId: 'u_order',
         products: [{ sku: 'rookie_stash' }],
       }),
     });
 
     expect(response.status).toBe(200);
-    expect(saveUserProfileMock).not.toHaveBeenCalled();
-    expect(saveInventoryMock).not.toHaveBeenCalled();
-    expect(markSkuPurchasedMock).not.toHaveBeenCalled();
-    expect(updateQuestProgressOnPurchaseMock).not.toHaveBeenCalled();
+    expect(unmarkSkuPurchasedMock).not.toHaveBeenCalled();
+    expect(redisState.has(keyRefundProcessedOrder('order_refund_none'))).toBe(false);
   });
 
-  it('revokes granted entitlements on refund and clears one-time ownership', async () => {
-    getUserProfileMock.mockResolvedValue(profileFixture());
-    getInventoryMock.mockResolvedValue({
-      hammer: 1,
-      wand: 0,
-      shield: 1,
-      rocket: 0,
+  it('refunds only what was recorded as granted and persists refunded state', async () => {
+    redisState.set(
+      keyOrderGrantRecord('order_refund_1'),
+      JSON.stringify({
+        userId: 'u_order',
+        grantedSkus: ['rookie_stash'],
+        markedOneTimeSkus: ['rookie_stash'],
+        status: 'fulfilled',
+        fulfilledAt: 123,
+        refundedAt: null,
+        updatedAt: 123,
+      })
+    );
+    redisState.set(keyGrantedOrderSkus('order_refund_1'), JSON.stringify(['rookie_stash']));
+    seedUserState({
+      userId: 'u_order',
+      profile: profileFixture({ coins: 510 }),
+      inventory: inventoryFixture({ hammer: 1, shield: 1 }),
     });
-    redisGetMock.mockResolvedValue(JSON.stringify(['rookie_stash']));
-    redisSetMock.mockResolvedValue('OK');
 
     const response = await paymentsRoutes.request('http://localhost/refund', {
       method: 'POST',
@@ -209,27 +320,35 @@ describe('payments one-time bundle fulfillment', () => {
       body: JSON.stringify({
         id: 'order_refund_1',
         userId: 'u_order',
-        products: [{ sku: 'rookie_stash' }],
+        products: [{ sku: 'rookie_stash' }, { sku: 'decoder_pack' }],
       }),
     });
 
     expect(response.status).toBe(200);
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
-      'u_order',
-      expect.objectContaining({ coins: 0 })
-    );
-    expect(saveInventoryMock).toHaveBeenCalledWith(
-      'u_order',
-      expect.objectContaining({ hammer: 0, shield: 0 })
-    );
     expect(unmarkSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
-    expect(updateQuestProgressOnRefundMock).toHaveBeenCalledWith({ userId: 'u_order' });
-    expect(redisDelMock).toHaveBeenCalledWith('decrypt:payments:granted_order_skus:order_refund_1');
-    expect(redisDelMock).toHaveBeenCalledWith('decrypt:payments:processed_order:order_refund_1');
+    expect(updateQuestProgressOnRefundMock).toHaveBeenCalledWith({
+      userId: 'u_order',
+      coinsRefunded: 500,
+    });
+    expect(tx.hSet).toHaveBeenCalledWith(
+      'decrypt:user:u_order:profile',
+      expect.objectContaining({ coins: '10' })
+    );
+    expect(readOrderRecord('order_refund_1')).toMatchObject({
+      status: 'refunded',
+      grantedSkus: ['rookie_stash'],
+      markedOneTimeSkus: ['rookie_stash'],
+    });
+    expect(redisState.has(keyGrantedOrderSkus('order_refund_1'))).toBe(false);
   });
 
-  it('treats repeated refunds as idempotent', async () => {
-    redisSetMock.mockResolvedValue(null);
+  it('can refund legacy grant records without guessing from raw order payload', async () => {
+    redisState.set(keyGrantedOrderSkus('order_legacy'), JSON.stringify(['rookie_stash']));
+    seedUserState({
+      userId: 'u_order',
+      profile: profileFixture({ coins: 510 }),
+      inventory: inventoryFixture({ hammer: 1, shield: 1 }),
+    });
 
     const response = await paymentsRoutes.request('http://localhost/refund', {
       method: 'POST',
@@ -237,16 +356,21 @@ describe('payments one-time bundle fulfillment', () => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        id: 'order_refund_2',
+        id: 'order_legacy',
         userId: 'u_order',
-        products: [{ sku: 'rookie_stash' }],
+        products: [{ sku: 'rookie_stash' }, { sku: 'decoder_pack' }],
       }),
     });
 
     expect(response.status).toBe(200);
-    expect(saveUserProfileMock).not.toHaveBeenCalled();
-    expect(saveInventoryMock).not.toHaveBeenCalled();
-    expect(unmarkSkuPurchasedMock).not.toHaveBeenCalled();
-    expect(updateQuestProgressOnRefundMock).not.toHaveBeenCalled();
+    expect(updateQuestProgressOnRefundMock).toHaveBeenCalledWith({
+      userId: 'u_order',
+      coinsRefunded: 500,
+    });
+    expect(readOrderRecord('order_legacy')).toMatchObject({
+      userId: 'u_order',
+      status: 'refunded',
+      grantedSkus: ['rookie_stash'],
+    });
   });
 });

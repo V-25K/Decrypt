@@ -7,10 +7,13 @@ import {
   type QuestDefinition,
   type QuestReward,
 } from '../../shared/quests';
-import { coinEmoji, powerupIcon } from './constants';
-import type { Inventory, QuestProgress } from './types';
+import type { Inventory, PowerupType, QuestProgress } from './types';
 
 export const questCards: QuestDefinition[] = questCatalog;
+
+export type QuestRewardDisplayItem =
+  | { key: 'coins'; kind: 'coins'; count: number }
+  | { key: PowerupType; kind: 'powerup'; count: number; powerup: PowerupType };
 
 export const groupedQuestIds = new Set(
   Object.values(questProgressionGroups).flat()
@@ -29,25 +32,30 @@ export const formatCountdown = (remainingMs: number): string => {
 
 export const formatQuestReward = (
   reward: QuestReward
-): { reward: string; flair: string | null } => {
-  const parts: string[] = [];
+): { items: QuestRewardDisplayItem[]; flair: string | null } => {
+  const items: QuestRewardDisplayItem[] = [];
   if (reward.coins > 0) {
-    parts.push(`${coinEmoji} +${reward.coins}`);
+    items.push({ key: 'coins', kind: 'coins', count: reward.coins });
   }
-  const inventoryParts: Array<{ key: keyof Inventory; icon: string }> = [
-    { key: 'hammer', icon: powerupIcon.hammer },
-    { key: 'wand', icon: powerupIcon.wand },
-    { key: 'shield', icon: powerupIcon.shield },
-    { key: 'rocket', icon: powerupIcon.rocket },
+  const inventoryParts: Array<{ key: keyof Inventory; powerup: PowerupType }> = [
+    { key: 'hammer', powerup: 'hammer' },
+    { key: 'wand', powerup: 'wand' },
+    { key: 'shield', powerup: 'shield' },
+    { key: 'rocket', powerup: 'rocket' },
   ];
   for (const item of inventoryParts) {
     const count = reward.inventory[item.key] ?? 0;
     if (count > 0) {
-      parts.push(`${item.icon} +${count}`);
+      items.push({
+        key: item.powerup,
+        kind: 'powerup',
+        count,
+        powerup: item.powerup,
+      });
     }
   }
   return {
-    reward: parts.join(' '),
+    items,
     flair: reward.flair,
   };
 };
@@ -152,13 +160,13 @@ export const formatDifficultyLabel = (value: number | undefined): string => {
   if (value <= 3) {
     return 'Easy';
   }
-  if (value <= 7) {
+  if (value <= 5) {
     return 'Medium';
   }
-  if (value >= 9) {
-    return 'Expert';
+  if (value <= 8) {
+    return 'Hard';
   }
-  return 'Hard';
+  return 'Expert';
 };
 
 export const formatLeaderboardName = (entry: {
@@ -175,8 +183,9 @@ export const formatStatDuration = (seconds: number | null | undefined): string =
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
     return '--';
   }
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
 };
 

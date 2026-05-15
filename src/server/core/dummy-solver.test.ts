@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runDummySolver } from './dummy-solver';
+import { normalizeRequiredSolveRatio, runDummySolver } from './dummy-solver';
 import { buildPuzzle } from './puzzle';
 
 describe('dummy solver phase2', () => {
@@ -51,7 +51,7 @@ describe('dummy solver phase2', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2303',
       dateKey: '2026-03-06',
-      text: 'ABCD EFGH IJKL MNOP',
+      text: 'ABCDEFG HIJKLMN OPQRSTU',
       author: 'UNKNOWN',
       difficulty: 9,
       logicalPercent: 20,
@@ -145,5 +145,68 @@ describe('dummy solver phase2', () => {
 
     expect(result.solvable).toBe(false);
     expect(result.blindGuessRequired).toBe(true);
+  });
+
+  it('uses common word-pattern inference to expand beyond starter clues', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_2306',
+      dateKey: '2026-03-06',
+      text: 'THE AND THE',
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+    });
+    const revealedIndex = generated.puzzlePrivate.tiles.find(
+      (tile) => tile.isLetter && tile.char === 'T'
+    )?.index;
+    if (revealedIndex === undefined) {
+      throw new Error('Expected a revealed T tile');
+    }
+
+    const result = runDummySolver({
+      puzzle: generated.puzzlePrivate,
+      revealedIndices: [revealedIndex],
+      requiredSolveRatio: 0.8,
+    });
+    expect(result.solvable).toBe(true);
+    expect(result.solvedRatio).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it('allows expert-tier solve thresholds below 0.5', () => {
+    expect(normalizeRequiredSolveRatio(0.42)).toBe(0.42);
+    expect(normalizeRequiredSolveRatio(0.4)).toBe(0.4);
+    expect(normalizeRequiredSolveRatio(0.2)).toBe(0.35);
+  });
+
+  it('does not auto-solve blind copies of a revealed letter', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_2307',
+      dateKey: '2026-03-06',
+      text: 'ALARM',
+      author: 'UNKNOWN',
+      difficulty: 7,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+    });
+    const revealIndex = generated.puzzlePrivate.tiles.find(
+      (tile) => tile.isLetter && tile.char === 'A'
+    )?.index;
+    const blindIndex = generated.puzzlePrivate.tiles.find(
+      (tile) => tile.isLetter && tile.char === 'A' && tile.index !== revealIndex
+    )?.index;
+    if (revealIndex === undefined || blindIndex === undefined) {
+      throw new Error('Expected repeated A tiles');
+    }
+    generated.puzzlePrivate.blindIndices = [blindIndex];
+
+    const result = runDummySolver({
+      puzzle: generated.puzzlePrivate,
+      revealedIndices: [revealIndex],
+      requiredSolveRatio: 0.99,
+    });
+
+    expect(result.solvable).toBe(false);
+    expect(result.solvedRatio).toBeLessThan(1);
   });
 });

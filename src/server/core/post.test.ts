@@ -25,6 +25,14 @@ vi.mock('./generator', () => ({
   publishAndActivateDailyPost: publishAndActivateDailyPostMock,
 }));
 
+vi.mock('@devvit/web/server', () => ({
+  redis: {
+    set: vi.fn().mockResolvedValue(true),
+    get: vi.fn().mockResolvedValue(null),
+    del: vi.fn().mockResolvedValue(1),
+  },
+}));
+
 import { createPost } from './post';
 
 afterEach(() => {

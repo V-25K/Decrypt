@@ -1,6 +1,7 @@
 import { useState, type RefObject } from 'react';
 import type { DeviceTier } from '../app/types';
-import { helpSlides, powerupIcon } from '../app/constants';
+import { helpSlides } from '../app/constants';
+import { PowerupSprite } from './PowerupSprite';
 import { cn } from '../utils';
 
 type HelpOverlayProps = {
@@ -97,16 +98,14 @@ const renderSurviveVisual = () => (
         </div>
       </div>
       <div className="grid min-w-[128px] grid-cols-2 gap-2">
-        {[powerupIcon.hammer, powerupIcon.wand, powerupIcon.shield, powerupIcon.rocket].map(
-          (icon) => (
+        {(['hammer', 'wand', 'shield', 'rocket'] as const).map((powerup) => (
             <div
-              key={icon}
-              className="flex h-12 items-center justify-center rounded-xl border border-black/15 bg-white/55 text-xl shadow-[0_3px_8px_rgba(0,0,0,0.08)]"
+              key={powerup}
+              className="flex h-12 items-center justify-center rounded-xl border border-black/15 bg-white/55 shadow-[0_3px_8px_rgba(0,0,0,0.08)]"
             >
-              {icon}
+              <PowerupSprite powerup={powerup} decorative className="h-8 w-8" />
             </div>
-          )
-        )}
+          ))}
       </div>
     </div>
     <p className="mt-3 text-center text-[11px] font-semibold text-black/70">

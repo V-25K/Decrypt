@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import type { TaskResponse } from '@devvit/web/server';
-import { warmAICandidatePool } from '../core/ai-pool';
+import { scheduler } from '@devvit/web/server';
 import {
   generatePuzzleForDate,
   publishAndActivateDailyPost,
   publishStagedPuzzle,
   stagePuzzleForTomorrow,
+  PuzzleNotStagedError,
+  PuzzleDateMismatchError,
+  PuzzlePublishInProgressError,
 } from '../core/generator';
 import { reportAutomatedGenerationFailure } from '../core/generation-failure';
 import {
@@ -73,19 +76,11 @@ const countPublishedAutoDailyPuzzlesInWindow = async (
   return publishedCount;
 };
 
-const canFallbackToCurrentDayGeneration = (error: unknown): boolean => {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return (
-    error.message.includes('No staged puzzle is ready to publish.') ||
-    error.message.includes('could not be found.') ||
-    error.message.includes(' is for ')
-  );
-};
+const canFallbackToCurrentDayGeneration = (error: unknown): boolean =>
+  error instanceof PuzzleNotStagedError || error instanceof PuzzleDateMismatchError;
 
 const isPublishAlreadyInProgressError = (error: unknown): boolean =>
-  error instanceof Error && error.message.includes('already in progress');
+  error instanceof PuzzlePublishInProgressError;
 
 const waitForPublishedDailyCount = async (
   dateKey: string,
@@ -97,7 +92,7 @@ const waitForPublishedDailyCount = async (
       return publishedCount;
     }
     if (attempt < 4) {
-      await pause(50);
+      await pause(300);
     }
   }
   return countPublishedAutoDailyPuzzlesForDate(dateKey);
@@ -166,9 +161,7 @@ const publishNextDailyChallenge = async (
     dateKey,
   });
 
-  const generated = await generatePuzzleForDate(new Date(), {
-    allowSelectionRefill: true,
-  });
+  const generated = await generatePuzzleForDate(new Date());
   
   console.log('[publishNextDailyChallenge] Generated fallback puzzle', {
     levelId: generated.levelId,
@@ -201,7 +194,6 @@ schedulerRoutes.post('/generate-daily', async (c) => {
     return c.json<TaskResponse>({ status: 'ok' }, 200);
   }
   try {
-    await warmAICandidatePool({ maxCandidatesToGenerate: 9 });
     await stagePuzzleForTomorrow();
     return c.json<TaskResponse>({ status: 'ok' }, 200);
   } catch (error) {
@@ -211,26 +203,6 @@ schedulerRoutes.post('/generate-daily', async (c) => {
       error,
     });
     throw error;
-  }
-});
-
-schedulerRoutes.post('/refill-ai-pool', async (c) => {
-  const automationEnabled = await getDailyAutomationEnabled();
-  if (!automationEnabled) {
-    return c.json<TaskResponse>({ status: 'ok' }, 200);
-  }
-  try {
-    const result = await warmAICandidatePool();
-    return c.json<TaskResponse>({ status: 'ok', data: result }, 200);
-  } catch (error) {
-    console.error('AI pool refill failed:', error);
-    return c.json<TaskResponse>(
-      {
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      },
-      500
-    );
   }
 });
 
@@ -328,6 +300,25 @@ schedulerRoutes.post('/verify-daily', async (c) => {
       return c.json<TaskResponse>({ status: 'ok' }, 200);
     }
 
+    console.warn('[scheduler] verify-daily: deficit detected', {
+      count,
+      expectedDailyPosts,
+      dateKey,
+    });
+
+    // Attempt self-healing: schedule an immediate one-off publish run.
+    try {
+      await scheduler.runJob({
+        name: 'decrypt-publish-daily-0000',
+        runAt: new Date(),
+      });
+      console.log('[scheduler] verify-daily: recovery publish job scheduled');
+    } catch (schedErr) {
+      console.error('[scheduler] verify-daily: failed to schedule recovery job', {
+        error: schedErr instanceof Error ? schedErr.message : String(schedErr),
+      });
+    }
+
     await reportAutomatedGenerationFailure({
       source: 'scheduler.verify-daily',
       dateKey,
@@ -351,16 +342,16 @@ schedulerRoutes.post('/cleanup-completion-journals', async (c) => {
   try {
     const cleanup = new CompletionJournalCleanup();
     const result = await cleanup.performCleanup();
-    
-    console.log('Manual completion journal cleanup completed:', {
+
+    console.log('[scheduler] cleanup-completion-journals completed:', {
       entriesRemoved: result.entriesRemoved,
       memoryFreed: result.memoryFreed,
       usersProcessed: result.usersProcessed,
       processingTimeMs: result.processingTimeMs,
       errorCount: result.errors.length
     });
-    
-    return c.json<TaskResponse>({ 
+
+    return c.json<TaskResponse>({
       status: 'ok',
       data: {
         entriesRemoved: result.entriesRemoved,
@@ -371,14 +362,10 @@ schedulerRoutes.post('/cleanup-completion-journals', async (c) => {
       }
     }, 200);
   } catch (error) {
-    console.error('Manual completion journal cleanup failed:', error);
-    return c.json<TaskResponse>({ 
+    console.error('[scheduler] cleanup-completion-journals failed:', error);
+    return c.json<TaskResponse>({
       status: 'error',
       error: error instanceof Error ? error.message : String(error)
     }, 500);
   }
-});
-
-schedulerRoutes.get('/cleanup-status', (_c) => {
-  return _c.json<TaskResponse>({ status: 'ok' }, 200);
 });

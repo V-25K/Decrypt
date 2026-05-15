@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { tabButtonClass } from '../app/ui';
 import { trpc } from '../trpc';
+import { ErrorCard } from '../components/ErrorCard';
 import type {
   LeaderboardTab,
   LeaderboardPage,
@@ -21,6 +22,40 @@ type LeaderboardScreenProps = {
   formatStatDuration: (seconds: number | null | undefined) => string;
 };
 
+type LeaderboardAvatarProps = {
+  entry: LeaderboardEntry;
+  displayName: string;
+  eager: boolean;
+};
+
+const LeaderboardAvatar = ({
+  entry,
+  displayName,
+  eager,
+}: LeaderboardAvatarProps) => {
+  const [avatarError, setAvatarError] = useState(false);
+  const fallbackInitial = displayName.trim().charAt(0).toUpperCase() || '?';
+  return (
+    <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-gray-700">
+      {!avatarError && entry.snoovatarUrl ? (
+        <img
+          src={entry.snoovatarUrl}
+          alt={`${displayName} snoovatar`}
+          loading={eager ? 'eager' : 'lazy'}
+          decoding="async"
+          fetchPriority={eager ? 'high' : 'low'}
+          width={32}
+          height={32}
+          className="h-full w-full object-cover"
+          onError={() => setAvatarError(true)}
+        />
+      ) : (
+        <span className="text-xs font-bold text-white">{fallbackInitial}</span>
+      )}
+    </div>
+  );
+};
+
 export const LeaderboardScreen = ({
   leaderboardTab,
   onTabChange,
@@ -32,173 +67,141 @@ export const LeaderboardScreen = ({
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardPage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
+
+  const runLeaderboardRequest = useCallback(
+    async (request: {
+      load: () => Promise<LeaderboardPage | null>;
+      apply: (data: LeaderboardPage | null) => void;
+      errorMessage: string;
+    }) => {
+      const requestId = latestRequestIdRef.current + 1;
+      latestRequestIdRef.current = requestId;
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const data = await request.load();
+        if (latestRequestIdRef.current !== requestId) {
+          return;
+        }
+        request.apply(data);
+      } catch (err) {
+        if (latestRequestIdRef.current !== requestId) {
+          return;
+        }
+        setError(request.errorMessage);
+        console.error('Leaderboard fetch error:', err);
+      } finally {
+        if (latestRequestIdRef.current === requestId) {
+          setIsLoading(false);
+        }
+      }
+    },
+    []
+  );
 
   // Fetch leaderboard data based on current tab and page
   const fetchLeaderboardData = useCallback(async (page: number = 1) => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      let data: LeaderboardPage;
-      
-      if (leaderboardTab === 'daily') {
-        data = await trpc.leaderboard.getDailyPage.query({
-          page,
-          pageSize: 50,
-        });
-      } else {
-        // For endless/all-time leaderboard
-        data = await trpc.leaderboard.getAllTimeLevelsPage.query({
-          page,
-          pageSize: 50,
-        });
-      }
-      
-      setLeaderboardData(data);
-      setCurrentPage(page);
-    } catch (err) {
-      setError('Failed to load leaderboard data');
-      console.error('Leaderboard fetch error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [leaderboardTab]);
+    await runLeaderboardRequest({
+      load: async () =>
+        leaderboardTab === 'daily'
+          ? await trpc.leaderboard.getDailyPage.query({ page, pageSize: 50 })
+          : await trpc.leaderboard.getAllTimeLevelsPage.query({ page, pageSize: 50 }),
+      apply: (data) => {
+        if (!data) {
+          return;
+        }
+        setLeaderboardData(data);
+        setCurrentPage(page);
+      },
+      errorMessage: 'Failed to load leaderboard data',
+    });
+  }, [leaderboardTab, runLeaderboardRequest]);
 
   // Load data when tab changes or component mounts
   useEffect(() => {
     setCurrentPage(1);
-    fetchLeaderboardData(1);
+    void fetchLeaderboardData(1);
   }, [fetchLeaderboardData]);
 
   // Navigation handlers
   const handleNextPage = useCallback(async () => {
-    if (!leaderboardData?.hasNextPage) return;
-    
-    try {
-      setIsLoading(true);
-      let nextPageData: LeaderboardPage | null;
-      
-      if (leaderboardTab === 'daily') {
-        nextPageData = await trpc.leaderboard.navigateDailyNext.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      } else {
-        nextPageData = await trpc.leaderboard.navigateAllTimeLevelsNext.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      }
-      
-      if (nextPageData) {
-        setLeaderboardData(nextPageData);
-        setCurrentPage(currentPage + 1);
-      }
-    } catch (err) {
-      setError('Failed to load next page');
-      console.error('Next page error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage]);
+    if (!leaderboardData?.hasNextPage || isLoading) return;
+    await runLeaderboardRequest({
+      load: async () =>
+        leaderboardTab === 'daily'
+          ? await trpc.leaderboard.navigateDailyNext.query({ page: currentPage, pageSize: 50 })
+          : await trpc.leaderboard.navigateAllTimeLevelsNext.query({ page: currentPage, pageSize: 50 }),
+      apply: (nextPageData) => {
+        if (nextPageData) {
+          setLeaderboardData(nextPageData);
+          setCurrentPage(nextPageData.pageInfo.currentPage);
+        }
+      },
+      errorMessage: 'Failed to load next page',
+    });
+  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage, isLoading, runLeaderboardRequest]);
 
   const handlePreviousPage = useCallback(async () => {
-    if (!leaderboardData?.hasPreviousPage) return;
-    
-    try {
-      setIsLoading(true);
-      let prevPageData: LeaderboardPage | null;
-      
-      if (leaderboardTab === 'daily') {
-        prevPageData = await trpc.leaderboard.navigateDailyPrevious.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      } else {
-        prevPageData = await trpc.leaderboard.navigateAllTimeLevelsPrevious.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      }
-      
-      if (prevPageData) {
-        setLeaderboardData(prevPageData);
-        setCurrentPage(currentPage - 1);
-      }
-    } catch (err) {
-      setError('Failed to load previous page');
-      console.error('Previous page error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [leaderboardTab, currentPage, leaderboardData?.hasPreviousPage]);
+    if (!leaderboardData?.hasPreviousPage || isLoading) return;
+    await runLeaderboardRequest({
+      load: async () =>
+        leaderboardTab === 'daily'
+          ? await trpc.leaderboard.navigateDailyPrevious.query({ page: currentPage, pageSize: 50 })
+          : await trpc.leaderboard.navigateAllTimeLevelsPrevious.query({ page: currentPage, pageSize: 50 }),
+      apply: (prevPageData) => {
+        if (prevPageData) {
+          setLeaderboardData(prevPageData);
+          setCurrentPage(prevPageData.pageInfo.currentPage);
+        }
+      },
+      errorMessage: 'Failed to load previous page',
+    });
+  }, [leaderboardTab, currentPage, leaderboardData?.hasPreviousPage, isLoading, runLeaderboardRequest]);
 
   const handleFirstPage = useCallback(async () => {
-    if (currentPage === 1) return;
-    
-    try {
-      setIsLoading(true);
-      let firstPageData: LeaderboardPage;
-      
-      if (leaderboardTab === 'daily') {
-        firstPageData = await trpc.leaderboard.navigateDailyFirst.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      } else {
-        firstPageData = await trpc.leaderboard.navigateAllTimeLevelsFirst.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      }
-      
-      setLeaderboardData(firstPageData);
-      setCurrentPage(1);
-    } catch (err) {
-      setError('Failed to load first page');
-      console.error('First page error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [leaderboardTab, currentPage]);
+    if (currentPage === 1 || isLoading) return;
+    await runLeaderboardRequest({
+      load: async () =>
+        leaderboardTab === 'daily'
+          ? await trpc.leaderboard.navigateDailyFirst.query({ page: currentPage, pageSize: 50 })
+          : await trpc.leaderboard.navigateAllTimeLevelsFirst.query({ page: currentPage, pageSize: 50 }),
+      apply: (firstPageData) => {
+        if (firstPageData) {
+          setLeaderboardData(firstPageData);
+          setCurrentPage(firstPageData.pageInfo.currentPage);
+        }
+      },
+      errorMessage: 'Failed to load first page',
+    });
+  }, [leaderboardTab, currentPage, isLoading, runLeaderboardRequest]);
 
   const handleLastPage = useCallback(async () => {
-    if (!leaderboardData?.hasNextPage) return;
-    
-    try {
-      setIsLoading(true);
-      let lastPageData: LeaderboardPage;
-      
-      if (leaderboardTab === 'daily') {
-        lastPageData = await trpc.leaderboard.navigateDailyLast.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      } else {
-        lastPageData = await trpc.leaderboard.navigateAllTimeLevelsLast.query({
-          page: currentPage,
-          pageSize: 50,
-        });
-      }
-      
-      setLeaderboardData(lastPageData);
-      setCurrentPage(lastPageData.pageInfo.totalPages);
-    } catch (err) {
-      setError('Failed to load last page');
-      console.error('Last page error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage]);
+    if (!leaderboardData?.hasNextPage || isLoading) return;
+    await runLeaderboardRequest({
+      load: async () =>
+        leaderboardTab === 'daily'
+          ? await trpc.leaderboard.navigateDailyLast.query({ page: currentPage, pageSize: 50 })
+          : await trpc.leaderboard.navigateAllTimeLevelsLast.query({ page: currentPage, pageSize: 50 }),
+      apply: (lastPageData) => {
+        if (lastPageData) {
+          setLeaderboardData(lastPageData);
+          setCurrentPage(lastPageData.pageInfo.currentPage);
+        }
+      },
+      errorMessage: 'Failed to load last page',
+    });
+  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage, isLoading, runLeaderboardRequest]);
 
   const handleRefresh = useCallback(() => {
-    fetchLeaderboardData(currentPage);
+    void fetchLeaderboardData(currentPage);
   }, [fetchLeaderboardData, currentPage]);
 
   return (
-    <section className="app-surface flex min-h-0 flex-1 flex-col" data-testid="leaderboard-screen">
+    <section className="hub-screen app-surface flex min-h-0 flex-1 flex-col" data-testid="leaderboard-screen">
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
-        <section className="app-surface-strong mb-3 rounded-xl border app-border px-4 py-3">
+        <section className="hub-header-panel panel-clear mb-3 rounded-xl px-4 py-3">
           <h2 className="app-text text-center text-base font-black uppercase tracking-[0.04em]">
             Leaderboard
           </h2>
@@ -239,28 +242,29 @@ export const LeaderboardScreen = ({
 
           {/* Error State */}
           {error && (
-            <div className="app-surface rounded-lg border app-border px-3 py-3 text-center text-xs font-semibold text-red-500">
-              {error}
-            </div>
+            <ErrorCard error={error} onRetry={handleRefresh} />
           )}
 
           {/* Loading State */}
           {isLoading && !leaderboardData && (
-            <div className="app-surface rounded-lg border app-border px-3 py-3 text-center text-xs font-semibold app-text-muted">
+            <div className="hub-card app-surface rounded-lg border app-border px-3 py-3 text-center text-xs font-semibold app-text-muted">
               Loading leaderboard...
             </div>
           )}
 
           {/* Empty State */}
           {!isLoading && !error && leaderboardData && leaderboardData.entries.length === 0 && (
-            <div className="app-surface rounded-lg border app-border px-3 py-3 text-center text-xs font-semibold app-text-muted">
-              No leaderboard entries yet.
+            <div className="hub-card app-surface rounded-lg border app-border px-4 py-6 text-center">
+              <p className="app-text text-sm font-black uppercase">No Scores Yet</p>
+              <p className="app-text-muted mt-1 text-xs font-semibold">
+                Be the first player to leave a mark on this board.
+              </p>
             </div>
           )}
 
           {/* Leaderboard Header */}
           {!isLoading && !error && leaderboardData && leaderboardData.entries.length > 0 && (
-            <div className="app-surface-subtle grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5">
+            <div className="hub-subpanel app-surface-subtle grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5">
               <div className="app-text-muted text-[9px] font-black uppercase">Rank</div>
               <div className="app-text-muted text-[9px] font-black uppercase" aria-hidden="true" />
               <div className="app-text-muted text-[9px] font-black uppercase">Player</div>
@@ -283,26 +287,13 @@ export const LeaderboardScreen = ({
                 return (
                   <article
                     key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
-                    className="app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
+                    className="hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
                   >
                     <span className="app-text text-[11px] font-black">#{globalRank}</span>
-                    <div className="h-8 w-8 overflow-hidden rounded-full bg-transparent">
-                      {entry.snoovatarUrl && (
-                        <img
-                          src={entry.snoovatarUrl}
-                          alt="Player snoovatar"
-                          loading={index < 4 ? 'eager' : 'lazy'}
-                          decoding="async"
-                          fetchPriority={index < 4 ? 'high' : 'low'}
-                          width={32}
-                          height={32}
-                          className="h-full w-full object-cover"
-                          onError={(event) => {
-                            event.currentTarget.style.display = 'none';
-                          }}
-                        />
-                      )}
-                    </div>
+                    <LeaderboardAvatar entry={entry} displayName={formatLeaderboardName({
+                      userId: entry.userId,
+                      username: entry.username ?? null
+                    })} eager={index < 4} />
                     <div className="app-text truncate text-[11px] font-bold">
                       {formatLeaderboardName({
                         userId: entry.userId,
@@ -323,7 +314,7 @@ export const LeaderboardScreen = ({
 
           {/* Pagination Controls */}
           {!isLoading && !error && leaderboardData && leaderboardData.pageInfo.totalPages > 1 && (
-            <div className="app-surface-subtle rounded-lg border app-border px-3 py-2">
+            <div className="hub-subpanel app-surface-subtle rounded-lg border app-border px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
                   <button
@@ -367,7 +358,7 @@ export const LeaderboardScreen = ({
           )}
         </div>
         
-        <footer className="app-surface-subtle mt-2 shrink-0 rounded-lg border app-border px-3 py-2">
+        <footer className="hub-subpanel app-surface-subtle mt-2 shrink-0 rounded-lg border app-border px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <span className="app-text-muted text-[10px] font-black uppercase tracking-[0.03em]">
               Your {leaderboardTab === 'daily' ? 'Daily' : 'Endless'} Rank

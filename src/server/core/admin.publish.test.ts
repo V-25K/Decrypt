@@ -6,6 +6,7 @@ const {
   buildManualPuzzleWithSolverFallbackMock,
   computeAdaptiveHardnessBoundsMock,
   computeObstructionBudgetMock,
+  computeObstructionBudgetSpentMock,
   computePhraseDifficultyProfileMock,
   createValidationPipelineMock,
   clearStagedLevelIdMock,
@@ -23,12 +24,14 @@ const {
   mulberry32Mock,
   peekNextLevelIdMock,
   publishAndActivateDailyPostMock,
+  deletePuzzleDataMock,
 } = vi.hoisted(() => ({
   activateDailyPuzzleMock: vi.fn(),
   adjustPuzzleDifficultyMock: vi.fn(),
   buildManualPuzzleWithSolverFallbackMock: vi.fn(),
   computeAdaptiveHardnessBoundsMock: vi.fn(),
   computeObstructionBudgetMock: vi.fn(),
+  computeObstructionBudgetSpentMock: vi.fn(),
   computePhraseDifficultyProfileMock: vi.fn(),
   createValidationPipelineMock: vi.fn(),
   clearStagedLevelIdMock: vi.fn(),
@@ -46,13 +49,15 @@ const {
   mulberry32Mock: vi.fn(),
   peekNextLevelIdMock: vi.fn(),
   publishAndActivateDailyPostMock: vi.fn(),
+  deletePuzzleDataMock: vi.fn(),
 }));
 
-		vi.mock('./puzzle-store', () => ({
-		  clearStagedLevelId: clearStagedLevelIdMock,
-		  getAutoDailyLevelIdsForDate: getAutoDailyLevelIdsForDateMock,
-		  getPuzzleMapping: getPuzzleMappingMock,
-		  getNextLevelId: vi.fn(),
+			vi.mock('./puzzle-store', () => ({
+			  clearStagedLevelId: clearStagedLevelIdMock,
+        deletePuzzleData: deletePuzzleDataMock,
+			  getAutoDailyLevelIdsForDate: getAutoDailyLevelIdsForDateMock,
+			  getPuzzleMapping: getPuzzleMappingMock,
+			  getNextLevelId: vi.fn(),
 		  peekNextLevelId: peekNextLevelIdMock,
 		  getPuzzlePrivate: getPuzzlePrivateMock,
 		  getPuzzlePublishedPostId: getPuzzlePublishedPostIdMock,
@@ -63,6 +68,8 @@ const {
 }));
 
 vi.mock('./generator', () => ({
+  PuzzlePublishCommitError: class PuzzlePublishCommitError extends Error {},
+  PuzzlePublishInProgressError: class PuzzlePublishInProgressError extends Error {},
   activateDailyPuzzle: activateDailyPuzzleMock,
   buildManualPuzzleWithSolverFallback: buildManualPuzzleWithSolverFallbackMock,
   generatePuzzleForDate: generatePuzzleForDateMock,
@@ -80,8 +87,10 @@ vi.mock('./endless-audit', () => ({
 }));
 
 vi.mock('./content', () => ({
+  containsDisallowedContent: () => false,
   computePhraseDifficultyProfile: computePhraseDifficultyProfileMock,
   difficultyToTier: difficultyToTierMock,
+  normalizeContent: (value: string) => value.trim().toUpperCase(),
   rankDifficultyTiersForProfile: (
     _profile: unknown,
     _bounds?: unknown,
@@ -98,12 +107,13 @@ vi.mock('./content', () => ({
   sanitizePhrase: (value: string) => value,
 }));
 
-		vi.mock('./puzzle', () => ({
-		  adjustPuzzleDifficulty: adjustPuzzleDifficultyMock,
-		  buildPublicPuzzle: vi.fn(),
-		  buildPuzzle: vi.fn(),
-		  computeObstructionBudget: computeObstructionBudgetMock,
-		}));
+			vi.mock('./puzzle', () => ({
+			  adjustPuzzleDifficulty: adjustPuzzleDifficultyMock,
+			  buildPublicPuzzle: vi.fn(),
+			  buildPuzzle: vi.fn(),
+			  computeObstructionBudget: computeObstructionBudgetMock,
+        computeObstructionBudgetSpent: computeObstructionBudgetSpentMock,
+			}));
 
 vi.mock('./difficulty-calibration', () => ({
   computeAdaptiveHardnessBounds: computeAdaptiveHardnessBoundsMock,
@@ -134,6 +144,9 @@ import {
 } from './admin';
 
 beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   getAutoDailyLevelIdsForDateMock.mockResolvedValue([]);
   difficultyToTierMock.mockImplementation((difficulty: number) => {
     if (difficulty <= 3) return 'warmup';
@@ -143,6 +156,7 @@ beforeEach(() => {
   });
   computeAdaptiveHardnessBoundsMock.mockResolvedValue(undefined);
   getDecryptSettingsMock.mockResolvedValue({ logicalCipherPercent: 10 });
+  computeObstructionBudgetSpentMock.mockReturnValue(0);
   peekNextLevelIdMock.mockResolvedValue('lvl_0200');
   getPuzzleMappingMock.mockResolvedValue(null);
   formatDateKeyMock.mockReturnValue('2026-03-08');
@@ -151,14 +165,17 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   activateDailyPuzzleMock.mockReset();
   adjustPuzzleDifficultyMock.mockReset();
   buildManualPuzzleWithSolverFallbackMock.mockReset();
   computeAdaptiveHardnessBoundsMock.mockReset();
   computeObstructionBudgetMock.mockReset();
+  computeObstructionBudgetSpentMock.mockReset();
   computePhraseDifficultyProfileMock.mockReset();
   createValidationPipelineMock.mockReset();
   clearStagedLevelIdMock.mockReset();
+  deletePuzzleDataMock.mockReset();
   deriveSeedMock.mockReset();
   difficultyToTierMock.mockReset();
   formatDateKeyMock.mockReset();
@@ -190,9 +207,7 @@ describe('daily publish activation flows', () => {
       dateKey: '2026-03-07',
       runAs: 'APP',
     });
-    expect(generatePuzzleForDateMock).toHaveBeenCalledWith(expect.any(Date), {
-      allowSelectionRefill: true,
-    });
+    expect(generatePuzzleForDateMock).toHaveBeenCalledWith(expect.any(Date));
     expect(result).toEqual({
       levelId: 'lvl_0100',
       dateKey: '2026-03-07',
@@ -245,7 +260,7 @@ describe('daily publish activation flows', () => {
       dateKey: '2026-03-08',
       runAs: 'APP',
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       levelId: 'lvl_0200',
       dateKey: '2026-03-08',
       postId: 't3_new201',
@@ -258,6 +273,7 @@ describe('daily publish activation flows', () => {
     injectManualPuzzleMock.mockResolvedValue({
       levelId: 'lvl_0102',
       dateKey: '2026-03-08',
+      difficulty: 5,
     });
     publishAndActivateDailyPostMock.mockResolvedValue('t3_manual102');
 
@@ -271,47 +287,64 @@ describe('daily publish activation flows', () => {
     expect(publishAndActivateDailyPostMock).toHaveBeenCalledWith({
       levelId: 'lvl_0102',
       dateKey: '2026-03-08',
+      difficulty: 5,
       runAs: 'APP',
+      forceNewPost: true,
     });
     expect(result).toEqual({
+      success: true,
       levelId: 'lvl_0102',
       dateKey: '2026-03-08',
       postId: 't3_manual102',
+      difficulty: 5,
+      publishState: 'published',
+      recoverable: false,
+      cleanupPerformed: false,
     });
   });
 
-  it('injectAndPublishManualPuzzle preserves the saved level id when publish fails', async () => {
+  it('rolls back a saved manual puzzle when publish fails before a post is created', async () => {
     injectManualPuzzleMock.mockResolvedValue({
       levelId: 'lvl_0102',
       dateKey: '2026-03-08',
+      difficulty: 5,
+    });
+    getPuzzlePrivateMock.mockResolvedValue({
+      levelId: 'lvl_0102',
+      dateKey: '2026-03-08',
+      targetText: 'ALWAYS TEST THE PUBLISH PATH',
     });
     publishAndActivateDailyPostMock.mockRejectedValue(new Error('reddit unavailable'));
 
-    await expect(
-      injectAndPublishManualPuzzle({
-        text: 'ALWAYS TEST THE PUBLISH PATH',
-        author: 'MODERATOR',
-        difficulty: 5,
-        challengeType: 'QUOTE',
-      })
-    ).rejects.toMatchObject({
-      name: 'ManualPuzzlePublishFailedError',
-      levelId: 'lvl_0102',
-      dateKey: '2026-03-08',
+    const result = await injectAndPublishManualPuzzle({
+      text: 'ALWAYS TEST THE PUBLISH PATH',
+      author: 'MODERATOR',
+      difficulty: 5,
+      challengeType: 'QUOTE',
     });
+
+    expect(result).toMatchObject({
+      success: false,
+      publishState: 'rolled_back',
+      recoverable: false,
+      cleanupPerformed: true,
+    });
+    expect(result.levelId).toBeUndefined();
   });
 
   it('rejects invalid author input before publishing manual puzzles', async () => {
-    await expect(
-      injectAndPublishManualPuzzle({
-        text: 'ALWAYS TEST THE PUBLISH PATH',
-        author: '!!!',
-        difficulty: 5,
-        challengeType: 'QUOTE',
-        allowAdjustment: true,
-      })
-    ).rejects.toThrow("Invalid author. Use letters, numbers, spaces, . ' and - (max 28).");
+    const result = await injectAndPublishManualPuzzle({
+      text: 'ALWAYS TEST THE PUBLISH PATH',
+      author: '!!!',
+      difficulty: 5,
+      challengeType: 'QUOTE',
+      allowAdjustment: true,
+    });
 
+    expect(result).toMatchObject({
+      success: false,
+      error: "Invalid author. Use letters, numbers, spaces, . ' and - (max 28).",
+    });
     expect(injectManualPuzzleMock).not.toHaveBeenCalled();
     expect(publishAndActivateDailyPostMock).not.toHaveBeenCalled();
   });
@@ -347,7 +380,7 @@ describe('manual publish preflight', () => {
     expect(buildManualPuzzleWithSolverFallbackMock).not.toHaveBeenCalled();
   });
 
-  it('removes tiers from the achievable list when the dry-run adjuster cannot really reach them', async () => {
+  it('keeps manual preferences from invalidating quotes that are still achievable at a recommended tier', async () => {
     computePhraseDifficultyProfileMock.mockReturnValue({
       cryptoHardness: 0.4,
       uniqueLetterCount: 12,
@@ -405,9 +438,74 @@ describe('manual publish preflight', () => {
       challengeType: 'QUOTE',
     });
 
+    expect(result.valid).toBe(true);
+    expect(result.achievableTierRange).toEqual(['warmup', 'medium', 'hard']);
+    expect(result.reasons).toEqual([]);
+  });
+
+  it('surfaces precise convergence failures for fair-build preflight misses', async () => {
+    computePhraseDifficultyProfileMock.mockReturnValue({
+      cryptoHardness: 0.57,
+      uniqueLetterCount: 16,
+      oneLetterWordCount: 0,
+      commonSuffixCount: 0,
+    });
+    createValidationPipelineMock.mockReturnValue({
+      phase1: vi.fn((_: string, difficulty: number) => ({
+        valid: difficulty === 5 || difficulty === 8,
+        reasons: [],
+      })),
+      phase2: vi.fn().mockReturnValue({ valid: true, reasons: [] }),
+      duplicate: vi.fn().mockResolvedValue({
+        duplicate: false,
+        normalizedSignature: 'TEXT',
+        tokenSignature: 'TEXT',
+      }),
+    });
+    buildManualPuzzleWithSolverFallbackMock.mockReturnValue({
+      puzzlePrivate: {
+        levelId: 'lvl_0200',
+        difficulty: 8,
+        cipherType: 'random',
+        prefilledIndices: [1, 2],
+        blindIndices: [3, 4],
+        padlockChains: [{ chainId: 1, keyIndices: [5], lockedIndices: [6, 7] }],
+      },
+      puzzlePublic: {},
+    });
+    computeObstructionBudgetMock.mockReturnValue({ total: 115, spent: 0 });
+    adjustPuzzleDifficultyMock
+      .mockResolvedValueOnce({
+        success: false,
+        puzzle: { levelId: 'lvl_0200', difficulty: 10 },
+        achievedDifficulty: 10,
+        achievableTierRange: ['hard'],
+        adjustmentLog: ['Add prefilled letter (cost: -5)'],
+        budgetUsed: 0,
+        budgetTotal: 115,
+        reason: 'Max iterations reached without convergence',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        puzzle: { levelId: 'lvl_0200', difficulty: 8 },
+        achievedDifficulty: 8,
+        achievableTierRange: ['hard'],
+        adjustmentLog: [],
+        budgetUsed: 0,
+        budgetTotal: 115,
+      });
+
+    const result = await preflightManualChallengeForPublish({
+      text: 'TEXT',
+      difficulty: 5,
+      challengeType: 'QUOTE',
+    });
+
     expect(result.valid).toBe(false);
-    expect(result.achievableTierRange).toEqual(['warmup', 'medium']);
-    expect(result.reasons[0]).toContain('Target tier hard not achievable');
+    expect(result.reasons[0]).toContain('Could not build a fair medium puzzle');
+    expect(result.reasons[0]).toContain('Natural fit:');
+    expect(result.reasons[0]).toContain('did not converge within 5 adjustment steps');
+    expect(result.reasons[0]).toContain('Achievable tiers from preview: medium, hard');
   });
 
   it('blocks direct adjusted publish calls when preflight fails', async () => {
@@ -428,18 +526,18 @@ describe('manual publish preflight', () => {
       }),
     });
 
-    await expect(
-      injectAndPublishManualPuzzle({
-        text: 'TEXT',
-        author: 'MODERATOR',
-        difficulty: 5,
-        challengeType: 'QUOTE',
-        allowAdjustment: true,
-      })
-    ).rejects.toMatchObject({
-      name: 'ManualChallengePreflightFailedError',
+    const result = await injectAndPublishManualPuzzle({
+      text: 'TEXT',
+      author: 'MODERATOR',
+      difficulty: 5,
+      challengeType: 'QUOTE',
+      allowAdjustment: true,
     });
 
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Text conflicts with existing content: exact signature match.',
+    });
     expect(publishAndActivateDailyPostMock).not.toHaveBeenCalled();
   });
 });

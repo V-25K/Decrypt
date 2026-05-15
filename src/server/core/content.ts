@@ -5,10 +5,30 @@ export const maxPuzzleAuthorLength = 28;
 const maxAlphabetLetters = 26;
 const absoluteEntropyMax = Math.log2(maxAlphabetLetters);
 const commonDifficultySuffixes = ['ING', 'TION', 'NESS', 'LY', 'ED', 'ER', 'EST'];
+const commonEnglishBigrams = new Set([
+  'TH', 'HE', 'IN', 'ER', 'AN', 'RE', 'ON', 'AT', 'EN', 'ND',
+  'TI', 'ES', 'OR', 'TE', 'OF', 'ED', 'IS', 'IT', 'AL', 'AR',
+  'ST', 'TO', 'NT', 'NG', 'SE', 'HA', 'AS', 'OU', 'IO', 'LE',
+  'VE', 'CO', 'ME', 'DE', 'HI', 'RI', 'RO', 'IC', 'NE', 'EA',
+]);
 const minimumSuffixWordLength = 5;
 const minPlayableLetterCount = 12;
 const minPlayableUniqueLetterCount = 5;
 const minPlayableUniqueWordCount = 2;
+const bannedExactWords = [
+  'FUCK',
+  'SHIT',
+  'BITCH',
+  'ASSHOLE',
+  'BASTARD',
+  'SLUR',
+  'HATE',
+  'KILL',
+  'SUICIDE',
+  'RAPE',
+];
+const bannedSubstrings = ['NIGG', 'FAGG', 'CUNT', 'WHORE', 'KYS'];
+const spammyFragments = ['HTTP', 'WWW', '.COM', '.NET', '.ORG', 'BUY NOW', 'SUBSCRIBE', 'FOLLOW ME'];
 
 export const normalizeContent = (input: string): string =>
   input
@@ -44,6 +64,54 @@ export const sanitizeAuthor = (input: string): string =>
 
 export const looksLikeAllowedAuthor = (input: string): boolean =>
   /^[A-Z0-9 .'-]+$/.test(input) && /[A-Z]/.test(input);
+
+export const containsDisallowedContent = (input: string): boolean => {
+  const upper = input.toUpperCase();
+  const exactWords = upper.split(/[^A-Z0-9]+/).filter((token) => token.length > 0);
+  const hasExactMatch = bannedExactWords.some((word) => exactWords.includes(word));
+  if (hasExactMatch) {
+    return true;
+  }
+  return bannedSubstrings.some((fragment) => upper.includes(fragment));
+};
+
+export const assessContentQuality = (input: string): string[] => {
+  const text = sanitizePhrase(input);
+  const reasons: string[] = [];
+  const letters = (text.match(/[A-Z]/g) ?? []).length;
+  const digits = (text.match(/[0-9]/g) ?? []).length;
+  const words = extractWords(text);
+
+  if (spammyFragments.some((fragment) => text.includes(fragment))) {
+    reasons.push('Quote looks promotional or link-like.');
+  }
+  if (/(.)\1\1\1/.test(text.replace(/\s+/g, ''))) {
+    reasons.push('Quote contains excessive repeated characters.');
+  }
+  if (/[!?.,;:()-]{4,}/.test(text)) {
+    reasons.push('Quote contains excessive punctuation.');
+  }
+  if (digits > 0 && letters > 0 && digits / Math.max(1, letters + digits) > 0.3) {
+    reasons.push('Quote contains too many digits for a clean puzzle prompt.');
+  }
+  if (words.length > 0) {
+    let longestRepeatedRun = 1;
+    let currentRun = 1;
+    for (let index = 1; index < words.length; index += 1) {
+      if (words[index] === words[index - 1]) {
+        currentRun += 1;
+        longestRepeatedRun = Math.max(longestRepeatedRun, currentRun);
+      } else {
+        currentRun = 1;
+      }
+    }
+    if (longestRepeatedRun >= 3) {
+      reasons.push('Quote repeats the same word too many times in a row.');
+    }
+  }
+
+  return reasons;
+};
 
 const extractWords = (text: string): string[] =>
   text
@@ -203,7 +271,38 @@ const looksLikeMinorTokenVariantsDuplicate = (
       matchCountWithOptionalSkip({ longer, shorter, skipIndex })
     );
   }
+  if (shorter.length >= 5 && bestMatches >= shorter.length) {
+    return true;
+  }
   return bestMatches / longer.length >= 0.9;
+};
+
+const looksLikeDroppedWordsDuplicate = (
+  candidateTokenSig: string,
+  priorTokenSig: string
+): boolean => {
+  const candidateTokens = candidateTokenSig.split(' ').filter(Boolean);
+  const priorTokens = priorTokenSig.split(' ').filter(Boolean);
+  const maxLen = Math.max(candidateTokens.length, priorTokens.length);
+  const minLen = Math.min(candidateTokens.length, priorTokens.length);
+  if (minLen < 4 || maxLen - minLen > 3) {
+    return false;
+  }
+  if (minLen / maxLen < 0.7) {
+    return false;
+  }
+
+  const [shorter, longer] =
+    candidateTokens.length <= priorTokens.length
+      ? [candidateTokens, priorTokens]
+      : [priorTokens, candidateTokens];
+  let shortIndex = 0;
+  for (let longIndex = 0; longIndex < longer.length && shortIndex < shorter.length; longIndex += 1) {
+    if (tokensNearlyEqual(longer[longIndex] ?? '', shorter[shortIndex] ?? '')) {
+      shortIndex += 1;
+    }
+  }
+  return shortIndex === shorter.length;
 };
 
 export const isNearDuplicateSignature = (params: {
@@ -233,6 +332,9 @@ export const isNearDuplicateSignature = (params: {
       }
       if (looksLikeMinorTokenVariantsDuplicate(candidateTokenSig, priorTokenSig)) {
         return { duplicate: true, reason: 'minor token variant duplicate' };
+      }
+      if (looksLikeDroppedWordsDuplicate(candidateTokenSig, priorTokenSig)) {
+        return { duplicate: true, reason: 'dropped words variant duplicate' };
       }
     } else {
       const minLen = Math.min(candidateNormalized.length, priorNormalized.length);
@@ -279,9 +381,11 @@ export type PhraseDifficultyProfile = {
   averageWordLength: number;
   uniqueLetterCount: number;
   letterEntropy: number;
+  bigramEntropy: number;
   oneLetterWordCount: number;
   twoLetterWordCount: number;
   commonSuffixCount: number;
+  commonBigramRatio: number;
   cryptoHardness: number;
 };
 
@@ -319,6 +423,34 @@ export const computePhraseDifficultyProfile = (
     word.length >= minimumSuffixWordLength &&
     commonDifficultySuffixes.some((suffix) => word.endsWith(suffix))
   ).length;
+  const bigramFrequency = new Map<string, number>();
+  let totalBigrams = 0;
+  let commonBigramCount = 0;
+  for (const word of words) {
+    if (word.length < 2) {
+      continue;
+    }
+    for (let index = 0; index < word.length - 1; index += 1) {
+      const bigram = word.slice(index, index + 2);
+      bigramFrequency.set(bigram, (bigramFrequency.get(bigram) ?? 0) + 1);
+      totalBigrams += 1;
+      if (commonEnglishBigrams.has(bigram)) {
+        commonBigramCount += 1;
+      }
+    }
+  }
+  let rawBigramEntropy = 0;
+  for (const count of bigramFrequency.values()) {
+    const p = totalBigrams > 0 ? count / totalBigrams : 0;
+    if (p > 0) {
+      rawBigramEntropy -= p * Math.log2(p);
+    }
+  }
+  const bigramEntropyMax =
+    totalBigrams > 1 ? Math.log2(Math.max(8, Math.min(26 * 26, totalBigrams))) : 0;
+  const bigramEntropy = bigramEntropyMax > 0 ? rawBigramEntropy / bigramEntropyMax : 0;
+  const normalizedBigramEntropy = clamp01(bigramEntropy);
+  const commonBigramRatio = totalBigrams > 0 ? commonBigramCount / totalBigrams : 0;
 
   const uniquenessCoverage =
     totalLetters > 0 ? uniqueLetterCount / Math.min(maxAlphabetLetters, totalLetters) : 0;
@@ -329,7 +461,11 @@ export const computePhraseDifficultyProfile = (
     oneLetterWordCount * 0.15 + twoLetterWordCount * 0.08 + commonSuffixCount * 0.06
   );
   const cryptoHardness = clamp01(
-    uniquenessScore * 0.5 + normalizedEntropy * 0.35 - helperPenalty * 0.15
+    uniquenessScore * 0.48 +
+      normalizedEntropy * 0.26 +
+      normalizedBigramEntropy * 0.16 -
+      helperPenalty * 0.15 -
+      commonBigramRatio * 0.1
   );
 
   return {
@@ -342,9 +478,11 @@ export const computePhraseDifficultyProfile = (
     averageWordLength,
     uniqueLetterCount,
     letterEntropy,
+    bigramEntropy,
     oneLetterWordCount,
     twoLetterWordCount,
     commonSuffixCount,
+    commonBigramRatio,
     cryptoHardness,
   };
 };
@@ -383,19 +521,19 @@ export type HardnessBoundsByTier = Record<DifficultyTier, HardnessBounds>;
 const defaultHardnessBoundsByTier: HardnessBoundsByTier = {
   warmup: {
     uniqueLetterBounds: { min: 5, max: 8 },
-    cryptoHardnessBounds: { min: 0.16, max: 0.35 },
+    cryptoHardnessBounds: { min: 0.14, max: 0.33 },
   },
   medium: {
-    uniqueLetterBounds: { min: 8, max: 14 },
-    cryptoHardnessBounds: { min: 0.35, max: 0.60 },
+    uniqueLetterBounds: { min: 8, max: 13 },
+    cryptoHardnessBounds: { min: 0.32, max: 0.58 },
   },
   hard: {
-    uniqueLetterBounds: { min: 12, max: 20 },
-    cryptoHardnessBounds: { min: 0.55, max: 0.80 },
+    uniqueLetterBounds: { min: 13, max: 22 },
+    cryptoHardnessBounds: { min: 0.58, max: 0.82 },
   },
   expert: {
-    uniqueLetterBounds: { min: 18, max: 26 },
-    cryptoHardnessBounds: { min: 0.75, max: 1.0 },
+    uniqueLetterBounds: { min: 19, max: 26 },
+    cryptoHardnessBounds: { min: 0.78, max: 1.0 },
   },
 };
 
@@ -720,6 +858,10 @@ export const validateQuoteForPhase1 = (
   if (countLetters(normalized) < minPlayableLetterCount) {
     reasons.push(`Quote must contain at least ${minPlayableLetterCount} letters.`);
   }
+  if (containsDisallowedContent(normalized)) {
+    reasons.push('Quote contains disallowed content.');
+  }
+  reasons.push(...assessContentQuality(normalized));
   if (!hasRepeatedLetter(normalized)) {
     reasons.push('Quote must contain at least one repeated letter.');
   }
@@ -736,7 +878,7 @@ export const validateQuoteForPhase1 = (
 
   if (reasons.length === 0) {
     const fit = scorePhraseDifficultyAgainstTier(phraseProfile, tier, hardnessBoundsByTier);
-    if (fit.score > 2.35) {
+    if (fit.score > 2.0) {
       const fitReasons = fit.issues.slice(0, 2);
       reasons.push(
         ...(fitReasons.length > 0

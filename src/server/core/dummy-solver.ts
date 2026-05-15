@@ -1,9 +1,18 @@
 import type { PuzzlePrivate, PuzzleTile } from '../../shared/game.ts';
+import { solverLexicon } from './solver-lexicon.ts';
 
 const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
-const suffixHints = ['ING', 'TION'] as const;
-const defaultMaxBranchExpansions = 2000;
-const defaultMaxSolverMs = 40;
+const suffixHints = ['ING', 'ED', 'ER', 'LY', 'EST', 'TION', 'NESS'] as const;
+const defaultMaxBranchExpansionsByProfile = {
+  standard: 2000,
+  deep: 5000,
+} as const;
+const defaultMaxSolverMsByProfile = {
+  standard: 40,
+  deep: 75,
+} as const;
+
+export type SolverProfile = 'standard' | 'deep';
 
 type SolverResult = {
   solvable: boolean;
@@ -15,6 +24,7 @@ type CipherTile = {
   index: number;
   wordIndex: number;
   cipherNumber: number;
+  isBlind: boolean;
 };
 
 type Assignment = {
@@ -36,7 +46,160 @@ type SolverContext = {
   targetRatio: number;
   maxSearchMs: number;
   maxBranchExpansions: number;
+  solverProfile: SolverProfile;
 };
+
+type CandidateWord = {
+  word: string;
+  assignments: Assignment[];
+  rank: number;
+};
+
+const buildPatternSignature = (
+  values: readonly (number | string)[]
+): string => {
+  const seen = new Map<number | string, number>();
+  let nextIndex = 0;
+  const signature: string[] = [];
+  for (const value of values) {
+    const existing = seen.get(value);
+    if (existing !== undefined) {
+      signature.push(String.fromCharCode(65 + existing));
+      continue;
+    }
+    seen.set(value, nextIndex);
+    signature.push(String.fromCharCode(65 + nextIndex));
+    nextIndex += 1;
+  }
+  return signature.join('');
+};
+
+const lexiconRank = new Map(
+  solverLexicon.map((word, index) => [word, index] as const)
+);
+
+const solverWordsByPattern = (() => {
+  const byPattern = new Map<string, string[]>();
+  for (const word of solverLexicon) {
+    const key = `${word.length}:${buildPatternSignature(word.split(''))}`;
+    const existing = byPattern.get(key) ?? [];
+    existing.push(word);
+    byPattern.set(key, existing);
+  }
+  return byPattern;
+})();
+
+const buildNeighborMap = (
+  words: readonly string[],
+  reader: (word: string, index: number) => { key: string; letter: string } | null
+): Map<string, Set<string>> => {
+  const map = new Map<string, Set<string>>();
+  for (const word of words) {
+    for (let index = 0; index < word.length; index += 1) {
+      const pair = reader(word, index);
+      if (!pair) {
+        continue;
+      }
+      const existing = map.get(pair.key) ?? new Set<string>();
+      existing.add(pair.letter);
+      map.set(pair.key, existing);
+    }
+  }
+  return map;
+};
+
+const forwardBigramMap = buildNeighborMap(
+  solverLexicon.filter((word) => word.length >= 2),
+  (word, index) => {
+    if (index >= word.length - 1) {
+      return null;
+    }
+    return {
+      key: word[index] ?? '',
+      letter: word[index + 1] ?? '',
+    };
+  }
+);
+
+const backwardBigramMap = buildNeighborMap(
+  solverLexicon.filter((word) => word.length >= 2),
+  (word, index) => {
+    if (index === 0) {
+      return null;
+    }
+    return {
+      key: word[index] ?? '',
+      letter: word[index - 1] ?? '',
+    };
+  }
+);
+
+const prefixTrigramMap = buildNeighborMap(
+  solverLexicon.filter((word) => word.length >= 3),
+  (word, index) => {
+    if (index >= word.length - 2) {
+      return null;
+    }
+    return {
+      key: `${word[index] ?? ''}${word[index + 1] ?? ''}`,
+      letter: word[index + 2] ?? '',
+    };
+  }
+);
+
+const suffixTrigramMap = buildNeighborMap(
+  solverLexicon.filter((word) => word.length >= 3),
+  (word, index) => {
+    if (index <= 1) {
+      return null;
+    }
+    return {
+      key: `${word[index - 1] ?? ''}${word[index] ?? ''}`,
+      letter: word[index - 2] ?? '',
+    };
+  }
+);
+
+const sandwichTrigramMap = buildNeighborMap(
+  solverLexicon.filter((word) => word.length >= 3),
+  (word, index) => {
+    if (index === 0 || index >= word.length - 1) {
+      return null;
+    }
+    return {
+      key: `${word[index - 1] ?? ''}${word[index + 1] ?? ''}`,
+      letter: word[index] ?? '',
+    };
+  }
+);
+
+const cloneLetterSet = (source: Set<string>): Set<string> => new Set(source);
+
+const intersectLetterSets = (sets: Set<string>[]): Set<string> => {
+  if (sets.length === 0) {
+    return new Set<string>();
+  }
+  const ordered = [...sets].sort((a, b) => a.size - b.size);
+  const [smallest, ...rest] = ordered;
+  if (!smallest) {
+    return new Set<string>();
+  }
+  const result = cloneLetterSet(smallest);
+  for (const letter of [...result]) {
+    if (rest.some((set) => !set.has(letter))) {
+      result.delete(letter);
+    }
+  }
+  return result;
+};
+
+const buildAlphabetSet = (): Set<string> => new Set(englishFrequencyOrder);
+
+export const normalizeRequiredSolveRatio = (requiredSolveRatio = 0.8): number =>
+  Math.max(0.35, Math.min(0.95, requiredSolveRatio));
+
+const normalizeSolverProfile = (profile?: SolverProfile): SolverProfile =>
+  profile === 'deep' ? 'deep' : 'standard';
 
 const countKnown = (knownLetters: Array<string | null>): number =>
   knownLetters.filter((letter) => letter !== null).length;
@@ -48,20 +211,24 @@ const buildCipherTiles = (
   puzzle: PuzzlePrivate,
   forbiddenIndices: Set<number>
 ): CipherTile[] =>
-  puzzle.tiles
-    .filter((tile): tile is PuzzleTile => tile.isLetter && !forbiddenIndices.has(tile.index))
-    .map((tile) => {
-      const cipherNumber = puzzle.mapping[tile.char];
-      if (!cipherNumber) {
-        return null;
-      }
-      return {
-        index: tile.index,
-        wordIndex: tile.wordIndex,
-        cipherNumber,
-      };
-    })
-    .filter((tile): tile is CipherTile => tile !== null);
+  (() => {
+    const blindSet = new Set(puzzle.blindIndices);
+    return puzzle.tiles
+      .filter((tile): tile is PuzzleTile => tile.isLetter && !forbiddenIndices.has(tile.index))
+      .map((tile) => {
+        const cipherNumber = puzzle.mapping[tile.char];
+        if (!cipherNumber) {
+          return null;
+        }
+        return {
+          index: tile.index,
+          wordIndex: tile.wordIndex,
+          cipherNumber,
+          isBlind: blindSet.has(tile.index),
+        };
+      })
+      .filter((tile): tile is CipherTile => tile !== null);
+  })();
 
 const groupWordTiles = (cipherTiles: CipherTile[]): CipherTile[][] => {
   const byWord = new Map<number, CipherTile[]>();
@@ -146,12 +313,92 @@ const applyAssignments = (state: SolverState, assignments: Assignment[]): boolea
 const propagateSolvedTiles = (state: SolverState, cipherTiles: CipherTile[]): boolean => {
   let changed = false;
   for (const tile of cipherTiles) {
-    if (state.knownLetters[tile.cipherNumber] !== null && !state.solvedIndices.has(tile.index)) {
+    if (
+      !tile.isBlind &&
+      state.knownLetters[tile.cipherNumber] !== null &&
+      !state.solvedIndices.has(tile.index)
+    ) {
       state.solvedIndices.add(tile.index);
       changed = true;
     }
   }
   return changed;
+};
+
+const assignmentsForLetterSequence = (
+  state: SolverState,
+  tiles: CipherTile[],
+  letters: string[]
+): Assignment[] | null => {
+  if (tiles.length !== letters.length) {
+    return null;
+  }
+  const localCipherToLetter = new Map<number, string>();
+  const localLetterToCipher = new Map<string, number>();
+
+  for (let i = 0; i < tiles.length; i += 1) {
+    const tile = tiles[i];
+    const letter = letters[i];
+    if (!tile || !letter) {
+      return null;
+    }
+    const knownLetter = state.knownLetters[tile.cipherNumber] ?? null;
+    if (knownLetter !== null && knownLetter !== letter) {
+      return null;
+    }
+    const knownCipher = state.letterToCipher.get(letter);
+    if (knownCipher !== undefined && knownCipher !== tile.cipherNumber) {
+      return null;
+    }
+    const localExistingLetter = localCipherToLetter.get(tile.cipherNumber);
+    if (localExistingLetter !== undefined && localExistingLetter !== letter) {
+      return null;
+    }
+    const localExistingCipher = localLetterToCipher.get(letter);
+    if (localExistingCipher !== undefined && localExistingCipher !== tile.cipherNumber) {
+      return null;
+    }
+    localCipherToLetter.set(tile.cipherNumber, letter);
+    localLetterToCipher.set(letter, tile.cipherNumber);
+  }
+
+  return [...localCipherToLetter.entries()]
+    .filter(([cipherNumber]) => state.knownLetters[cipherNumber] === null)
+    .map(([cipherNumber, letter]) => ({ cipherNumber, letter }));
+};
+
+const candidateWordsForWord = (
+  state: SolverState,
+  word: CipherTile[],
+  profile: SolverProfile
+): CandidateWord[] => {
+  const maxWordLength = profile === 'deep' ? 10 : 8;
+  if (word.length < 2 || word.length > maxWordLength) {
+    return [];
+  }
+  const key = `${word.length}:${buildPatternSignature(word.map((tile) => tile.cipherNumber))}`;
+  const maxCandidates = profile === 'deep' ? 28 : 14;
+  const candidates = solverWordsByPattern.get(key) ?? [];
+
+  return candidates
+    .map((candidate) => {
+      const assignments = assignmentsForLetterSequence(
+        state,
+        word,
+        candidate.split('')
+      );
+      if (assignments === null) {
+        return null;
+      }
+      return {
+        word: candidate,
+        assignments,
+        rank: lexiconRank.get(candidate) ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((candidate): candidate is CandidateWord => candidate !== null)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, maxCandidates);
 };
 
 const deterministicOneLetterPass = (
@@ -164,10 +411,7 @@ const deterministicOneLetterPass = (
       continue;
     }
     const tile = word[0];
-    if (!tile) {
-      continue;
-    }
-    if (state.knownLetters[tile.cipherNumber] !== null) {
+    if (!tile || state.knownLetters[tile.cipherNumber] !== null) {
       continue;
     }
     const options = ['A', 'I'].filter((letter) =>
@@ -182,6 +426,185 @@ const deterministicOneLetterPass = (
         return 'conflict';
       }
       const outcome = assignCipherLetter(state, tile.cipherNumber, onlyOption);
+      if (outcome === 'conflict') {
+        return 'conflict';
+      }
+      if (outcome === 'assigned') {
+        changed = true;
+      }
+    }
+  }
+  return changed ? 'changed' : 'unchanged';
+};
+
+const deterministicWordPatternPass = (
+  state: SolverState,
+  wordTiles: CipherTile[][],
+  context: SolverContext
+): 'changed' | 'unchanged' | 'conflict' => {
+  let changed = false;
+  for (const word of wordTiles) {
+    const candidates = candidateWordsForWord(state, word, context.solverProfile);
+    if (candidates.length === 0) {
+      continue;
+    }
+
+    if (candidates.length === 1) {
+      const onlyCandidate = candidates[0];
+      if (!onlyCandidate) {
+        return 'conflict';
+      }
+      if (!applyAssignments(state, onlyCandidate.assignments)) {
+        return 'conflict';
+      }
+      if (onlyCandidate.assignments.length > 0) {
+        changed = true;
+      }
+      continue;
+    }
+
+    for (let index = 0; index < word.length; index += 1) {
+      const tile = word[index];
+      if (!tile || state.knownLetters[tile.cipherNumber] !== null) {
+        continue;
+      }
+      const letters = new Set<string>();
+      for (const candidate of candidates) {
+        const letter = candidate.word[index];
+        if (letter) {
+          letters.add(letter);
+        }
+      }
+      if (letters.size !== 1) {
+        continue;
+      }
+      const [onlyLetter] = [...letters];
+      if (!onlyLetter) {
+        return 'conflict';
+      }
+      const outcome = assignCipherLetter(state, tile.cipherNumber, onlyLetter);
+      if (outcome === 'conflict') {
+        return 'conflict';
+      }
+      if (outcome === 'assigned') {
+        changed = true;
+      }
+    }
+  }
+  return changed ? 'changed' : 'unchanged';
+};
+
+const ngramCandidatesForTile = (
+  state: SolverState,
+  word: CipherTile[],
+  index: number
+): Set<string> => {
+  const constraints: Set<string>[] = [];
+  const previous = index > 0 ? word[index - 1] : null;
+  const next = index + 1 < word.length ? word[index + 1] : null;
+  const previousKnown =
+    previous ? state.knownLetters[previous.cipherNumber] ?? null : null;
+  const nextKnown = next ? state.knownLetters[next.cipherNumber] ?? null : null;
+
+  if (previousKnown) {
+    const forward = forwardBigramMap.get(previousKnown);
+    if (forward && forward.size > 0) {
+      constraints.push(cloneLetterSet(forward));
+    }
+  }
+  if (nextKnown) {
+    const backward = backwardBigramMap.get(nextKnown);
+    if (backward && backward.size > 0) {
+      constraints.push(cloneLetterSet(backward));
+    }
+  }
+  if (previousKnown && nextKnown) {
+    const middle = sandwichTrigramMap.get(`${previousKnown}${nextKnown}`);
+    if (middle && middle.size > 0) {
+      constraints.push(cloneLetterSet(middle));
+    }
+  }
+  if (index >= 2) {
+    const prevTwoFirst = word[index - 2];
+    const prevTwoSecond = word[index - 1];
+    const firstKnown =
+      prevTwoFirst ? state.knownLetters[prevTwoFirst.cipherNumber] ?? null : null;
+    const secondKnown =
+      prevTwoSecond ? state.knownLetters[prevTwoSecond.cipherNumber] ?? null : null;
+    if (firstKnown && secondKnown) {
+      const suffix = prefixTrigramMap.get(`${firstKnown}${secondKnown}`);
+      if (suffix && suffix.size > 0) {
+        constraints.push(cloneLetterSet(suffix));
+      }
+    }
+  }
+  if (index + 2 < word.length) {
+    const nextTwoFirst = word[index + 1];
+    const nextTwoSecond = word[index + 2];
+    const firstKnown =
+      nextTwoFirst ? state.knownLetters[nextTwoFirst.cipherNumber] ?? null : null;
+    const secondKnown =
+      nextTwoSecond ? state.knownLetters[nextTwoSecond.cipherNumber] ?? null : null;
+    if (firstKnown && secondKnown) {
+      const prefix = suffixTrigramMap.get(`${firstKnown}${secondKnown}`);
+      if (prefix && prefix.size > 0) {
+        constraints.push(cloneLetterSet(prefix));
+      }
+    }
+  }
+
+  if (constraints.length === 0) {
+    return buildAlphabetSet();
+  }
+  return intersectLetterSets(constraints);
+};
+
+const deterministicNgramPass = (
+  state: SolverState,
+  wordTiles: CipherTile[][],
+  context: SolverContext
+): 'changed' | 'unchanged' | 'conflict' => {
+  let changed = false;
+  for (const word of wordTiles) {
+    if (word.length < 2) {
+      continue;
+    }
+    const candidates = candidateWordsForWord(state, word, context.solverProfile);
+    for (let index = 0; index < word.length; index += 1) {
+      const tile = word[index];
+      if (!tile || state.knownLetters[tile.cipherNumber] !== null) {
+        continue;
+      }
+
+      const ngramLetters = ngramCandidatesForTile(state, word, index);
+      const refinedSets: Set<string>[] = [];
+      if (ngramLetters.size > 0 && ngramLetters.size < 26) {
+        refinedSets.push(ngramLetters);
+      }
+      if (candidates.length > 0) {
+        const letters = new Set<string>();
+        for (const candidate of candidates) {
+          const letter = candidate.word[index];
+          if (letter) {
+            letters.add(letter);
+          }
+        }
+        if (letters.size > 0) {
+          refinedSets.push(letters);
+        }
+      }
+      if (refinedSets.length === 0) {
+        continue;
+      }
+      const allowed = intersectLetterSets(refinedSets);
+      if (allowed.size !== 1) {
+        continue;
+      }
+      const [onlyLetter] = [...allowed];
+      if (!onlyLetter) {
+        return 'conflict';
+      }
+      const outcome = assignCipherLetter(state, tile.cipherNumber, onlyLetter);
       if (outcome === 'conflict') {
         return 'conflict';
       }
@@ -214,6 +637,20 @@ const propagateDeterministic = (
     if (oneLetterOutcome === 'changed') {
       changed = true;
     }
+    const patternOutcome = deterministicWordPatternPass(state, wordTiles, context);
+    if (patternOutcome === 'conflict') {
+      return false;
+    }
+    if (patternOutcome === 'changed') {
+      changed = true;
+    }
+    const ngramOutcome = deterministicNgramPass(state, wordTiles, context);
+    if (ngramOutcome === 'conflict') {
+      return false;
+    }
+    if (ngramOutcome === 'changed') {
+      changed = true;
+    }
     if (!changed) {
       return true;
     }
@@ -231,10 +668,7 @@ const branchFromOneLetterWords = (
       continue;
     }
     const tile = word[0];
-    if (!tile) {
-      continue;
-    }
-    if (state.knownLetters[tile.cipherNumber] === null) {
+    if (tile && state.knownLetters[tile.cipherNumber] === null) {
       candidates.add(tile.cipherNumber);
     }
   }
@@ -242,10 +676,9 @@ const branchFromOneLetterWords = (
   if (targetCipher === undefined) {
     return [];
   }
-  const options = ['A', 'I'].filter((letter) =>
-    isAssignmentCompatible(state, targetCipher, letter)
-  );
-  return options.map((letter) => [{ cipherNumber: targetCipher, letter }]);
+  return ['A', 'I']
+    .filter((letter) => isAssignmentCompatible(state, targetCipher, letter))
+    .map((letter) => [{ cipherNumber: targetCipher, letter }]);
 };
 
 const suffixAssignmentsForWord = (
@@ -257,67 +690,85 @@ const suffixAssignmentsForWord = (
     return null;
   }
   const suffixTiles = word.slice(word.length - suffix.length);
-  const suffixChars = suffix.split('');
-  const localCipherToLetter = new Map<number, string>();
-  const localLetterToCipher = new Map<string, number>();
+  const assignments = assignmentsForLetterSequence(state, suffixTiles, suffix.split(''));
+  return assignments && assignments.length > 0 ? assignments : null;
+};
 
-  for (let i = 0; i < suffixTiles.length; i += 1) {
-    const tile = suffixTiles[i];
-    const letter = suffixChars[i];
-    if (!tile || !letter) {
-      return null;
+const dedupeAssignmentBranches = (branches: Assignment[][]): Assignment[][] => {
+  const deduped = new Map<string, Assignment[]>();
+  for (const branch of branches) {
+    const signature = branch
+      .map((entry) => `${entry.cipherNumber}:${entry.letter}`)
+      .sort()
+      .join('|');
+    if (!deduped.has(signature)) {
+      deduped.set(signature, branch);
     }
-    const knownLetter = state.knownLetters[tile.cipherNumber] ?? null;
-    if (knownLetter !== null && knownLetter !== letter) {
-      return null;
+  }
+  return [...deduped.values()];
+};
+
+const branchFromWordPatterns = (
+  state: SolverState,
+  wordTiles: CipherTile[][],
+  profile: SolverProfile
+): Assignment[][] => {
+  let bestWord: CipherTile[] | null = null;
+  let bestCandidates: CandidateWord[] = [];
+
+  for (const word of wordTiles) {
+    const candidates = candidateWordsForWord(state, word, profile);
+    const maxBranchCandidates = profile === 'deep' ? 10 : 6;
+    if (candidates.length <= 1 || candidates.length > maxBranchCandidates) {
+      continue;
     }
-    const knownCipher = state.letterToCipher.get(letter);
-    if (knownCipher !== undefined && knownCipher !== tile.cipherNumber) {
-      return null;
+    const unresolvedCount = word.filter(
+      (tile) => state.knownLetters[tile.cipherNumber] === null
+    ).length;
+    if (unresolvedCount === 0) {
+      continue;
     }
-    const localExistingLetter = localCipherToLetter.get(tile.cipherNumber);
-    if (localExistingLetter !== undefined && localExistingLetter !== letter) {
-      return null;
+    if (
+      bestWord === null ||
+      candidates.length < bestCandidates.length ||
+      (candidates.length === bestCandidates.length && unresolvedCount > 0 && word.length > bestWord.length)
+    ) {
+      bestWord = word;
+      bestCandidates = candidates;
     }
-    const localExistingCipher = localLetterToCipher.get(letter);
-    if (localExistingCipher !== undefined && localExistingCipher !== tile.cipherNumber) {
-      return null;
-    }
-    localCipherToLetter.set(tile.cipherNumber, letter);
-    localLetterToCipher.set(letter, tile.cipherNumber);
   }
 
-  const assignments = [...localCipherToLetter.entries()]
-    .filter(([cipherNumber]) => state.knownLetters[cipherNumber] === null)
-    .map(([cipherNumber, letter]) => ({ cipherNumber, letter }));
-  return assignments.length > 0 ? assignments : null;
+  if (!bestWord || bestCandidates.length === 0) {
+    return [];
+  }
+
+  return dedupeAssignmentBranches(
+    bestCandidates
+      .map((candidate) => candidate.assignments)
+      .filter((assignments) => assignments.length > 0)
+  );
 };
 
 const branchFromSuffixHints = (
   state: SolverState,
   wordTiles: CipherTile[][]
 ): Assignment[][] => {
+  let bestBranches: Assignment[][] = [];
   for (const suffix of suffixHints) {
-    const candidates = wordTiles
+    const candidates = dedupeAssignmentBranches(
+      wordTiles
       .map((word) => suffixAssignmentsForWord(state, word, suffix))
       .filter((assignments): assignments is Assignment[] => assignments !== null)
-      .slice(0, 8);
-    if (candidates.length === 0) {
-      continue;
+      .slice(0, 10)
+    );
+    if (
+      candidates.length > 0 &&
+      (bestBranches.length === 0 || candidates.length < bestBranches.length)
+    ) {
+      bestBranches = candidates;
     }
-    const deduped = new Map<string, Assignment[]>();
-    for (const candidate of candidates) {
-      const signature = candidate
-        .map((entry) => `${entry.cipherNumber}:${entry.letter}`)
-        .sort()
-        .join('|');
-      if (!deduped.has(signature)) {
-        deduped.set(signature, candidate);
-      }
-    }
-    return [...deduped.values()];
   }
-  return [];
+  return bestBranches;
 };
 
 const branchFromFrequency = (
@@ -346,14 +797,10 @@ const branchFromFrequency = (
     return [];
   }
   const topCipher = top[0];
-  if (topCipher === undefined) {
-    return [];
-  }
-
   const usedLetters = new Set(state.letterToCipher.keys());
   return englishFrequencyOrder
     .filter((letter) => !usedLetters.has(letter))
-    .slice(0, 4)
+    .slice(0, 5)
     .filter((letter) => isAssignmentCompatible(state, topCipher, letter))
     .map((letter) => [{ cipherNumber: topCipher, letter }]);
 };
@@ -361,11 +808,16 @@ const branchFromFrequency = (
 const chooseBranchCandidates = (
   state: SolverState,
   cipherTiles: CipherTile[],
-  wordTiles: CipherTile[][]
+  wordTiles: CipherTile[][],
+  profile: SolverProfile
 ): Assignment[][] => {
   const oneLetterBranches = branchFromOneLetterWords(state, wordTiles);
   if (oneLetterBranches.length > 0) {
     return oneLetterBranches;
+  }
+  const wordPatternBranches = branchFromWordPatterns(state, wordTiles, profile);
+  if (wordPatternBranches.length > 0) {
+    return wordPatternBranches;
   }
   const suffixBranches = branchFromSuffixHints(state, wordTiles);
   if (suffixBranches.length > 0) {
@@ -403,7 +855,8 @@ const searchSolve = (params: {
   const branchCandidates = chooseBranchCandidates(
     params.state,
     params.cipherTiles,
-    params.wordTiles
+    params.wordTiles,
+    params.context.solverProfile
   );
   if (branchCandidates.length === 0) {
     return null;
@@ -429,6 +882,7 @@ const searchSolve = (params: {
       return solved;
     }
   }
+
   return null;
 };
 
@@ -439,11 +893,13 @@ export const runDummySolver = (params: {
   requiredSolveRatio?: number;
   maxSearchMs?: number;
   maxBranchExpansions?: number;
+  solverProfile?: SolverProfile;
 }): SolverResult => {
   const forbiddenSet = new Set(params.forbiddenIndices ?? []);
   const cipherTiles = buildCipherTiles(params.puzzle, forbiddenSet);
   const wordTiles = groupWordTiles(cipherTiles);
   const totalLetters = cipherTiles.length;
+  const solverProfile = normalizeSolverProfile(params.solverProfile);
   const state: SolverState = {
     knownLetters: Array.from({ length: 27 }, () => null),
     letterToCipher: new Map<string, number>(),
@@ -486,19 +942,17 @@ export const runDummySolver = (params: {
     branchExpansions: 0,
     budgetExceeded: false,
     bestRatio: solveRatio(state.solvedIndices, totalLetters),
-    targetRatio: Math.max(
-      0.5,
-      Math.min(0.95, params.requiredSolveRatio ?? 0.8)
-    ),
+    targetRatio: normalizeRequiredSolveRatio(params.requiredSolveRatio ?? 0.8),
     maxSearchMs:
       typeof params.maxSearchMs === 'number' && Number.isFinite(params.maxSearchMs)
         ? Math.max(1, Math.floor(params.maxSearchMs))
-        : defaultMaxSolverMs,
+        : defaultMaxSolverMsByProfile[solverProfile],
     maxBranchExpansions:
       typeof params.maxBranchExpansions === 'number' &&
       Number.isFinite(params.maxBranchExpansions)
         ? Math.max(1, Math.floor(params.maxBranchExpansions))
-        : defaultMaxBranchExpansions,
+        : defaultMaxBranchExpansionsByProfile[solverProfile],
+    solverProfile,
   };
   const solved = searchSolve({
     state,

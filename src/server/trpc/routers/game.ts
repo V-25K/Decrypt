@@ -14,6 +14,7 @@ import {
   gameSubmitGuessesInputSchema,
   gameSubmitGuessesResponseSchema,
   gameSubmitGuessInputSchema,
+  gameSubmitGuessResponseSchema,
 } from '../../../shared/game';
 import {
   bootstrapGame,
@@ -72,11 +73,13 @@ export const gameRouter = router({
   submitGuess: authedProcedure
     .input(gameSubmitGuessInputSchema)
     .mutation(async ({ input }) => {
-      return await submitGuessForSession({
-        levelId: input.levelId,
-        tileIndex: input.tileIndex,
-        guessedLetter: input.guessedLetter,
-      });
+      return gameSubmitGuessResponseSchema.parse(
+        await submitGuessForSession({
+          levelId: input.levelId,
+          tileIndex: input.tileIndex,
+          guessedLetter: input.guessedLetter,
+        })
+      );
     }),
   submitGuesses: authedProcedure
     .input(gameSubmitGuessesInputSchema)

@@ -53,18 +53,100 @@ export const setDailyPointer = async (levelId: string): Promise<void> => {
   await redis.set(keyDailyPointer, levelId);
 };
 
+const parseLevelIdCounter = (value: string | null): number | null => {
+  if (value === null) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Math.floor(parsed);
+};
+
+const parseLevelIdSuffix = (levelId: string): number | null => {
+  const match = /^lvl_(\d+)$/.exec(levelId);
+  if (!match) {
+    return null;
+  }
+  const suffix = match[1] ?? '';
+  const parsed = Number(suffix);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Math.floor(parsed);
+};
+
+const getHighestIndexedLevelIdCounter = async (): Promise<number> => {
+  const indexed = await redis.zRange(keyPuzzlesIndex, 0, -1, { by: 'rank' });
+  if (!Array.isArray(indexed)) {
+    return 0;
+  }
+  let maxLevelCounter = 0;
+  for (const entry of indexed) {
+    const suffix = parseLevelIdSuffix(entry.member);
+    if (suffix === null) {
+      console.warn(`[level-id-counter] Ignoring malformed indexed level id: ${entry.member}`);
+      continue;
+    }
+    maxLevelCounter = Math.max(maxLevelCounter, suffix);
+  }
+  return maxLevelCounter;
+};
+
+const normalizeLevelIdCounter = (params: {
+  currentCounterRaw: string | null;
+  baselineCounter: number;
+}): {
+  counter: number;
+  repairReason: string | null;
+} => {
+  const parsedCounter = parseLevelIdCounter(params.currentCounterRaw);
+  if (parsedCounter !== null && parsedCounter >= params.baselineCounter) {
+    return {
+      counter: parsedCounter,
+      repairReason: null,
+    };
+  }
+
+  return {
+    counter: params.baselineCounter,
+    repairReason:
+    parsedCounter === null
+      ? params.currentCounterRaw === null
+        ? 'missing'
+        : `invalid (${params.currentCounterRaw})`
+      : `stale (${parsedCounter} < ${params.baselineCounter})`,
+  };
+};
+
+const repairLevelIdCounterIfNeeded = async (params: {
+  currentCounterRaw: string | null;
+  baselineCounter: number;
+}): Promise<number> => {
+  const normalized = normalizeLevelIdCounter(params);
+  if (normalized.repairReason === null) {
+    return normalized.counter;
+  }
+  console.warn('[level-id-counter] Repairing counter state', {
+    reason: normalized.repairReason,
+    baselineCounter: params.baselineCounter,
+  });
+  await redis.set(keyLevelIdCounter, `${params.baselineCounter}`);
+  return normalized.counter;
+};
+
 const ensureLevelIdCounterSeeded = async (): Promise<number> => {
-  const currentCounterRaw = await redis.get(keyLevelIdCounter);
+  const currentCounterRaw = (await redis.get(keyLevelIdCounter)) ?? null;
+  const highestIndexedCounter = await getHighestIndexedLevelIdCounter();
   if (currentCounterRaw === null) {
-    const existingCount = await redis.zCard(keyPuzzlesIndex);
-    await redis.set(keyLevelIdCounter, `${existingCount}`, { nx: true });
-    return existingCount;
+    await redis.set(keyLevelIdCounter, `${highestIndexedCounter}`, { nx: true });
+    return highestIndexedCounter;
   }
-  const currentCounter = Number(currentCounterRaw);
-  if (!Number.isFinite(currentCounter) || currentCounter < 0) {
-    throw new Error('Invalid level id counter state');
-  }
-  return Math.floor(currentCounter);
+  return repairLevelIdCounterIfNeeded({
+    currentCounterRaw,
+    baselineCounter: highestIndexedCounter,
+  });
 };
 
 export const peekNextLevelId = async (): Promise<string> => {
@@ -161,16 +243,20 @@ export const savePuzzle = async (params: {
     let transactionStarted = false;
     let execAttempted = false;
     try {
-      const currentCounterRaw = await redis.get(keyLevelIdCounter);
-      const currentCounter =
-        currentCounterRaw === null
-          ? await redis.zCard(keyPuzzlesIndex)
-          : Number(currentCounterRaw);
-      if (!Number.isFinite(currentCounter) || currentCounter < 0) {
-        await tx.unwatch();
-        throw new Error('Invalid level id counter state');
+      const currentCounterRaw = (await redis.get(keyLevelIdCounter)) ?? null;
+      const baselineCounter = await getHighestIndexedLevelIdCounter();
+      const normalizedCounter = normalizeLevelIdCounter({
+        currentCounterRaw,
+        baselineCounter,
+      });
+      if (normalizedCounter.repairReason !== null) {
+        console.warn('[level-id-counter] Repairing counter state', {
+          reason: normalizedCounter.repairReason,
+          baselineCounter,
+        });
       }
-      const nextCounter = Math.floor(currentCounter) + 1;
+      const currentCounter = normalizedCounter.counter;
+      const nextCounter = currentCounter + 1;
       const allocatedLevelId = `lvl_${`${nextCounter}`.padStart(4, '0')}`;
       if (params.expectedLevelId && params.expectedLevelId !== allocatedLevelId) {
         await tx.unwatch();
@@ -192,7 +278,9 @@ export const savePuzzle = async (params: {
       await tx.multi();
       transactionStarted = true;
       if (currentCounterRaw === null) {
-        await tx.set(keyLevelIdCounter, `${Math.floor(currentCounter)}`, { nx: true });
+        await tx.set(keyLevelIdCounter, `${currentCounter}`, { nx: true });
+      } else if (normalizedCounter.repairReason !== null) {
+        await tx.set(keyLevelIdCounter, `${currentCounter}`);
       }
       await tx.incrBy(keyLevelIdCounter, 1);
       await tx.set(keyPuzzlePrivate(allocatedLevelId), JSON.stringify(puzzlePrivate));
@@ -255,6 +343,20 @@ export const getPuzzlePublishedPostId = async (
   return value ?? null;
 };
 
+export const isPuzzlePublishedVisible = async (levelId: string): Promise<boolean> => {
+  const [dailyPointer, publishedPostId, publicationReceipt] = await Promise.all([
+    getDailyPointer(),
+    getPuzzlePublishedPostId(levelId),
+    getPuzzlePublicationReceipt(levelId),
+  ]);
+
+  return (
+    dailyPointer === levelId ||
+    publishedPostId !== null ||
+    publicationReceipt !== null
+  );
+};
+
 export const setPuzzlePublishedPostId = async (
   levelId: string,
   postId: string,
@@ -312,6 +414,21 @@ export const reserveUsedSignature = async (
 ): Promise<boolean> => {
   const reserved = await redis.hSetNX(keyUsedStrings, signature, levelId);
   return reserved === 1;
+};
+
+export const transferUsedSignatureReservation = async (
+  signature: string,
+  expectedOwner: string,
+  nextOwner: string
+): Promise<boolean> => {
+  const existing = await redis.hGet(keyUsedStrings, signature);
+  if (existing !== expectedOwner) {
+    return false;
+  }
+  await redis.hSet(keyUsedStrings, {
+    [signature]: nextOwner,
+  });
+  return true;
 };
 
 export const getUsedSignatureOwner = async (

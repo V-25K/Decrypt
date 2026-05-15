@@ -1,10 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   validateManualChallenge,
   injectManualChallengeWithAdjustment,
   type ManualChallengeValidationResult,
   type ManualChallengeResult,
 } from './admin';
+
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Manual Challenge Validation and Feedback', () => {
   describe('validateManualChallenge', () => {
@@ -45,29 +55,29 @@ describe('Manual Challenge Validation and Feedback', () => {
       expect(result.reasons.some((reason) => reason.includes('too short'))).toBe(true);
     });
 
-    it('should provide feedback for unreachable difficulty', async () => {
+    it('treats an unreachable preference as a recommendation problem, not a validity failure', async () => {
       const result: ManualChallengeValidationResult = await validateManualChallenge({
-        text: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-        difficulty: 1, // Easy difficulty with very hard text
+        text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+        difficulty: 2, // Warmup preference for a harder quote
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.textProfile.cryptoHardness).toBeGreaterThan(0.6);
-      expect(result.naturalDifficulty).toBe('expert');
-      expect(result.suggestions.length).toBeGreaterThan(0);
+      expect(result.valid).toBe(true);
+      expect(result.textProfile.cryptoHardness).toBeGreaterThan(0.5);
+      expect(['medium', 'hard']).toContain(result.naturalDifficulty);
+      expect(result.achievableTierRange).not.toContain('warmup');
+      expect(result.suggestions).toHaveLength(0);
     });
 
-    it('should report unreachable target tiers instead of raw target-tier phase1 failure', async () => {
+    it('returns the achievable range even when the preferred tier is outside it', async () => {
       const result: ManualChallengeValidationResult = await validateManualChallenge({
         text: 'TO BE OR NOT TO BE',
         difficulty: 9,
       });
 
-      expect(result.valid).toBe(false);
+      expect(result.valid).toBe(true);
       expect(result.achievableTierRange).not.toContain('expert');
-      expect(
-        result.reasons.some((reason) => reason.includes('Target tier expert not achievable'))
-      ).toBe(true);
+      expect(result.reasons).toHaveLength(0);
+      expect(result.suggestions).toHaveLength(0);
     });
 
     it('should compute achievable tier range correctly', async () => {
@@ -96,14 +106,13 @@ describe('Manual Challenge Validation and Feedback', () => {
       expect(['hard', 'expert']).toContain(hardResult.naturalDifficulty);
     });
 
-    it('should generate suggestions for text modification', async () => {
+    it('should generate suggestions for text that fits no supported tier', async () => {
       const result = await validateManualChallenge({
-        text: 'WHY JOT FLUX VEX BRIM', // High hardness text
-        difficulty: 1, // Trying to make it warmup
+        text: 'WHY JOT FLUX VEX BRIM',
+        difficulty: 1,
       });
 
       expect(result.suggestions.length).toBeGreaterThan(0);
-      expect(result.suggestions.some(s => s.includes('hardness'))).toBe(true);
     });
   });
 

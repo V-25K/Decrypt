@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { RebalancedRetryCostCalculator, type RetryCostConfig } from '../../shared/rebalanced-retry-cost-calculator';
+import { RetryCostCalculator, type RetryCostConfig } from '../../shared/retry-cost-calculator';
 import { propertyTestConfig } from '../../shared/property-testing';
 
 describe('Property 5: Retry Cost Calculation Correctness', () => {
@@ -30,7 +30,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           maxRetryCoins: fc.integer({ min: 100, max: 200 })
         }),
         ({ retryCount, difficulty, maxRetryCoins }) => {
-          const calculator = new RebalancedRetryCostCalculator({ maxRetryCoins });
+          const calculator = new RetryCostCalculator({ maxRetryCoins });
           const cost = calculator.calculateRetryCost(retryCount, difficulty);
           
           // Property: Cost never exceeds configured maximum
@@ -62,7 +62,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           maxRetries: fc.integer({ min: 1, max: 5 })
         }),
         ({ difficulty, maxRetries }) => {
-          const calculator = new RebalancedRetryCostCalculator();
+          const calculator = new RetryCostCalculator();
           
           // Test linear progression for first few retries
           const costs = [];
@@ -117,7 +117,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           })
         }),
         ({ difficulty, customConfig }) => {
-          const calculator = new RebalancedRetryCostCalculator(customConfig);
+          const calculator = new RetryCostCalculator(customConfig);
           const totalCost = calculator.getMaxCostForRetries(3, difficulty);
           
           // Property: 3 retries never exceed 6 puzzle completions (210 coins)
@@ -152,7 +152,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           difficultyMultiplier: fc.float({ min: 1.1, max: 2.0 })
         }),
         ({ retryCount, easyDifficulty, hardDifficulty, difficultyMultiplier }) => {
-          const calculator = new RebalancedRetryCostCalculator({ difficultyMultiplier });
+          const calculator = new RetryCostCalculator({ difficultyMultiplier });
           
           const easyCost = calculator.calculateRetryCost(retryCount, easyDifficulty);
           const normalCost = calculator.calculateRetryCost(retryCount, 5); // Baseline difficulty
@@ -196,7 +196,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           maxRetries: fc.integer({ min: 2, max: 8 })
         }),
         ({ difficulty, maxRetries }) => {
-          const calculator = new RebalancedRetryCostCalculator();
+          const calculator = new RetryCostCalculator();
           
           let previousCost = 0;
           for (let retry = 0; retry < maxRetries; retry++) {
@@ -236,7 +236,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           difficulty: fc.integer({ min: 1, max: 10 })
         }),
         ({ coins, retryCount, difficulty }) => {
-          const calculator = new RebalancedRetryCostCalculator();
+          const calculator = new RetryCostCalculator();
           
           const cost = calculator.calculateRetryCost(retryCount, difficulty);
           const canAfford = calculator.canAffordRetry(coins, retryCount, difficulty);
@@ -271,7 +271,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           difficulty: fc.integer({ min: 1, max: 10 })
         }),
         ({ maxRetries, difficulty }) => {
-          const calculator = new RebalancedRetryCostCalculator();
+          const calculator = new RetryCostCalculator();
           const breakdown = calculator.getCostBreakdown(maxRetries, difficulty);
           
           // Property: Breakdown should have correct length
@@ -324,7 +324,7 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
           )
         }),
         ({ extremeDifficulty, extremeRetry }) => {
-          const calculator = new RebalancedRetryCostCalculator();
+          const calculator = new RetryCostCalculator();
           
           try {
             const cost = calculator.calculateRetryCost(extremeRetry, extremeDifficulty);

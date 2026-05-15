@@ -1,4 +1,8 @@
 import { redis, reddit } from '@devvit/web/server';
+import {
+  keyModeratorAccessCache,
+  keyModeratorAccessCacheIndex,
+} from './keys';
 
 const normalizeUsername = (value: string): string => value.trim().toLowerCase();
 
@@ -9,8 +13,14 @@ const normalizeUsername = (value: string): string => value.trim().toLowerCase();
 // it must not be used for personalized/per-user data.
 const modCacheTtlSeconds = 60;
 
-const keyModCache = (subredditName: string, username: string): string =>
-  `decrypt:cache:mod:${normalizeUsername(subredditName)}:${normalizeUsername(username)}`;
+const buildModeratorCacheKey = (subredditName: string, username: string): string =>
+  keyModeratorAccessCache(normalizeUsername(subredditName), normalizeUsername(username));
+
+const trackModeratorCacheKey = async (cacheKey: string): Promise<void> => {
+  await redis.hSet(keyModeratorAccessCacheIndex, {
+    [cacheKey]: '1',
+  });
+};
 
 export const isSubredditModerator = async (params: {
   subredditName: string | null | undefined;
@@ -20,7 +30,7 @@ export const isSubredditModerator = async (params: {
     return false;
   }
 
-  const cacheKey = keyModCache(params.subredditName, params.username);
+  const cacheKey = buildModeratorCacheKey(params.subredditName, params.username);
   const cached = await redis.get(cacheKey);
   if (cached !== null && cached !== undefined) {
     return cached === '1';
@@ -40,6 +50,7 @@ export const isSubredditModerator = async (params: {
 
   // Cache the result. Use NX so a concurrent request that already wrote the
   // value doesn't get overwritten with a potentially stale second result.
+  await trackModeratorCacheKey(cacheKey);
   await redis.set(cacheKey, isMod ? '1' : '0', {
     expiration: new Date(Date.now() + modCacheTtlSeconds * 1000),
     nx: true,

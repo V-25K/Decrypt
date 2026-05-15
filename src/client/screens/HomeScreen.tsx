@@ -18,7 +18,6 @@ type HomeScreenProps = {
   endlessCatalogAvailable: boolean;
   endlessPublishedLevelCount: number;
   endlessActiveCatalogVersion: string | null;
-  hasClaimableQuest: boolean;
 };
 
 export const HomeScreen = ({
@@ -35,11 +34,10 @@ export const HomeScreen = ({
   endlessCatalogAvailable,
   endlessPublishedLevelCount,
   endlessActiveCatalogVersion,
-  hasClaimableQuest,
 }: HomeScreenProps) => (
   <section className="flex min-h-0 flex-1 flex-col" data-testid="home-screen">
     <main className="flex min-h-0 flex-1 flex-col px-3 py-3">
-      <div className={homePanelClass}>
+      <div className={cn(homePanelClass, 'home-panel-stack')}>
         <div className="flex items-center justify-center">
           <img
             src="/logo.png"
@@ -47,10 +45,10 @@ export const HomeScreen = ({
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className={`h-auto ${deviceTier === 'mobile' ? 'w-[148px]' : 'w-[190px]'}`}
+            className={`home-logo-image h-auto ${deviceTier === 'mobile' ? 'w-[148px]' : 'w-[190px]'}`}
           />
         </div>
-        <section className="flex items-center justify-center gap-2">
+        <section className="home-mode-strip panel-clear flex items-center justify-center gap-2">
           <button
             data-testid="home-mode-endless"
             className={cn(
@@ -62,13 +60,6 @@ export const HomeScreen = ({
             onClick={() => onHomeTabSelect('endless')}
             disabled={busy && homeTab !== 'endless'}
           >
-            {/* Quest notification badge */}
-            {hasClaimableQuest && (
-              <span className="absolute -right-1 -top-1 flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-              </span>
-            )}
             Endless
           </button>
           <button
@@ -82,34 +73,27 @@ export const HomeScreen = ({
             onClick={() => onHomeTabSelect('daily')}
             disabled={busy}
           >
-            {/* Quest notification badge */}
-            {hasClaimableQuest && (
-              <span className="absolute -right-1 -top-1 flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
-              </span>
-            )}
             Daily
           </button>
         </section>
         {homeTab === 'daily' ? (
           <section
-            className="app-surface rounded-xl border app-border px-4 py-4 text-center"
+            className="home-stage-panel panel-clear rounded-xl px-4 py-4 text-center"
             data-testid="home-daily-panel"
           >
             <p className="app-text-muted mt-1 text-xs font-semibold uppercase">
               Daily Cipher #{formattedLevel}
             </p>
             <div className="app-text mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-bold uppercase">
-              <div className="app-surface-subtle rounded-lg px-2 py-2">
+              <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                 <div className="app-text-soft text-[9px]">Plays</div>
                 <div>{challengeMetrics.plays.toLocaleString()}</div>
               </div>
-              <div className="app-surface-subtle rounded-lg px-2 py-2">
+              <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                 <div className="app-text-soft text-[9px]">Type</div>
                 <div>{challengeTypeLabel}</div>
               </div>
-              <div className="app-surface-subtle rounded-lg px-2 py-2">
+              <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                 <div className="app-text-soft text-[9px]">Win</div>
                 <div>{challengeMetrics.winRatePct}%</div>
               </div>
@@ -125,7 +109,7 @@ export const HomeScreen = ({
           </section>
         ) : (
           <section
-            className="app-surface rounded-xl border app-border px-4 py-4"
+            className="home-stage-panel panel-clear rounded-xl px-4 py-4"
             data-testid="home-endless-panel"
           >
             <div className="app-text flex items-center justify-between text-xs font-black uppercase">
@@ -139,15 +123,15 @@ export const HomeScreen = ({
             {endlessCatalogAvailable ? (
               <>
                 <div className="app-text mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-bold uppercase">
-                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                  <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                     <div className="app-text-soft text-[9px]">Levels</div>
                     <div>{endlessPublishedLevelCount.toLocaleString()}</div>
                   </div>
-                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                  <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                     <div className="app-text-soft text-[9px]">Catalog</div>
                     <div>{endlessActiveCatalogVersion ?? 'Live'}</div>
                   </div>
-                  <div className="app-surface-subtle rounded-lg px-2 py-2">
+                  <div className="home-stat-card app-surface-subtle rounded-lg px-2 py-2">
                     <div className="app-text-soft text-[9px]">Mode</div>
                     <div>Static</div>
                   </div>
@@ -163,7 +147,7 @@ export const HomeScreen = ({
                 </button>
               </>
             ) : (
-              <div className="mt-3 grid grid-cols-4 gap-2">
+              <div className="home-level-grid mt-3 grid grid-cols-4 gap-2">
                 {endlessPreviewLevels.map((levelNumber) => (
                   <button
                     key={`home-endless-level-${levelNumber}`}

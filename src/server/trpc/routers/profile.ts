@@ -1,6 +1,7 @@
 import { reddit } from '@devvit/web/server';
 import {
   heartPurchaseResponseSchema,
+  heartPurchaseStatusResponseSchema,
   profileJoinCommunityResponseSchema,
   profileSetAudioEnabledInputSchema,
   profileSetAudioEnabledResponseSchema,
@@ -11,6 +12,7 @@ import { isPrimaryCommunitySubreddit, primaryCommunitySubreddit } from '../../..
 import { syncCommunityFlair } from '../../core/community-flair';
 import { communityJoinRewardCoins } from '../../core/constants';
 import {
+  getCoinHeartPurchaseStatus,
   purchaseCoinHeartRefill,
   purchaseCoinHeartTopUp,
 } from '../../core/economy';
@@ -127,11 +129,16 @@ export const profileRouter = router({
     const result = await purchaseCoinHeartRefill({ userId: ctx.userId });
     return heartPurchaseResponseSchema.parse(result);
   }),
-  purchaseCoinTopUp: authedProcedure.mutation(async ({ ctx }) => {
-    const result = await purchaseCoinHeartTopUp({ userId: ctx.userId });
-    return heartPurchaseResponseSchema.parse(result);
+	  purchaseCoinTopUp: authedProcedure.mutation(async ({ ctx }) => {
+	    const result = await purchaseCoinHeartTopUp({ userId: ctx.userId });
+	    return heartPurchaseResponseSchema.parse(result);
+	  }),
+  getCoinHeartPurchaseStatus: authedProcedure.query(async ({ ctx }) => {
+    return heartPurchaseStatusResponseSchema.parse(
+      await getCoinHeartPurchaseStatus({ userId: ctx.userId })
+    );
   }),
-  setActiveFlair: authedProcedure
+	  setActiveFlair: authedProcedure
     .input(profileSetActiveFlairInputSchema)
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.userId;

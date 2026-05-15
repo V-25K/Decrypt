@@ -1,6 +1,7 @@
 import { memo, type RefCallback, type MouseEvent } from 'react';
 import { cn } from '../utils';
-import { HomeIcon, ReplayIcon, ShareIcon } from './Icons';
+import { ReplayIcon, ShareIcon } from './Icons';
+import { UiSprite } from './UiSprite';
 import type { OutcomeCrowdBubble } from '../app/outcome-crowd';
 
 type OutcomeOverlayProps = {
@@ -93,6 +94,8 @@ export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
                     ref={(node) => {
                       setOutcomeCrowdBubbleNode(bubble.id, node);
                     }}
+                    role="img"
+                    aria-label={`Player rank ${bubble.rank} avatar`}
                     className={cn(
                       'result-crowd-avatar absolute',
                       bubble.isPodium ? 'result-crowd-avatar-podium' : ''
@@ -194,7 +197,11 @@ export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
                 aria-label="Go home"
                 title="Go home"
               >
-                <HomeIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
+                <UiSprite
+                  icon="home"
+                  decorative
+                  className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6"
+                />
               </button>
             </div>
 
@@ -310,8 +317,8 @@ export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
                   <p className="mt-1 text-[clamp(16px,2.8vw,28px)] font-black leading-snug text-white">
                     {completionQuote}
                   </p>
-                  <p className="mt-2 text-[clamp(14px,2.3vw,20px)] font-semibold text-white">
-                    — {puzzleAuthor}
+                  <p className="outcome-quote-author mt-2 text-[clamp(14px,2.3vw,20px)] font-semibold text-white">
+                    {puzzleAuthor}
                   </p>
                 </section>
               </div>

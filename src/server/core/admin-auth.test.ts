@@ -5,12 +5,13 @@ const { getModeratorsAllMock, getModeratorsMock, redisMock } = vi.hoisted(() => 
   // Default: cache miss (returns null so the live Reddit API is always called)
   const get = vi.fn().mockResolvedValue(null);
   const set = vi.fn().mockResolvedValue(undefined);
+  const hSet = vi.fn().mockResolvedValue(undefined);
   return {
     getModeratorsAllMock: all,
     getModeratorsMock: vi.fn(() => ({
       all,
     })),
-    redisMock: { get, set },
+    redisMock: { get, set, hSet },
   };
 });
 
@@ -29,8 +30,12 @@ import {
 afterEach(() => {
   getModeratorsMock.mockClear();
   getModeratorsAllMock.mockReset();
+  redisMock.get.mockClear();
   redisMock.get.mockResolvedValue(null); // reset to cache-miss after each test
+  redisMock.set.mockClear();
   redisMock.set.mockResolvedValue(undefined);
+  redisMock.hSet.mockClear();
+  redisMock.hSet.mockResolvedValue(undefined);
 });
 
 describe('admin auth', () => {
@@ -59,6 +64,7 @@ describe('admin auth', () => {
       username: 'mod_user',
       limit: 1,
     });
+    expect(redisMock.hSet).toHaveBeenCalledTimes(1);
   });
 
   it('denies when neither allowlisted nor moderator', async () => {

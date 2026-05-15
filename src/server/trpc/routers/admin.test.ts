@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  completeSavedManualPuzzlePublishMock,
   formatModeratorRerollErrorMock,
   hasAdminAccessMock,
   injectAndPublishManualPuzzleMock,
   injectManualChallengeWithAdjustmentMock,
   preflightManualChallengeForPublishMock,
-  publishAndActivateDailyPostMock,
   rerollAndPublishMock,
 } = vi.hoisted(() => ({
+  completeSavedManualPuzzlePublishMock: vi.fn(),
   formatModeratorRerollErrorMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   injectAndPublishManualPuzzleMock: vi.fn(),
   injectManualChallengeWithAdjustmentMock: vi.fn(),
   preflightManualChallengeForPublishMock: vi.fn(),
-  publishAndActivateDailyPostMock: vi.fn(),
   rerollAndPublishMock: vi.fn(),
 }));
 
@@ -24,6 +24,7 @@ vi.mock('../../core/admin-auth', () => ({
 
 vi.mock('../../core/admin', () => ({
   activateEndlessCatalogVersion: vi.fn(),
+  completeSavedManualPuzzlePublish: completeSavedManualPuzzlePublishMock,
   formatModeratorRerollError: formatModeratorRerollErrorMock,
   getEndlessCatalogAdminStatus: vi.fn(),
   getEndlessStagingCollisionReport: vi.fn(),
@@ -31,10 +32,6 @@ vi.mock('../../core/admin', () => ({
   injectManualChallengeWithAdjustment: injectManualChallengeWithAdjustmentMock,
   preflightManualChallengeForPublish: preflightManualChallengeForPublishMock,
   rerollAndPublish: rerollAndPublishMock,
-}));
-
-vi.mock('../../core/generator', () => ({
-  publishAndActivateDailyPost: publishAndActivateDailyPostMock,
 }));
 
 vi.mock('../../core/difficulty-calibration', () => ({
@@ -66,12 +63,12 @@ const feedback = {
 };
 
 afterEach(() => {
+  completeSavedManualPuzzlePublishMock.mockReset();
   formatModeratorRerollErrorMock.mockReset();
   hasAdminAccessMock.mockReset();
   injectAndPublishManualPuzzleMock.mockReset();
   injectManualChallengeWithAdjustmentMock.mockReset();
   preflightManualChallengeForPublishMock.mockReset();
-  publishAndActivateDailyPostMock.mockReset();
   rerollAndPublishMock.mockReset();
 });
 
@@ -128,17 +125,94 @@ describe('adminRouter.validateManualChallenge', () => {
     const result = await caller.validateManualChallenge({
       text: 'JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS',
       targetDifficulty: 2,
+      challengeType: 'LYRIC_LINE',
     });
 
     expect(preflightManualChallengeForPublishMock).toHaveBeenCalledWith({
       text: 'JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS',
       difficulty: 2,
-      challengeType: 'QUOTE',
+      challengeType: 'LYRIC_LINE',
     });
     expect(result).toMatchObject({
       valid: false,
       naturalDifficulty: 'expert',
       achievableTierRange: ['hard', 'expert'],
+    });
+  });
+
+  it('allows validation without an explicit tier preference', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    preflightManualChallengeForPublishMock.mockResolvedValue({
+      valid: true,
+      textProfile: {
+        cryptoHardness: 0.63,
+        uniqueLetterCount: 17,
+        oneLetterWordCount: 0,
+        commonSuffixCount: 1,
+      },
+      naturalDifficulty: 'hard',
+      achievableTierRange: ['medium', 'hard'],
+      reasons: [],
+      suggestions: [],
+    });
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.validateManualChallenge({
+      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+      challengeType: 'QUOTE',
+    });
+
+    expect(preflightManualChallengeForPublishMock).toHaveBeenCalledWith({
+      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+      difficulty: undefined,
+      challengeType: 'QUOTE',
+    });
+    expect(result).toMatchObject({
+      valid: true,
+      naturalDifficulty: 'hard',
+      achievableTierRange: ['medium', 'hard'],
+    });
+  });
+});
+
+describe('adminRouter.injectManual', () => {
+  it('allows auto-detected manual injection without a fixed difficulty', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    injectAndPublishManualPuzzleMock.mockResolvedValue({
+      success: true,
+      levelId: 'lvl_0300',
+      postId: 't3_manual300',
+    });
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.injectManual({
+      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+      author: 'TEST AUTHOR',
+      challengeType: 'QUOTE',
+    });
+
+    expect(injectAndPublishManualPuzzleMock).toHaveBeenCalledWith({
+      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
+      author: 'TEST AUTHOR',
+      difficulty: undefined,
+      challengeType: 'QUOTE',
+      allowAdjustment: true,
+    });
+    expect(result).toMatchObject({
+      success: true,
+      levelId: 'lvl_0300',
     });
   });
 });
@@ -156,7 +230,15 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
       },
       feedback,
     });
-    publishAndActivateDailyPostMock.mockResolvedValue('t3_manual200');
+    completeSavedManualPuzzlePublishMock.mockResolvedValue({
+      success: true,
+      levelId: 'lvl_0200',
+      dateKey: '2026-03-07',
+      postId: 't3_manual200',
+      publishState: 'published',
+      recoverable: false,
+      cleanupPerformed: false,
+    });
 
     const caller = adminRouter.createCaller({
       userId: 't2_mod',
@@ -173,10 +255,9 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
       allowAdjustment: true,
     });
 
-    expect(publishAndActivateDailyPostMock).toHaveBeenCalledWith({
+    expect(completeSavedManualPuzzlePublishMock).toHaveBeenCalledWith({
       levelId: 'lvl_0200',
       dateKey: '2026-03-07',
-      runAs: 'APP',
     });
     expect(result).toMatchObject({
       success: true,
@@ -209,7 +290,7 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
       allowAdjustment: true,
     });
 
-    expect(publishAndActivateDailyPostMock).not.toHaveBeenCalled();
+    expect(completeSavedManualPuzzlePublishMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       success: false,
       error: 'Target tier expert not achievable',
@@ -229,7 +310,15 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
       },
       feedback,
     });
-    publishAndActivateDailyPostMock.mockRejectedValue(new Error('reddit unavailable'));
+    completeSavedManualPuzzlePublishMock.mockResolvedValue({
+      success: false,
+      levelId: 'lvl_0201',
+      dateKey: '2026-03-07',
+      error: 'Manual puzzle lvl_0201 was saved for 2026-03-07, but publish failed: redis unavailable',
+      publishState: 'saved_for_retry',
+      recoverable: true,
+      cleanupPerformed: false,
+    });
 
     const caller = adminRouter.createCaller({
       userId: 't2_mod',
@@ -249,7 +338,7 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
     expect(result).toMatchObject({
       success: false,
       levelId: 'lvl_0201',
-      error: 'Puzzle saved as lvl_0201, but publish failed: reddit unavailable',
+      error: 'Manual puzzle lvl_0201 was saved for 2026-03-07, but publish failed: redis unavailable',
       feedback,
     });
   });

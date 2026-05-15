@@ -4,7 +4,7 @@ import { buildPuzzle } from './puzzle';
 describe('phase2 reveal bootstrap rules', () => {
   const sourceText = 'PATTERNS REPEAT WHEN LETTERS REPEAT AGAIN';
 
-  it('uses easy reveal count range of 6-10', () => {
+  it('uses warmup reveal count range of 3-6', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2201',
       dateKey: '2026-03-06',
@@ -15,8 +15,8 @@ describe('phase2 reveal bootstrap rules', () => {
       skipSolvabilityCheck: true,
     });
     const count = generated.puzzlePrivate.prefilledIndices.length;
-    expect(count).toBeGreaterThanOrEqual(6);
-    expect(count).toBeLessThanOrEqual(10);
+    expect(count).toBeGreaterThanOrEqual(3);
+    expect(count).toBeLessThanOrEqual(6);
   });
 
   it('reveals at least four unique starter letters on easy when available', () => {
@@ -38,7 +38,7 @@ describe('phase2 reveal bootstrap rules', () => {
     expect(uniqueStarterLetters.size).toBeGreaterThanOrEqual(4);
   });
 
-  it('uses medium reveal count range of 4-7', () => {
+  it('uses medium reveal count range of 2-4', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2202',
       dateKey: '2026-03-06',
@@ -49,8 +49,8 @@ describe('phase2 reveal bootstrap rules', () => {
       skipSolvabilityCheck: true,
     });
     const count = generated.puzzlePrivate.prefilledIndices.length;
-    expect(count).toBeGreaterThanOrEqual(4);
-    expect(count).toBeLessThanOrEqual(7);
+    expect(count).toBeGreaterThanOrEqual(2);
+    expect(count).toBeLessThanOrEqual(4);
   });
 
   it('uses hard reveal count range tuned by quote length', () => {
@@ -59,13 +59,13 @@ describe('phase2 reveal bootstrap rules', () => {
       dateKey: '2026-03-06',
       text: sourceText,
       author: 'UNKNOWN',
-      difficulty: 9,
+      difficulty: 8,
       logicalPercent: 20,
       skipSolvabilityCheck: true,
     });
     const count = generated.puzzlePrivate.prefilledIndices.length;
-    expect(count).toBeGreaterThanOrEqual(3);
-    expect(count).toBeLessThanOrEqual(5);
+    expect(count).toBeGreaterThanOrEqual(1);
+    expect(count).toBeLessThanOrEqual(2);
   });
 
   it('guarantees at least one reveal in the first quarter when possible', () => {

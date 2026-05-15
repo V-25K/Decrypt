@@ -1,11 +1,7 @@
 import { z } from 'zod';
 
 const maxHearts = 3;
-import {
-  adminActivateEndlessCatalogInputSchema,
-  adminActivateEndlessCatalogResponseSchema,
-  endlessCatalogStatusSchema,
-} from './endless';
+import { endlessCatalogStatusSchema } from './endless.ts';
 
 export const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -138,6 +134,7 @@ export const puzzlePublicSchema = z.object({
   words: z.array(z.string()),
   tiles: z.array(puzzlePublicTileSchema),
   difficulty: z.number().int().min(1).max(10),
+  targetTimeSeconds: z.number().nonnegative().optional(),
   heartsMax: z.number().int().positive(),
 });
 
@@ -343,6 +340,7 @@ export const gameSubmitGuessResponseSchema = z.object({
   ok: z.boolean(),
   isCorrect: z.boolean(),
   errorCode: actionErrorCodeSchema.nullable(),
+  sessionStartTimestamp: z.number().int().nonnegative().nullable().optional().default(null),
   revealedTiles: z.array(revealedTileSchema).default([]),
   revealedIndices: z.array(z.number().int().nonnegative()),
   revealedLetter: z.string().length(1).nullable(),
@@ -529,6 +527,15 @@ export const heartPurchaseResponseSchema = z.object({
   success: z.boolean(),
   reason: z.string().nullable(),
   profile: userProfileSchema,
+  purchasesToday: z.number().int().nonnegative(),
+  maxPurchasesPerDay: z.number().int().positive(),
+  limitResetTs: z.number().int().nonnegative(),
+});
+
+export const heartPurchaseStatusResponseSchema = z.object({
+  purchasesToday: z.number().int().nonnegative(),
+  maxPurchasesPerDay: z.number().int().positive(),
+  limitResetTs: z.number().int().nonnegative(),
 });
 
 export const socialShareInputSchema = z.object({
@@ -543,7 +550,7 @@ export const socialShareResponseSchema = z.object({
 
 export const adminInjectInputSchema = z.object({
   text: z.string().min(3),
-  difficulty: z.number().int().min(1).max(10),
+  difficulty: z.number().int().min(1).max(10).optional(),
   challengeType: challengeTypeSchema.default('QUOTE'),
   author: z.string().min(1).optional(),
 });
@@ -556,7 +563,8 @@ export const adminActionResponseSchema = z.object({
 
 export const adminValidateManualChallengeInputSchema = z.object({
   text: z.string().min(3),
-  targetDifficulty: z.number().int().min(1).max(10),
+  targetDifficulty: z.number().int().min(1).max(10).optional(),
+  challengeType: challengeTypeSchema.optional().default('QUOTE'),
 });
 
 export const adminValidateManualChallengeResponseSchema = z.object({
@@ -576,7 +584,7 @@ export const adminValidateManualChallengeResponseSchema = z.object({
 export const adminInjectManualChallengeWithAdjustmentInputSchema = z.object({
   text: z.string().min(3),
   author: z.string().min(1),
-  targetDifficulty: z.number().int().min(1).max(10),
+  targetDifficulty: z.number().int().min(1).max(10).optional(),
   challengeType: challengeTypeSchema.default('QUOTE'),
   allowAdjustment: z.boolean().default(true),
 });
@@ -602,6 +610,17 @@ export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const adminRetryPublishInputSchema = z.object({
+  levelId: z.string().min(1),
+});
+
+export const adminRetryPublishResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string().min(1),
+  levelId: z.string().nullable(),
+  postId: z.string().nullable(),
+});
+
 export const adminDifficultyCalibrationResponseSchema = z.object({
   biasTierShift: z.number().int().min(-1).max(1),
   eligibleLevels: z.number().int().nonnegative(),
@@ -620,11 +639,6 @@ export const adminDifficultyCalibrationResponseSchema = z.object({
     observedHardThreshold: z.number().nonnegative(),
   }),
 });
-
-export {
-  adminActivateEndlessCatalogInputSchema,
-  adminActivateEndlessCatalogResponseSchema,
-};
 
 export const storeProductsResponseSchema = z.object({
   products: z.array(

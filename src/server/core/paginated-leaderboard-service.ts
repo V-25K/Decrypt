@@ -1,4 +1,5 @@
 import { redis } from '@devvit/web/server';
+import { type LeaderboardEntry } from '../../shared/game.ts';
 import { getDailyTop, getLevelTop, getAllTimeTopLevels, getAllTimeTopLogic } from './leaderboard';
 import { keyDailyLeaderboard, keyAllTimeLevelsLeaderboard, keyAllTimeLogicLeaderboard } from './keys';
 import { formatDateKey } from './serde';
@@ -15,7 +16,7 @@ export interface PageInfo {
 /**
  * Paginated leaderboard response
  */
-export interface LeaderboardPage<T = any> {
+export interface LeaderboardPage<T = LeaderboardEntry> {
   entries: T[];
   hasNextPage: boolean;
   hasPreviousPage: boolean;
@@ -61,7 +62,9 @@ export class PaginatedLeaderboardService {
   /**
    * Get a paginated daily leaderboard
    */
-  async getDailyLeaderboardPage(params: DailyLeaderboardPageParams): Promise<LeaderboardPage> {
+  async getDailyLeaderboardPage(
+    params: DailyLeaderboardPageParams
+  ): Promise<LeaderboardPage<LeaderboardEntry>> {
     const pageSize = Math.min(params.pageSize || this.PAGE_SIZE, this.PAGE_SIZE);
     const offset = (params.page - 1) * pageSize;
     
@@ -80,7 +83,9 @@ export class PaginatedLeaderboardService {
   /**
    * Get a paginated level leaderboard
    */
-  async getLevelLeaderboardPage(params: LevelLeaderboardPageParams): Promise<LeaderboardPage> {
+  async getLevelLeaderboardPage(
+    params: LevelLeaderboardPageParams
+  ): Promise<LeaderboardPage<LeaderboardEntry>> {
     const pageSize = Math.min(params.pageSize || this.PAGE_SIZE, this.PAGE_SIZE);
     const offset = (params.page - 1) * pageSize;
     
@@ -106,7 +111,9 @@ export class PaginatedLeaderboardService {
   /**
    * Get a paginated all-time levels leaderboard
    */
-  async getAllTimeLevelsLeaderboardPage(params: LeaderboardPageParams): Promise<LeaderboardPage> {
+  async getAllTimeLevelsLeaderboardPage(
+    params: LeaderboardPageParams
+  ): Promise<LeaderboardPage<LeaderboardEntry>> {
     const pageSize = Math.min(params.pageSize || this.PAGE_SIZE, this.PAGE_SIZE);
     const offset = (params.page - 1) * pageSize;
     
@@ -123,7 +130,9 @@ export class PaginatedLeaderboardService {
   /**
    * Get a paginated all-time logic leaderboard
    */
-  async getAllTimeLogicLeaderboardPage(params: LeaderboardPageParams): Promise<LeaderboardPage> {
+  async getAllTimeLogicLeaderboardPage(
+    params: LeaderboardPageParams
+  ): Promise<LeaderboardPage<LeaderboardEntry>> {
     const pageSize = Math.min(params.pageSize || this.PAGE_SIZE, this.PAGE_SIZE);
     const offset = (params.page - 1) * pageSize;
     

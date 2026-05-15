@@ -10,6 +10,7 @@ import {
 import {
   keyKnownUsersIndex,
   keyUserCompleted,
+  keyUserDailyDataDates,
   keyUserDailyRetryCounts,
   keyUserEndlessCursor,
   keyUserFailedLevels,
@@ -175,6 +176,22 @@ export const registerKnownUser = async (userId: string): Promise<void> => {
 
 export const getKnownUserIds = async (): Promise<string[]> =>
   await redis.hKeys(keyKnownUsersIndex);
+
+export const trackUserDailyDataDate = async (
+  userId: string,
+  dateKey: string
+): Promise<void> => {
+  const normalizedDateKey = dateKey.trim();
+  if (normalizedDateKey.length === 0) {
+    return;
+  }
+  await redis.hSet(keyUserDailyDataDates(userId), {
+    [normalizedDateKey]: '1',
+  });
+};
+
+export const getTrackedUserDailyDataDates = async (userId: string): Promise<string[]> =>
+  await redis.hKeys(keyUserDailyDataDates(userId));
 
 export const getUserProfile = async (userId: string): Promise<UserProfile> => {
   const profileKey = keyUserProfile(userId);
@@ -423,6 +440,7 @@ export const getDailyQuestProgress = async (
   dateKey: string
 ): Promise<QuestProgress> => {
   const dailyKey = keyUserQuestDaily(userId, dateKey);
+  await trackUserDailyDataDate(userId, dateKey);
   const hash = await redis.hGetAll(dailyKey);
   if (Object.keys(hash).length === 0) {
     const progress = defaultQuestProgress();
@@ -495,6 +513,7 @@ export const saveDailyQuestProgress = async (
   progress: QuestProgress
 ): Promise<void> => {
   const dailyKey = keyUserQuestDaily(userId, dateKey);
+  await trackUserDailyDataDate(userId, dateKey);
   await redis.hSet(dailyKey, {
     dailyPlayCount: `${progress.dailyPlayCount}`,
     dailyFastWin: progress.dailyFastWin ? '1' : '0',
@@ -540,29 +559,4 @@ export const incrementUserEndlessCursor = async (userId: string): Promise<number
   const next = current + 1;
   await redis.set(keyUserEndlessCursor(userId), next.toString());
   return next;
-};
-
-export const initializeUserEndlessCursor = async (
-  userId: string,
-  catalogVersion: string,
-  keyEndlessCatalogSequence: (version: string) => string
-): Promise<number> => {
-  const completed = await getCompletedLevels(userId);
-  const catalogEntries = await redis.zRange(
-    keyEndlessCatalogSequence(catalogVersion),
-    0,
-    -1,
-    { by: 'rank' }
-  );
-  
-  let cursor = 0;
-  for (const entry of catalogEntries) {
-    if (!completed.has(entry.member)) {
-      break;
-    }
-    cursor++;
-  }
-  
-  await redis.set(keyUserEndlessCursor(userId), cursor.toString());
-  return cursor;
 };

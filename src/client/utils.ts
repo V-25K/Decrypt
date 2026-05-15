@@ -10,6 +10,11 @@ type TokenTile = {
   displayChar: string;
 };
 
+type NavigableTokenTile = TokenTile & {
+  index: number;
+  isLocked?: boolean;
+};
+
 export type PuzzleRenderToken<TTile extends TokenTile> =
   | {
     type: 'word';
@@ -130,4 +135,43 @@ export const chunkPuzzleTokensByWordLimit = <TTile extends TokenTile>(
     return [tokens];
   }
   return cleaned;
+};
+
+export const getPuzzleNavigableTileRows = <TTile extends NavigableTokenTile>(
+  puzzleTokenLines: PuzzleRenderToken<TTile>[][],
+  maxColumns: number
+): number[][] => {
+  const rows: number[][] = [];
+  const safeMaxColumns = Math.max(1, maxColumns);
+
+  for (const line of puzzleTokenLines) {
+    const lineRows: number[][] = [[]];
+    for (const token of line) {
+      if (token.type !== 'word') {
+        continue;
+      }
+
+      for (let index = 0; index < token.tiles.length; index += safeMaxColumns) {
+        const rowIndex = Math.floor(index / safeMaxColumns);
+        if (!lineRows[rowIndex]) {
+          lineRows[rowIndex] = [];
+        }
+        const row = lineRows[rowIndex];
+        if (!row) {
+          continue;
+        }
+        row.push(
+          ...token.tiles
+            .slice(index, index + safeMaxColumns)
+            .filter(
+              (tile) => tile.isLetter && !tile.isLocked && tile.displayChar === '_'
+            )
+            .map((tile) => tile.index)
+        );
+      }
+    }
+    rows.push(...lineRows.filter((row) => row.length > 0));
+  }
+
+  return rows;
 };

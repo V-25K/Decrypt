@@ -1,4 +1,5 @@
-import { coinEmoji, powerupLabel } from '../app/constants';
+import { powerupLabel } from '../app/constants';
+import { HudSprite } from './HudSprite';
 import type { BuyDialogState, PowerupType } from '../app/types';
 import { cn } from '../utils';
 
@@ -9,6 +10,10 @@ type BuyDialogProps = {
   unitPrice: number;
   remainingLetters: number;
   difficultyLabel: string;
+  powerupValidity: {
+    valid: boolean;
+    reason: string | null;
+  };
   buyChips: (maxQuantity: number) => Array<{
     id: string;
     label: string;
@@ -40,6 +45,7 @@ export const BuyDialog = ({
   unitPrice,
   remainingLetters,
   difficultyLabel,
+  powerupValidity,
   buyChips,
   onSelectQuantity,
   onCancel,
@@ -52,7 +58,12 @@ export const BuyDialog = ({
   >
     <div className="app-surface w-full max-w-[300px] rounded border app-border p-4">
       <div className="app-text mb-2 text-sm font-bold">
-        Buy {powerupLabel[buyDialog.item]} ({unitPrice} {coinEmoji} each)
+        <span>Buy {powerupLabel[buyDialog.item]}</span>{' '}
+        <span className="inline-flex items-center gap-1 text-xs align-middle">
+          <span>({unitPrice}</span>
+          <HudSprite icon="coin" decorative className="h-4 w-4" />
+          <span>each)</span>
+        </span>
       </div>
 
       <div className="app-surface-subtle mb-3 rounded border app-border p-3">
@@ -65,6 +76,11 @@ export const BuyDialog = ({
         <p className="app-text-soft text-[11px] leading-snug">
           Letters still hidden: {remainingLetters}
         </p>
+        {!powerupValidity.valid && powerupValidity.reason && (
+          <p className="mt-2 text-[11px] font-semibold text-yellow-600">
+            {powerupValidity.reason}
+          </p>
+        )}
       </div>
 
       <div className="mb-2 grid grid-cols-2 gap-2">
@@ -72,11 +88,12 @@ export const BuyDialog = ({
           <button
             key={chip.id}
             data-testid={`buy-quantity-${chip.id}`}
+            aria-label={`Buy ${chip.quantity} ${powerupLabel[buyDialog.item]}`}
             disabled={chip.disabled || busy}
             onClick={() => onSelectQuantity(chip.quantity)}
             className={cn(
               'btn-3d rounded border text-xs font-bold disabled:opacity-40',
-              buyDialog.quantity === chip.quantity ? 'btn-secondary' : 'btn-neutral'
+              buyDialog.quantity === chip.quantity ? 'btn-secondary btn-pressed' : 'btn-neutral'
             )}
           >
             {chip.label}
@@ -84,7 +101,10 @@ export const BuyDialog = ({
         ))}
       </div>
       <div className="app-surface-strong app-text mb-3 rounded border app-border p-2 text-center text-sm font-bold">
-        Total: {buyDialog.quantity * unitPrice} {coinEmoji}
+        <span className="inline-flex items-center gap-1.5">
+          <span>Total: {buyDialog.quantity * unitPrice}</span>
+          <HudSprite icon="coin" decorative className="h-4 w-4" />
+        </span>
       </div>
       <div className="flex gap-2">
         <button
@@ -99,7 +119,7 @@ export const BuyDialog = ({
           data-testid="buy-confirm"
           className="btn-3d btn-primary flex-1 rounded border text-xs font-bold disabled:opacity-50"
           onClick={onConfirm}
-          disabled={busy || buyMax < 1}
+          disabled={busy || buyMax < 1 || !powerupValidity.valid}
         >
           Confirm
         </button>

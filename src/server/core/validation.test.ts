@@ -238,4 +238,22 @@ describe('validation', () => {
     expect(result.valid).toBe(false);
     expect(result.reasons.some((reason) => reason.includes('Blind tile fairness'))).toBe(true);
   });
+
+  it('rejects puzzles with a fully prefilled multi-letter word', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_0011',
+      dateKey: '2026-02-24',
+      text: 'ALPHA BRAVO',
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+    generated.puzzlePrivate.prefilledIndices = letterIndicesForWord('ALPHA BRAVO', 0);
+
+    const result = validatePuzzle(generated.puzzlePrivate);
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toContain('A multi-letter word is fully prefilled.');
+  });
 });

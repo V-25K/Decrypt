@@ -65,7 +65,9 @@ describe('state storage behavior', () => {
 
     expect(progress.dailyPlayCount).toBe(0);
     expect(progress.lifetimeWordsmith).toBe(0);
-    const payload = hSetMock.mock.calls[0]?.[1] as Record<string, string> | undefined;
+    const payload = hSetMock.mock.calls.find(
+      (call) => call[0] === 'decrypt:user:u1:quests:daily:2026-04-08'
+    )?.[1] as Record<string, string> | undefined;
     if (!payload) {
       throw new Error('Expected daily quest bootstrap write payload');
     }
@@ -77,7 +79,9 @@ describe('state storage behavior', () => {
   it('saveDailyQuestProgress keeps lifetime fields out of daily hash', async () => {
     await saveDailyQuestProgress('u1', '2026-04-08', progressFixture());
 
-    const payload = hSetMock.mock.calls[0]?.[1] as Record<string, string> | undefined;
+    const payload = hSetMock.mock.calls.find(
+      (call) => call[0] === 'decrypt:user:u1:quests:daily:2026-04-08'
+    )?.[1] as Record<string, string> | undefined;
     if (!payload) {
       throw new Error('Expected daily quest save payload');
     }

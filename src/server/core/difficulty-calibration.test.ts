@@ -38,8 +38,10 @@ import {
   computeAdaptiveHardnessBounds,
   computeGlobalDailyBias,
   getGlobalDailyCalibrationSnapshot,
+  observedTierFromTelemetry,
   observedTierFromSmoothedRate,
   smoothedWinRate,
+  telemetryEaseScore,
   tierShift,
 } from './difficulty-calibration';
 
@@ -61,6 +63,19 @@ const makePuzzle = (params: {
   });
   return built.puzzlePrivate;
 };
+
+const makeTelemetry = (overrides?: Partial<Awaited<ReturnType<typeof getQualifiedLevelTelemetryMock>>> ) => ({
+  plays: 0,
+  wins: 0,
+  failures: 0,
+  abandons: 0,
+  averageSolveSeconds: 0,
+  averageMistakes: 0,
+  averageUsedPowerups: 0,
+  averageRetryCount: 0,
+  fastSolveRate: 0,
+  ...overrides,
+});
 
 afterEach(() => {
   getAllLevelIdsMock.mockReset();
@@ -85,6 +100,51 @@ describe('difficulty calibration math', () => {
     expect(observedTierFromSmoothedRate(0.24)).toBe('expert');
   });
 
+  it('downgrades observed tier when telemetry shows abandons, hints, and slow solves', () => {
+    const observed = observedTierFromTelemetry({
+      telemetry: makeTelemetry({
+        plays: 30,
+        wins: 18,
+        failures: 5,
+        abandons: 7,
+        averageSolveSeconds: 130,
+        averageUsedPowerups: 1.7,
+        averageMistakes: 1.8,
+        averageRetryCount: 1.1,
+      }),
+      targetTimeSeconds: 60,
+    });
+
+    expect(observed).toBe('expert');
+  });
+
+  it('reduces telemetry ease score as friction signals increase', () => {
+    const smoothRun = telemetryEaseScore({
+      wins: 20,
+      plays: 30,
+      failures: 2,
+      abandons: 1,
+      averageSolveSeconds: 45,
+      averageUsedPowerups: 0.1,
+      averageMistakes: 0.2,
+      averageRetryCount: 0.1,
+      targetTimeSeconds: 60,
+    });
+    const roughRun = telemetryEaseScore({
+      wins: 20,
+      plays: 30,
+      failures: 5,
+      abandons: 5,
+      averageSolveSeconds: 140,
+      averageUsedPowerups: 1.8,
+      averageMistakes: 2.5,
+      averageRetryCount: 1.4,
+      targetTimeSeconds: 60,
+    });
+
+    expect(roughRun).toBeLessThan(smoothRun);
+  });
+
   it('computes future-shift direction from primary to observed tier', () => {
     expect(tierShift('medium', 'warmup')).toBe(1);
     expect(tierShift('medium', 'hard')).toBe(-1);
@@ -92,11 +152,11 @@ describe('difficulty calibration math', () => {
   });
 
   it('applies one-tier bias while preserving relative tier position', () => {
-    expect(applyBiasToDifficulty(2, 1)).toBe(4);
-    expect(applyBiasToDifficulty(5, 1)).toBe(6);
+    expect(applyBiasToDifficulty(2, 1)).toBe(5);
+    expect(applyBiasToDifficulty(5, 1)).toBe(8);
     expect(applyBiasToDifficulty(9, 1)).toBe(9);
     expect(applyBiasToDifficulty(9, -1)).toBe(6);
-    expect(applyBiasToDifficulty(5, -1)).toBe(2);
+    expect(applyBiasToDifficulty(5, -1)).toBe(3);
     expect(applyBiasToDifficulty(2, -1)).toBe(2);
   });
 });
@@ -114,12 +174,12 @@ describe('difficulty calibration aggregation', () => {
       levelIds.map((levelId) => [levelId, makePuzzle({ levelId, difficulty: 5, source: 'AUTO_DAILY' })])
     );
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 30, wins: 15 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 30, wins: 15 })])
     );
     getAllLevelIdsMock.mockResolvedValue(levelIds);
     getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const bias = await computeGlobalDailyBias();
@@ -139,13 +199,13 @@ describe('difficulty calibration aggregation', () => {
       levelIds.map((levelId) => [levelId, makePuzzle({ levelId, difficulty: 5, source: 'AUTO_DAILY' })])
     );
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 30, wins: 30 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 30, wins: 30 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
     getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const snapshot = await getGlobalDailyCalibrationSnapshot();
@@ -167,13 +227,13 @@ describe('difficulty calibration aggregation', () => {
       ['lvl_0016', makePuzzle({ levelId: 'lvl_0016', difficulty: 5, source: 'UNKNOWN_LEGACY' })],
     ]);
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 30, wins: 30 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 30, wins: 30 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
     getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const snapshot = await getGlobalDailyCalibrationSnapshot();
@@ -192,13 +252,13 @@ describe('difficulty calibration aggregation', () => {
       levelIds.map((levelId) => [levelId, makePuzzle({ levelId, difficulty: 2, source: 'AUTO_DAILY' })])
     );
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 30, wins: 0 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 30, wins: 0 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
     getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const snapshot = await getGlobalDailyCalibrationSnapshot();
@@ -224,7 +284,7 @@ describe('difficulty calibration aggregation', () => {
       ])
     );
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 20, wins: 10 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 20, wins: 10 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
@@ -232,7 +292,7 @@ describe('difficulty calibration aggregation', () => {
       async (levelId: string) => puzzlesByLevel[levelId] ?? null
     );
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const adaptive = await computeAdaptiveHardnessBounds();
@@ -256,7 +316,7 @@ describe('difficulty calibration aggregation', () => {
       ])
     );
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 20, wins: 10 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 20, wins: 10 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
@@ -264,7 +324,7 @@ describe('difficulty calibration aggregation', () => {
       async (levelId: string) => puzzlesByLevel[levelId] ?? null
     );
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const adaptive = await computeAdaptiveHardnessBounds();
@@ -290,13 +350,13 @@ describe('difficulty calibration aggregation', () => {
       ['lvl_5004', { ...makePuzzle({ levelId: 'lvl_5004', difficulty: 5, source: 'AUTO_DAILY' }), cryptoHardness: 1.0 }],
     ]);
     const telemetryByLevel = Object.fromEntries(
-      levelIds.map((levelId) => [levelId, { plays: 30, wins: 15 }])
+      levelIds.map((levelId) => [levelId, makeTelemetry({ plays: 30, wins: 15 })])
     );
 
     getAllLevelIdsMock.mockResolvedValue(levelIds);
     getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
     getQualifiedLevelTelemetryMock.mockImplementation(
-      async (levelId: string) => telemetryByLevel[levelId] ?? { plays: 0, wins: 0 }
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
     );
 
     const snapshot = await getGlobalDailyCalibrationSnapshot();

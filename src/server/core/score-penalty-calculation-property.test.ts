@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { RebalancedScorePenaltyEngine, type ScorePenaltyConfig } from '../../shared/rebalanced-score-penalty-engine';
+import { ScorePenaltyEngine, type ScorePenaltyConfig } from '../../shared/score-penalty-engine';
 import { propertyTestConfig } from '../../shared/property-testing';
 
 describe('Property 6: Score Penalty Calculation Correctness', () => {
@@ -29,7 +29,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           maxPenalty: fc.float({ min: 0.1, max: 0.5 })
         }),
         ({ retryCount, originalScore, maxPenalty }) => {
-          const engine = new RebalancedScorePenaltyEngine({ maxPenalty });
+          const engine = new ScorePenaltyEngine({ maxPenalty });
           const penaltyFactor = engine.calculatePenaltyFactor(retryCount);
           
           // Property: Penalty factor should never go below (1 - maxPenalty)
@@ -64,7 +64,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           originalScore: fc.integer({ min: 100, max: 5000 })
         }),
         ({ maxRetries, originalScore }) => {
-          const engine = new RebalancedScorePenaltyEngine();
+          const engine = new ScorePenaltyEngine();
           
           // Test logarithmic progression for retries
           const penalties = [];
@@ -114,7 +114,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           score3: fc.integer({ min: 100, max: 2000 })
         }),
         ({ retryCount, score1, score2, score3 }) => {
-          const engine = new RebalancedScorePenaltyEngine();
+          const engine = new ScorePenaltyEngine();
           
           // Simulate three separate puzzles with same retry count
           const finalScore1 = engine.applyPenalty(score1, retryCount);
@@ -155,7 +155,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           firstRetryFree: fc.boolean()
         }),
         ({ originalScore, firstRetryFree }) => {
-          const engine = new RebalancedScorePenaltyEngine({ firstRetryFree });
+          const engine = new ScorePenaltyEngine({ firstRetryFree });
           
           // Property: No retries should have no penalty
           const noRetryFactor = engine.calculatePenaltyFactor(0);
@@ -202,7 +202,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           originalScore: fc.integer({ min: 10, max: 8000 })
         }),
         ({ maxRetries, originalScore }) => {
-          const engine = new RebalancedScorePenaltyEngine();
+          const engine = new ScorePenaltyEngine();
           
           let previousFactor = 1.0;
           for (let retry = 0; retry < maxRetries; retry++) {
@@ -246,7 +246,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           originalScore: fc.integer({ min: 100, max: 3000 })
         }),
         ({ currentRetries, originalScore }) => {
-          const engine = new RebalancedScorePenaltyEngine();
+          const engine = new ScorePenaltyEngine();
           
           const preview = engine.getNextRetryPenalty(currentRetries);
           const actualFactor = engine.calculatePenaltyFactor(currentRetries + 1);
@@ -282,7 +282,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
           extremeScore: fc.integer({ min: 1, max: 1000000 })
         }),
         ({ extremeRetries, extremeScore }) => {
-          const engine = new RebalancedScorePenaltyEngine();
+          const engine = new ScorePenaltyEngine();
           
           try {
             const factor = engine.calculatePenaltyFactor(extremeRetries);
@@ -328,7 +328,7 @@ describe('Property 6: Score Penalty Calculation Correctness', () => {
             penaltyType: 'logarithmic'
           };
           
-          const engine = new RebalancedScorePenaltyEngine(config);
+          const engine = new ScorePenaltyEngine(config);
           const retrievedConfig = engine.getConfig();
           
           // Property: Configuration should be preserved

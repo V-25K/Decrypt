@@ -11,6 +11,7 @@ import {
   getDailyPointer,
   getPuzzlePrivate,
   getPuzzlePublic,
+  isPuzzlePublishedVisible,
 } from './puzzle-store';
 import {
   getCompletedLevels,
@@ -64,10 +65,12 @@ import {
 } from './leaderboard';
 import {
   getLevelEngagement,
+  recordQualifiedLevelFailure,
   recordQualifiedLevelPlay,
   recordQualifiedLevelWin,
   recordLevelPlay,
   recordLevelWin,
+  touchQualifiedLevelPlay,
 } from './engagement';
 import {
   updateQuestProgressOnCompletion,
@@ -135,6 +138,13 @@ const loadPuzzlePrivate = async (levelId: string): Promise<PuzzlePrivate> => {
     throw new Error(`Puzzle not found: ${levelId}`);
   }
   return puzzle;
+};
+
+const assertPublishedPuzzleVisibility = async (levelId: string): Promise<void> => {
+  const publishedVisible = await isPuzzlePublishedVisible(levelId);
+  if (!publishedVisible) {
+    throw new Error('Puzzle is unavailable.');
+  }
 };
 
 const recomputeLegacyCurrentStreak = (profile: UserProfile): number =>
@@ -452,8 +462,15 @@ export const loadLevelForUser = async (params: {
 
   let levelId: string | null = null;
   if (params.mode === 'daily') {
+    const postLevelId = getPostLevelId();
     levelId =
-      params.requestedLevelId ?? getPostLevelId() ?? (await getDailyPointer());
+      params.requestedLevelId ?? postLevelId ?? (await getDailyPointer());
+    if (postLevelId) {
+      console.log('[loadLevelForUser] Loaded daily level from post data', {
+        levelId,
+        postLevelId,
+      });
+    }
   } else if (params.requestedLevelId) {
     levelId = params.requestedLevelId;
   } else {
@@ -468,8 +485,16 @@ export const loadLevelForUser = async (params: {
     throw new Error('No level available.');
   }
 
+  if (params.mode === 'daily') {
+    await assertPublishedPuzzleVisibility(levelId);
+  }
+
   const puzzlePublic = await getPuzzlePublic(levelId);
   if (!puzzlePublic) {
+    console.error('[loadLevelForUser] Puzzle data not found in Redis', {
+      levelId,
+      mode: params.mode,
+    });
     throw new Error('Public puzzle payload not found.');
   }
   
@@ -718,6 +743,10 @@ export const submitGuessForSession = async (params: {
       ok: true,
       isCorrect: false,
       errorCode: 'TILE_LOCKED' as const,
+      sessionStartTimestamp:
+        session.guessCount > 0 || session.usedPowerups > 0 || session.mistakesMade > 0
+          ? session.startTimestamp
+          : null,
       revealedTiles: [],
       revealedIndices: [],
       revealedLetter: null,
@@ -779,7 +808,11 @@ export const submitGuessForSession = async (params: {
       };
       await Promise.all([
         recordLevelPlay(params.levelId, userId),
-        recordQualifiedLevelPlay(params.levelId, userId),
+        recordQualifiedLevelPlay(
+          params.levelId,
+          userId,
+          nextSession.lastSeenAt || Date.now()
+        ),
         saveUserProfile(userId, playedProfile),
       ]);
     } catch (error) {
@@ -787,11 +820,25 @@ export const submitGuessForSession = async (params: {
         `submitGuessForSession first-guess telemetry failed userId=${userId} levelId=${params.levelId} error=${error instanceof Error ? error.message : String(error)}`
       );
     }
+  } else {
+    try {
+      await touchQualifiedLevelPlay(
+        params.levelId,
+        userId,
+        nextSession.lastSeenAt || Date.now()
+      );
+    } catch (error) {
+      console.error(
+        `submitGuessForSession telemetry touch failed userId=${userId} levelId=${params.levelId} error=${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
   const complete = puzzleIsComplete(puzzle, nextSession);
   const remaining = heartsRemaining(nextSession);
   const isGameOver = !complete && remaining <= 0;
   if (isGameOver) {
+    const retryCountForTelemetry =
+      session.mode === 'daily' ? await getDailyRetryCount(userId, params.levelId) : 0;
     const profileBeforeFailure = await getUserProfile(userId);
     let nextProfile = consumeHeartOnFailure(profileBeforeFailure);
     if (session.mode === 'daily') {
@@ -818,7 +865,17 @@ export const submitGuessForSession = async (params: {
     ) {
       await saveUserProfile(userId, nextProfile);
     }
-    await markLevelFailed(userId, params.levelId);
+    await Promise.all([
+      markLevelFailed(userId, params.levelId),
+      nextSession.guessCount >= 1
+        ? recordQualifiedLevelFailure(params.levelId, userId, {
+            mistakes: nextSession.mistakesMade,
+            usedPowerups: nextSession.usedPowerups,
+            retryCount: retryCountForTelemetry,
+            targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+          })
+        : Promise.resolve(),
+    ]);
     await clearSessionState(userId, postId);
   }
   const afterPadlockStatus = checkPadlockStatus(
@@ -843,6 +900,7 @@ export const submitGuessForSession = async (params: {
     ok: true,
     isCorrect: revealResult.isCorrect,
     errorCode: null,
+    sessionStartTimestamp: nextSession.startTimestamp,
     revealedTiles: revealResult.revealedTiles,
     revealedIndices: legacyReveal.revealedIndices,
     revealedLetter: legacyReveal.revealedLetter,
@@ -1129,9 +1187,15 @@ export const completeSessionForLevel = async (params: {
         await recordLevelWin(params.levelId, userId);
       });
     }
-    if (trackedSession.usedPowerups <= 1 && hasMeaningfulInteraction) {
+    if (hasMeaningfulInteraction) {
       await runCompletionStep('record_qualified_win', async () => {
-        await recordQualifiedLevelWin(params.levelId, userId);
+        await recordQualifiedLevelWin(params.levelId, userId, {
+          solveSeconds,
+          mistakes: trackedSession.mistakesMade,
+          usedPowerups: trackedSession.usedPowerups,
+          retryCount: dailyRetryCount,
+          targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+        });
       });
     }
     if (params.mode === 'endless') {
@@ -1249,6 +1313,15 @@ export const heartbeatSessionForLevel = async (params: {
     activeMs: nextSession.activeMs,
     lastSeenAt: nextSession.lastSeenAt,
   });
+  if (session.guessCount > 0) {
+    try {
+      await touchQualifiedLevelPlay(params.levelId, userId, nextSession.lastSeenAt);
+    } catch (error) {
+      console.error(
+        `heartbeatSessionForLevel telemetry touch failed userId=${userId} levelId=${params.levelId} error=${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   return { ok: true };
 };
 
@@ -1488,6 +1561,7 @@ export const getCurrentPuzzleView = async (params: {
   levelId: string;
   revealedIndices?: number[];
 }) => {
+  await assertPublishedPuzzleVisibility(params.levelId);
   const puzzle = await loadPuzzlePrivate(params.levelId);
 
   const userId = context.userId;

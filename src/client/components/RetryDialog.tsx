@@ -1,5 +1,5 @@
 import type { RetryDialogState } from '../app/types';
-import { coinEmoji } from '../app/constants';
+import { HudSprite } from './HudSprite';
 
 type RetryDialogProps = {
   retryDialog: RetryDialogState;
@@ -22,13 +22,17 @@ export const RetryDialog = ({
     <div className="app-surface w-full max-w-[300px] rounded border app-border p-4">
       <div className="app-text mb-2 flex items-center justify-between text-sm font-bold">
         <span>Buy Retry</span>
-        <span className="text-xs font-black">
-          {coinEmoji} {retryDialog.coins}
+        <span className="inline-flex items-center gap-1 text-xs font-black">
+          <HudSprite icon="coin" decorative className="h-4 w-4" />
+          <span>{retryDialog.coins}</span>
         </span>
       </div>
 
       <div className="app-surface-strong app-text mb-2 rounded border app-border p-3 text-center text-lg font-black">
-        {retryDialog.cost} {coinEmoji}
+        <span className="inline-flex items-center gap-1.5">
+          <span>{retryDialog.cost}</span>
+          <HudSprite icon="coin" decorative className="h-5 w-5" />
+        </span>
       </div>
 
       <div className="mb-3 space-y-2 text-center">
@@ -36,13 +40,20 @@ export const RetryDialog = ({
           Difficulty: <span className="font-semibold">{retryDialog.difficultyLabel}</span>
         </p>
         <p className="app-text text-xs font-bold uppercase tracking-[0.03em]">
-          This retry score: {retryDialog.penaltyLabel}
+          Cost for this retry: {retryDialog.cost} coins
+        </p>
+        <p className="app-text text-xs font-bold uppercase tracking-[0.03em]">
+          Score will count as: {retryDialog.penaltyLabel}
         </p>
         {retryDialog.nextPenaltyLabel && retryDialog.nextCost !== null ? (
-          <p className="app-text-soft text-[11px] leading-snug">
-            If you fail again, the next retry would be {retryDialog.nextCost} {coinEmoji} at{' '}
-            {retryDialog.nextPenaltyLabel}.
-          </p>
+        <p className="app-text-soft text-[11px] leading-snug">
+          <strong>If you fail again:</strong> next retry would cost{' '}
+          <span className="inline-flex items-center gap-1 align-middle font-semibold">
+            <span>{retryDialog.nextCost}</span>
+            <HudSprite icon="coin" decorative className="h-[14px] w-[14px]" />
+          </span>{' '}
+          and score as {retryDialog.nextPenaltyLabel}.
+        </p>
         ) : null}
         <div className="app-surface-subtle rounded border app-border p-2">
           <p className="app-text-soft text-[10px] leading-snug">

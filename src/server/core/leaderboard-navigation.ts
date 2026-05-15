@@ -164,13 +164,17 @@ export function createLeaderboardNavigation(
 ): AllTimeLogicLeaderboardNavigation;
 export function createLeaderboardNavigation(
   type: 'daily' | 'level' | 'allTimeLevels' | 'allTimeLogic',
-  params: any
+  params: DailyLeaderboardPageParams | LevelLeaderboardPageParams | LeaderboardPageParams
 ): LeaderboardNavigation {
   switch (type) {
     case 'daily':
       return new DailyLeaderboardNavigation(params);
-    case 'level':
+    case 'level': {
+      if (!('levelId' in params) || typeof params.levelId !== 'string') {
+        throw new Error('Level leaderboard navigation requires a levelId');
+      }
       return new LevelLeaderboardNavigation(params);
+    }
     case 'allTimeLevels':
       return new AllTimeLevelsLeaderboardNavigation(params);
     case 'allTimeLogic':

@@ -1,8 +1,13 @@
 import { context, reddit, redis } from '@devvit/web/server';
-import { aiChallengeTypePool } from './ai';
+import {
+  aiChallengeTypePool,
+  generatePuzzlePhraseBatch,
+  type BatchGenerationResult,
+} from './ai';
 import { ensureAICandidatePoolSelection, takeAICandidateBatch } from './ai-pool';
 import { getDecryptSettings } from './config';
 import {
+  containsDisallowedContent,
   type HardnessBoundsByTier,
   looksLikeAllowedAuthor,
   maxPuzzleAuthorLength,
@@ -18,6 +23,7 @@ import {
 import {
   clearUsedSignature,
   getAutoDailyLevelIdsForDate,
+  getRecentUsedSignatureEntries,
   peekNextLevelId,
   getPuzzleMapping,
   PuzzleLevelAllocationConflictError,
@@ -32,6 +38,7 @@ import {
   setPuzzlePublishedPostId,
   setStagedLevelId,
   setDailyPointer,
+  transferUsedSignatureReservation,
 } from './puzzle-store';
 import {
   keyDailyChallengeTypeSeed,
@@ -44,6 +51,10 @@ import { mulberry32, randInt, shuffleWithRng } from './rng';
 import type { DifficultyTier } from './content';
 import type { ChallengeType, PuzzlePrivate, PuzzlePublic } from '../../shared/game';
 import { createValidationPipeline } from './validation-pipeline';
+import { validatePuzzle } from './validation';
+import { filterCandidateBatch } from './candidate-filter';
+
+const challengePostEntry = 'default' as const;
 
 const previousLevelId = (levelId: string): string | null => {
   const match = levelId.match(/^(.*?)(\d+)$/);
@@ -73,14 +84,6 @@ type GeneratedPuzzlePayload = {
   normalizedSignature: Parameters<typeof savePuzzle>[0]['normalizedSignature'];
   tokenSignature: Parameters<typeof savePuzzle>[0]['tokenSignature'];
   expectedLevelId?: Parameters<typeof savePuzzle>[0]['expectedLevelId'];
-};
-
-type SelectedPuzzleCandidate = {
-  text: string;
-  author: string;
-  challengeType: ChallengeType;
-  normalizedSignature: string;
-  tokenSignature: string;
 };
 
 export class PuzzleGenerationFailedError extends Error {
@@ -133,6 +136,178 @@ export class PuzzlePublishInProgressError extends Error {
     this.levelId = levelId;
   }
 }
+
+export class PuzzlePublishedPostUnavailableError extends Error {
+  readonly postId: string;
+  readonly levelId: string;
+  readonly reason: 'removed' | 'spam';
+  readonly removedBy?: string;
+  readonly removedByCategory?: string;
+
+  constructor(params: {
+    postId: string;
+    levelId: string;
+    reason: 'removed' | 'spam';
+    removedBy?: string;
+    removedByCategory?: string;
+  }) {
+    const moderationDetails = [
+      params.removedByCategory ? `removedByCategory=${params.removedByCategory}` : null,
+      params.removedBy ? `removedBy=${params.removedBy}` : null,
+    ]
+      .filter((detail): detail is string => detail !== null)
+      .join(', ');
+    super(
+      `Published post ${params.postId} for ${params.levelId} is not usable because it was marked ${params.reason}${
+        moderationDetails.length > 0 ? ` (${moderationDetails})` : ''
+      }.`
+    );
+    this.name = 'PuzzlePublishedPostUnavailableError';
+    this.postId = params.postId;
+    this.levelId = params.levelId;
+    this.reason = params.reason;
+    this.removedBy = params.removedBy;
+    this.removedByCategory = params.removedByCategory;
+  }
+}
+
+/** Thrown when publishStagedPuzzle finds no staged puzzle pointer or the puzzle data is missing. */
+export class PuzzleNotStagedError extends Error {
+  constructor(detail?: string) {
+    super(detail ?? 'No staged puzzle is ready to publish.');
+    this.name = 'PuzzleNotStagedError';
+  }
+}
+
+/** Thrown when the staged puzzle's dateKey doesn't match the expected publish date. */
+export class PuzzleDateMismatchError extends Error {
+  readonly levelId: string;
+  readonly puzzleDateKey: string;
+  readonly expectedDateKey: string;
+
+  constructor(params: { levelId: string; puzzleDateKey: string; expectedDateKey: string }) {
+    super(
+      `Staged puzzle ${params.levelId} is for ${params.puzzleDateKey}, not ${params.expectedDateKey}.`
+    );
+    this.name = 'PuzzleDateMismatchError';
+    this.levelId = params.levelId;
+    this.puzzleDateKey = params.puzzleDateKey;
+    this.expectedDateKey = params.expectedDateKey;
+  }
+}
+
+type PostModerationSnapshot = {
+  approved: boolean;
+  removed: boolean;
+  spam: boolean;
+  title?: string;
+  subredditName?: string;
+  removedBy?: string;
+  removedByCategory?: string;
+};
+
+const capturePostModerationSnapshot = (
+  post: Awaited<ReturnType<typeof reddit.getPostById>>
+): PostModerationSnapshot => ({
+  approved: post.approved,
+  removed: post.removed,
+  spam: post.spam,
+  title: post.title,
+  subredditName: post.subredditName,
+  removedBy: post.removedBy,
+  removedByCategory: post.removedByCategory,
+});
+
+const assertVerifiedPostUsable = (params: {
+  levelId: string;
+  postId: string;
+  snapshot: PostModerationSnapshot;
+}): void => {
+  if (params.snapshot.removed) {
+    throw new PuzzlePublishedPostUnavailableError({
+      levelId: params.levelId,
+      postId: params.postId,
+      reason: 'removed',
+      removedBy: params.snapshot.removedBy,
+      removedByCategory: params.snapshot.removedByCategory,
+    });
+  }
+  if (params.snapshot.spam) {
+    throw new PuzzlePublishedPostUnavailableError({
+      levelId: params.levelId,
+      postId: params.postId,
+      reason: 'spam',
+      removedBy: params.snapshot.removedBy,
+      removedByCategory: params.snapshot.removedByCategory,
+    });
+  }
+};
+
+const shouldAttemptApprovalRecovery = (snapshot: PostModerationSnapshot): boolean =>
+  !snapshot.spam && (snapshot.removed || !snapshot.approved);
+
+const verifyPostVisibilityState = async (params: {
+  phase: 'publishDailyPost' | 'ensurePostVisibility';
+  levelId: string;
+  postId: string;
+}): Promise<PostModerationSnapshot> => {
+  const t3PostId = params.postId as `t3_${string}`;
+  const initialPost = await reddit.getPostById(t3PostId);
+  let snapshot = capturePostModerationSnapshot(initialPost);
+
+  console.log(`[${params.phase}] Post status check`, {
+    postId: params.postId,
+    approved: snapshot.approved,
+    removed: snapshot.removed,
+    spam: snapshot.spam,
+    removedBy: snapshot.removedBy,
+    removedByCategory: snapshot.removedByCategory,
+    title: snapshot.title,
+    subreddit: snapshot.subredditName,
+  });
+
+  if (!shouldAttemptApprovalRecovery(snapshot)) {
+    return snapshot;
+  }
+
+  try {
+    console.log(`[${params.phase}] Attempting approval recovery`, {
+      postId: params.postId,
+      removed: snapshot.removed,
+      approved: snapshot.approved,
+      removedBy: snapshot.removedBy,
+      removedByCategory: snapshot.removedByCategory,
+    });
+    await reddit.approve(t3PostId);
+    await pause(150);
+
+    const refetchedPost = await reddit.getPostById(t3PostId);
+    snapshot = capturePostModerationSnapshot(refetchedPost);
+
+    console.log(`[${params.phase}] Post status after approval attempt`, {
+      postId: params.postId,
+      approved: snapshot.approved,
+      removed: snapshot.removed,
+      spam: snapshot.spam,
+      removedBy: snapshot.removedBy,
+      removedByCategory: snapshot.removedByCategory,
+      title: snapshot.title,
+      subreddit: snapshot.subredditName,
+    });
+  } catch (approveError) {
+    console.warn(`[${params.phase}] Could not recover post visibility via approval`, {
+      postId: params.postId,
+      error: approveError instanceof Error ? approveError.message : String(approveError),
+      removed: snapshot.removed,
+      approved: snapshot.approved,
+      spam: snapshot.spam,
+      removedBy: snapshot.removedBy,
+      removedByCategory: snapshot.removedByCategory,
+    });
+  }
+
+  return snapshot;
+};
 
 type PublishRunAs = 'APP' | 'USER';
 
@@ -400,6 +575,7 @@ const resolveDailyGenerationPlan = async (dateKey: string): Promise<{
     challengeType: selectDailyQueueEntry(challengeTypeQueue, slotIndex, {
       dateKey,
       label: 'daily challenge type',
+      allowWrap: true,
     }),
   };
 };
@@ -490,7 +666,13 @@ const stabilizeManualPuzzleReveals = (
     });
 
   const initial = trySolve(puzzle.prefilledIndices);
-  if (initial.solvable && !initial.blindGuessRequired && initial.solvedRatio >= requiredSolveRatio) {
+  const initialValidation = validatePuzzle(puzzle);
+  if (
+    initial.solvable &&
+    !initial.blindGuessRequired &&
+    initial.solvedRatio >= requiredSolveRatio &&
+    initialValidation.valid
+  ) {
     return {
       puzzlePrivate: puzzle,
       puzzlePublic: buildPublicPuzzle(puzzle, []),
@@ -522,17 +704,22 @@ const stabilizeManualPuzzleReveals = (
   for (const index of candidateIndices) {
     revealedSet.add(index);
     const revealedIndices = [...revealedSet].sort((a, b) => a - b);
+    const candidatePuzzle: PuzzlePrivate = {
+      ...puzzle,
+      prefilledIndices: revealedIndices,
+      revealedIndices,
+      revealed_indices: revealedIndices,
+    };
+    const candidateValidation = validatePuzzle(candidatePuzzle);
+    if (!candidateValidation.valid) {
+      revealedSet.delete(index);
+      continue;
+    }
     const result = trySolve(revealedIndices);
     if (result.solvable && !result.blindGuessRequired && result.solvedRatio >= requiredSolveRatio) {
-      const puzzlePrivate: PuzzlePrivate = {
-        ...puzzle,
-        prefilledIndices: revealedIndices,
-        revealedIndices,
-        revealed_indices: revealedIndices,
-      };
       return {
-        puzzlePrivate,
-        puzzlePublic: buildPublicPuzzle(puzzlePrivate, []),
+        puzzlePrivate: candidatePuzzle,
+        puzzlePublic: buildPublicPuzzle(candidatePuzzle, []),
       };
     }
   }
@@ -558,6 +745,7 @@ export const buildManualPuzzleWithSolverFallback = (
         ...params,
         seedKey: solverSeedKeyForAttempt(params.levelId, attempt),
         skipSolvabilityCheck: true,
+        applyObstructionsOnSkip: true,
       });
       const stabilized = stabilizeManualPuzzleReveals(generated.puzzlePrivate);
       if (stabilized) {
@@ -631,139 +819,130 @@ export const buildAndSaveManualPuzzle = async (params: {
   throw new Error('Failed to allocate a stable level id for the manual challenge.');
 };
 
-const selectPuzzleCandidate = async (params: {
+const selectionPoolBatchSize = 3;
+const selectionLiveBatchSize = 6;
+
+const requestSelectionPoolRefill = (params: {
+  difficulty: number;
+  basePreferredType: ChallengeType;
+  signatureOwnerToken: string;
+  hardnessBoundsByTier?: Partial<HardnessBoundsByTier>;
+}) => {
+  void ensureAICandidatePoolSelection({
+    difficulty: params.difficulty,
+    preferredType: params.basePreferredType,
+    minimumCandidates: selectionPoolBatchSize,
+    hardnessBoundsByTier: params.hardnessBoundsByTier,
+  })
+    .then((result) => {
+      console.log(
+        `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} refill generated=${result.generated} locked=${result.locked}`
+      );
+    })
+    .catch((error) => {
+      console.warn(
+        `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} refill failed: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`
+      );
+    });
+};
+
+const fetchPuzzleCandidateBatch = async (params: {
   difficulty: number;
   difficultyLabel: string;
-  retries: number;
   basePreferredType: ChallengeType;
-  dateKey: string;
+  batchAttempt: number;
+  maxBatches: number;
   signatureOwnerToken: string;
-  allowSelectionRefill?: boolean;
+  apiKey: string;
+  safetyMode: string;
   hardnessBoundsByTier?: Partial<HardnessBoundsByTier>;
-}): Promise<SelectedPuzzleCandidate> => {
-  const { trackBatchGeneration } = await import('./metrics.ts');
-  let lastFailureReason = 'unknown';
-  const preferredType = params.basePreferredType;
-  const batchSize = 3;
-  const maxBatches = params.retries;
-  const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
-
-  for (let batchAttempt = 0; batchAttempt < maxBatches; batchAttempt += 1) {
-    let batch;
-    try {
-      batch = await takeAICandidateBatch({
+}): Promise<{
+  batch: BatchGenerationResult;
+  batchSource: 'pool' | 'live';
+  poolWasEmpty: boolean;
+}> => {
+  let poolWasEmpty = false;
+  try {
+    const poolBatch = await takeAICandidateBatch({
+      difficulty: params.difficulty,
+      preferredType: params.basePreferredType,
+      batchSize: selectionPoolBatchSize,
+    });
+    if (poolBatch.totalReturned > 0) {
+      requestSelectionPoolRefill({
         difficulty: params.difficulty,
-        preferredType,
-        batchSize,
+        basePreferredType: params.basePreferredType,
+        signatureOwnerToken: params.signatureOwnerToken,
+        hardnessBoundsByTier: params.hardnessBoundsByTier,
       });
-      console.log(
-        `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${batchAttempt + 1}/${maxBatches} received ${batch.totalReturned}/${batch.totalRequested} candidates`
-      );
-      if (batch.totalReturned === 0) {
-        lastFailureReason = `candidate pool empty for ${params.difficultyLabel} ${preferredType}`;
-        if (params.allowSelectionRefill) {
-          const refill = await ensureAICandidatePoolSelection({
-            difficulty: params.difficulty,
-            preferredType,
-            minimumCandidates: batchSize,
-            hardnessBoundsByTier: params.hardnessBoundsByTier,
-          });
-          if (refill.generated > 0) {
-            continue;
-          }
-        }
-        continue;
-      }
-    } catch (error) {
-      lastFailureReason = error instanceof Error ? error.message : 'unknown';
-      console.warn(
-        `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${
-          batchAttempt + 1
-        }/${maxBatches} candidate batch failed: ${lastFailureReason}`
-      );
-      
-      // Track failed batch
-      trackBatchGeneration({
-        candidatesRequested: batchSize,
-        candidatesReturned: 0,
-        candidateSelected: false,
-      });
-      
-      continue;
-    }
-
-    for (let candidateIndex = 0; candidateIndex < batch.candidates.length; candidateIndex += 1) {
-      const phrase = batch.candidates[candidateIndex];
-      if (!phrase) continue;
-
-      if (phrase.challengeType !== preferredType) {
-        lastFailureReason = `challenge type mismatch (expected ${preferredType} got ${phrase.challengeType})`;
-        console.warn(
-          `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${batchAttempt + 1} candidate=${candidateIndex + 1} mismatch challenge type expected=${preferredType} actual=${phrase.challengeType}`
-        );
-        continue;
-      }
-
-      const text = sanitizePhrase(phrase.text);
-
-      // Phase 1 validation using pipeline
-      const phase1 = pipeline.phase1(text, params.difficulty);
-      if (!phase1.valid) {
-        lastFailureReason = phase1.reasons.join('; ');
-        console.warn(
-          `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${batchAttempt + 1} candidate=${candidateIndex + 1} rejected quote: ${phase1.reasons.join('; ')}`
-        );
-        continue;
-      }
-
-      const dup = await pipeline.duplicate(text, params.signatureOwnerToken);
-      if (dup.duplicate) {
-        lastFailureReason = dup.reason ?? 'duplicate';
-        console.warn(
-          `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${batchAttempt + 1} candidate=${candidateIndex + 1} rejected quote: ${dup.reason ?? 'duplicate'}`
-        );
-        continue;
-      }
-
-      // Track successful batch
-      trackBatchGeneration({
-        candidatesRequested: batch.totalRequested,
-        candidatesReturned: batch.totalReturned,
-        candidateSelected: true,
-      });
-
       return {
-        text,
-        author: phrase.author,
-        challengeType: phrase.challengeType,
-        normalizedSignature: dup.normalizedSignature,
-        tokenSignature: dup.tokenSignature,
+        batch: poolBatch,
+        batchSource: 'pool',
+        poolWasEmpty: false,
       };
     }
-    
-    // Track batch with no selected candidate
-    trackBatchGeneration({
-      candidatesRequested: batch.totalRequested,
-      candidatesReturned: batch.totalReturned,
-      candidateSelected: false,
+    poolWasEmpty = true;
+    requestSelectionPoolRefill({
+      difficulty: params.difficulty,
+      basePreferredType: params.basePreferredType,
+      signatureOwnerToken: params.signatureOwnerToken,
+      hardnessBoundsByTier: params.hardnessBoundsByTier,
     });
+  } catch (poolError) {
+    console.warn(
+      `[generatePuzzleForDate] attempt=${params.signatureOwnerToken} batch=${
+        params.batchAttempt + 1
+      }/${params.maxBatches} candidate pool unavailable: ${
+        poolError instanceof Error ? poolError.message : 'unknown'
+      }`
+    );
   }
 
-  throw new PuzzleGenerationFailedError({
-    levelId: params.signatureOwnerToken,
-    dateKey: params.dateKey,
-    attempts: maxBatches,
-    reason: lastFailureReason,
-  });
+  try {
+    const batch = await generatePuzzlePhraseBatch({
+      levelId: `live_${params.signatureOwnerToken}_${params.batchAttempt + 1}`,
+      difficulty: params.difficulty,
+      batchSize: selectionLiveBatchSize,
+      apiKey: params.apiKey,
+      difficultyLabel: params.difficultyLabel,
+      safetyMode: params.safetyMode,
+      preferredType: params.basePreferredType,
+      hardnessBoundsByTier: params.hardnessBoundsByTier,
+    });
+    return {
+      batch,
+      batchSource: 'live',
+      poolWasEmpty,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown';
+    if (poolWasEmpty) {
+      throw new Error(`candidate pool empty, live fallback failed: ${reason}`);
+    }
+    throw error;
+  }
+};
+
+const releasePoolHeldReservations = async (
+  candidates: Array<{ normalizedSignature: string; reservationOwnerToken?: string }>
+): Promise<void> => {
+  await Promise.all(
+    candidates.map(async (candidate) => {
+      if (!candidate.reservationOwnerToken) {
+        return;
+      }
+      await clearUsedSignature(candidate.normalizedSignature, candidate.reservationOwnerToken);
+    })
+  );
 };
 
 export const generatePuzzleForDate = async (
-  now: Date,
-  options?: {
-    allowSelectionRefill?: boolean;
-  }
+  now: Date
 ): Promise<{ levelId: string; dateKey: string }> => {
   return await withPuzzleGenerationLock(async () => {
+    const { trackBatchGeneration } = await import('./metrics.ts');
     const settings = await getDecryptSettings();
     const retries = settings.aiMaxRetries;
     const dateKey = formatDateKey(now);
@@ -799,68 +978,221 @@ export const generatePuzzleForDate = async (
       }
       const difficulty = clampDifficultyWithinTier(baseDifficulty, bias, tierRange);
       const difficultyLabel = `difficulty ${difficulty} of 10 (${tier})`;
-      const selected = await selectPuzzleCandidate({
-        difficulty,
-        difficultyLabel,
-        retries,
-        basePreferredType,
-        dateKey,
-        signatureOwnerToken,
-        allowSelectionRefill: options?.allowSelectionRefill ?? false,
-        hardnessBoundsByTier,
-      });
-      const reserved = await reserveUsedSignature(
-        selected.normalizedSignature,
-        signatureOwnerToken
-      );
-      if (!reserved) {
-        throw new Error('Selected puzzle signature could not be reserved.');
-      }
-      reservedSignature = selected.normalizedSignature;
-      for (let saveAttempt = 0; saveAttempt < 3; saveAttempt += 1) {
-        const nextLevelId = await peekNextLevelId();
-        const previousMapping = await previousMappingForLevel(nextLevelId);
-        const generated = buildPuzzleWithSolverSeedRetries({
-          levelId: nextLevelId,
-          dateKey,
-          text: selected.text,
-          author: selected.author,
-          challengeType: selected.challengeType,
-          source: 'AUTO_DAILY',
-          difficulty,
-          logicalPercent: settings.logicalCipherPercent,
-          previousMapping,
-        });
-        const pipeline = createValidationPipeline(hardnessBoundsByTier);
-        const phase2 = pipeline.phase2(generated.puzzlePrivate);
-        if (!phase2.valid) {
-          throw new Error(`Generated puzzle validation failed: ${phase2.reasons.join('; ')}`);
-        }
-        const payload: GeneratedPuzzlePayload = {
-          puzzlePrivate: generated.puzzlePrivate,
-          puzzlePublic: generated.puzzlePublic,
-          normalizedSignature: selected.normalizedSignature,
-          tokenSignature: selected.tokenSignature,
-          expectedLevelId: nextLevelId,
-        };
+      const pipeline = createValidationPipeline(hardnessBoundsByTier);
+      let lastFailureReason = 'unknown';
+
+      for (let batchAttempt = 0; batchAttempt < retries; batchAttempt += 1) {
+        let fetchedBatch: BatchGenerationResult;
+        let batchSource: 'pool' | 'live' = 'pool';
+        let poolWasEmpty = false;
         try {
-          levelId = await savePuzzle(payload);
-          saved = true;
-          signatureOwnerToken = levelId;
-          break;
+          const fetched = await fetchPuzzleCandidateBatch({
+            difficulty,
+            difficultyLabel,
+            basePreferredType,
+            batchAttempt,
+            maxBatches: retries,
+            signatureOwnerToken,
+            apiKey: settings.geminiApiKey,
+            safetyMode: settings.contentSafetyMode,
+            hardnessBoundsByTier,
+          });
+          fetchedBatch = fetched.batch;
+          batchSource = fetched.batchSource;
+          poolWasEmpty = fetched.poolWasEmpty;
+          console.log(
+            `[generatePuzzleForDate] attempt=${signatureOwnerToken} source=${batchSource} batch=${batchAttempt + 1}/${retries} received ${fetchedBatch.totalReturned}/${fetchedBatch.totalRequested} candidates`
+          );
         } catch (error) {
-          if (error instanceof PuzzleLevelAllocationConflictError && saveAttempt < 2) {
+          lastFailureReason = error instanceof Error ? error.message : 'unknown';
+          console.warn(
+            `[generatePuzzleForDate] attempt=${signatureOwnerToken} source=${batchSource} batch=${
+              batchAttempt + 1
+            }/${retries} candidate batch failed: ${lastFailureReason}`
+          );
+          trackBatchGeneration({
+            candidatesRequested: batchSource === 'live' ? selectionLiveBatchSize : selectionPoolBatchSize,
+            candidatesReturned: 0,
+            candidateSelected: false,
+          });
+          continue;
+        }
+
+        if (fetchedBatch.totalReturned === 0) {
+          lastFailureReason = poolWasEmpty
+            ? `candidate pool empty for ${difficultyLabel} ${basePreferredType}`
+            : `AI returned no usable candidates for ${difficultyLabel} ${basePreferredType}`;
+          trackBatchGeneration({
+            candidatesRequested: fetchedBatch.totalRequested,
+            candidatesReturned: fetchedBatch.totalReturned,
+            candidateSelected: false,
+          });
+          continue;
+        }
+
+        const recentSignatureEntries = await getRecentUsedSignatureEntries(1200);
+        const filtered = filterCandidateBatch({
+          candidates: fetchedBatch.candidates,
+          preferredType: basePreferredType,
+          difficulty,
+          pipeline,
+          recentSignatureEntries,
+        });
+        const pendingPoolReservationCandidates = new Map(
+          filtered.decisions
+            .filter(
+              (decision): decision is typeof decision & {
+                normalizedSignature: string;
+                reservationOwnerToken: string;
+              } =>
+                typeof decision.normalizedSignature === 'string' &&
+                decision.normalizedSignature.length > 0 &&
+                typeof decision.reservationOwnerToken === 'string' &&
+                decision.reservationOwnerToken.length > 0
+            )
+            .map((decision) => [
+              decision.normalizedSignature,
+              {
+                normalizedSignature: decision.normalizedSignature,
+                reservationOwnerToken: decision.reservationOwnerToken,
+              },
+            ])
+        );
+
+        for (const decision of filtered.decisions) {
+          if (decision.accepted || !decision.reason) {
             continue;
           }
-          await clearUsedSignature(payload.normalizedSignature, signatureOwnerToken);
-          throw error;
+          lastFailureReason = decision.reason;
+          console.warn(
+            `[generatePuzzleForDate] attempt=${signatureOwnerToken} batch=${batchAttempt + 1} candidate=${
+              decision.candidateIndex + 1
+            } rejected quote: ${decision.reason}`
+          );
         }
-      }
-      if (!saved || !levelId) {
-        throw new Error('Failed to allocate a stable level id for the generated puzzle.');
+
+        if (filtered.accepted.length === 0) {
+          await releasePoolHeldReservations([...pendingPoolReservationCandidates.values()]);
+          trackBatchGeneration({
+            candidatesRequested: fetchedBatch.totalRequested,
+            candidatesReturned: fetchedBatch.totalReturned,
+            candidateSelected: false,
+          });
+          continue;
+        }
+
+        for (let candidateIndex = 0; candidateIndex < filtered.accepted.length; candidateIndex += 1) {
+          const selected = filtered.accepted[candidateIndex];
+          if (!selected) {
+            continue;
+          }
+
+          const reserved = selected.reservationOwnerToken
+            ? await transferUsedSignatureReservation(
+                selected.normalizedSignature,
+                selected.reservationOwnerToken,
+                signatureOwnerToken
+              )
+            : await reserveUsedSignature(selected.normalizedSignature, signatureOwnerToken);
+          if (!reserved) {
+            lastFailureReason = 'Selected puzzle signature could not be reserved.';
+            console.warn(
+              `[generatePuzzleForDate] attempt=${signatureOwnerToken} batch=${batchAttempt + 1} survivor=${
+                candidateIndex + 1
+              } reservation failed`
+            );
+            continue;
+          }
+          pendingPoolReservationCandidates.delete(selected.normalizedSignature);
+          reservedSignature = selected.normalizedSignature;
+          let shouldReleaseReservedSignature = true;
+          try {
+            for (let saveAttempt = 0; saveAttempt < 3; saveAttempt += 1) {
+              const nextLevelId = await peekNextLevelId();
+              const previousMapping = await previousMappingForLevel(nextLevelId);
+              let generated;
+              try {
+                generated = buildManualPuzzleWithSolverFallback({
+                  levelId: nextLevelId,
+                  dateKey,
+                  text: selected.text,
+                  author: selected.author,
+                  challengeType: selected.challengeType,
+                  source: 'AUTO_DAILY',
+                  difficulty,
+                  logicalPercent: settings.logicalCipherPercent,
+                  previousMapping,
+                });
+              } catch (error) {
+                lastFailureReason = error instanceof Error ? error.message : 'unknown';
+                console.warn(
+                  `[generatePuzzleForDate] attempt=${signatureOwnerToken} batch=${batchAttempt + 1} survivor=${
+                    candidateIndex + 1
+                  } build failed: ${lastFailureReason}`
+                );
+                break;
+              }
+
+              const phase2 = pipeline.phase2(generated.puzzlePrivate);
+              if (!phase2.valid) {
+                lastFailureReason = `Generated puzzle validation failed: ${phase2.reasons.join('; ')}`;
+                console.warn(
+                  `[generatePuzzleForDate] attempt=${signatureOwnerToken} batch=${batchAttempt + 1} survivor=${
+                    candidateIndex + 1
+                  } phase2 failed: ${phase2.reasons.join('; ')}`
+                );
+                break;
+              }
+
+              const payload: GeneratedPuzzlePayload = {
+                puzzlePrivate: generated.puzzlePrivate,
+                puzzlePublic: generated.puzzlePublic,
+                normalizedSignature: selected.normalizedSignature,
+                tokenSignature: selected.tokenSignature,
+                expectedLevelId: nextLevelId,
+              };
+              try {
+                levelId = await savePuzzle(payload);
+                saved = true;
+                signatureOwnerToken = levelId;
+                reservedSignature = null;
+                shouldReleaseReservedSignature = false;
+                trackBatchGeneration({
+                  candidatesRequested: fetchedBatch.totalRequested,
+                  candidatesReturned: fetchedBatch.totalReturned,
+                  candidateSelected: true,
+                });
+                await releasePoolHeldReservations([...pendingPoolReservationCandidates.values()]);
+                return { levelId, dateKey };
+              } catch (error) {
+                if (error instanceof PuzzleLevelAllocationConflictError && saveAttempt < 2) {
+                  continue;
+                }
+                throw error;
+              }
+            }
+          } finally {
+            if (shouldReleaseReservedSignature && reservedSignature) {
+              await clearUsedSignature(reservedSignature, signatureOwnerToken);
+              reservedSignature = null;
+            }
+          }
+        }
+
+        await releasePoolHeldReservations([...pendingPoolReservationCandidates.values()]);
+        trackBatchGeneration({
+          candidatesRequested: fetchedBatch.totalRequested,
+          candidatesReturned: fetchedBatch.totalReturned,
+          candidateSelected: false,
+        });
       }
 
-      return { levelId, dateKey };
+      throw new PuzzleGenerationFailedError({
+        levelId: levelId ?? signatureOwnerToken,
+        dateKey,
+        attempts: retries,
+        reason: lastFailureReason,
+      });
     } catch (error) {
       if (!saved && reservedSignature) {
         await clearUsedSignature(reservedSignature, signatureOwnerToken);
@@ -882,10 +1214,26 @@ export const publishDailyPost = async (params: {
   levelId: string;
   dateKey: string;
   runAs?: PublishRunAs;
+  forceNewPost?: boolean;
 }): Promise<string> => {
-  const committedBeforeLock = await loadCommittedPublishedPostId(params.levelId);
-  if (committedBeforeLock) {
-    return committedBeforeLock.postId;
+  console.log('[publishDailyPost] Starting', {
+    levelId: params.levelId,
+    dateKey: params.dateKey,
+    runAs: params.runAs ?? 'APP',
+    forceNewPost: params.forceNewPost ?? false,
+  });
+
+  if (!params.forceNewPost) {
+    const committedBeforeLock = await loadCommittedPublishedPostId(params.levelId);
+    if (committedBeforeLock) {
+      console.log('[publishDailyPost] Post already published, returning existing', {
+        levelId: params.levelId,
+        postId: committedBeforeLock.postId,
+      });
+      return committedBeforeLock.postId;
+    }
+  } else {
+    console.log('[publishDailyPost] forceNewPost=true, skipping duplicate check');
   }
 
   const lockToken = createLockToken();
@@ -914,6 +1262,20 @@ export const publishDailyPost = async (params: {
     const title = formatDailyTitle(params.levelId);
     const runAs = params.runAs ?? 'APP';
 
+    console.log('[publishDailyPost] About to call reddit.submitCustomPost', {
+      levelId: params.levelId,
+      dateKey: params.dateKey,
+      subredditName,
+      runAs,
+      title,
+      entry: challengePostEntry,
+      postData: {
+        levelId: params.levelId,
+        dateKey: params.dateKey,
+        mode: 'daily',
+      },
+    });
+
     console.log('[publishDailyPost] submitting custom post', {
       levelId: params.levelId,
       dateKey: params.dateKey,
@@ -931,7 +1293,7 @@ export const publishDailyPost = async (params: {
       post = await reddit.submitCustomPost({
         subredditName,
         title,
-        entry: 'default',
+        entry: challengePostEntry,
         ...(runAs === 'USER' ? { runAs } : {}),
         postData: {
           levelId: params.levelId,
@@ -947,8 +1309,43 @@ export const publishDailyPost = async (params: {
         postId: post?.id,
         postUrl: post?.url,
         hasPost: !!post,
+        postDataSent: {
+          levelId: params.levelId,
+          dateKey: params.dateKey,
+          mode: 'daily',
+        },
         postKeys: post ? Object.keys(post) : [],
       });
+
+      if (!post?.id) {
+        console.error('[publishDailyPost] submitCustomPost returned without a post id', {
+          fullResponse: JSON.stringify(post, null, 2),
+        });
+        throw new Error('submitCustomPost returned without a post id.');
+      }
+
+      // Verify the post was actually created by checking if we can access it
+      try {
+        const verifiedSnapshot = await verifyPostVisibilityState({
+          phase: 'publishDailyPost',
+          levelId: params.levelId,
+          postId: post.id,
+        });
+        assertVerifiedPostUsable({
+          levelId: params.levelId,
+          postId: post.id,
+          snapshot: verifiedSnapshot,
+        });
+      } catch (verifyError) {
+        console.error('[publishDailyPost] Post verification failed', {
+          postId: post.id,
+          error: verifyError instanceof Error ? verifyError.message : String(verifyError),
+        });
+        if (verifyError instanceof PuzzlePublishedPostUnavailableError) {
+          throw verifyError;
+        }
+        // Don't throw here - the post might still be valid, just not immediately queryable
+      }
     } catch (error) {
       console.error('[publishDailyPost] Reddit API error during post submission', {
         error: error instanceof Error ? error.message : String(error),
@@ -994,13 +1391,62 @@ export const activateDailyPuzzle = async (levelId: string): Promise<void> => {
   await setDailyPointer(levelId);
 };
 
+/**
+ * Checks if a published post is visible and attempts to approve it if needed
+ */
+export const ensurePostVisibility = async (params: {
+  levelId: string;
+  postId: string;
+}): Promise<void> => {
+  const { levelId, postId } = params;
+  try {
+    const snapshot = await verifyPostVisibilityState({
+      phase: 'ensurePostVisibility',
+      levelId,
+      postId,
+    });
+    assertVerifiedPostUsable({
+      levelId,
+      postId,
+      snapshot,
+    });
+  } catch (error) {
+    console.error('[ensurePostVisibility] Failed to check post visibility', {
+      postId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof PuzzlePublishedPostUnavailableError) {
+      throw error;
+    }
+  }
+};
+
 export const publishAndActivateDailyPost = async (params: {
   levelId: string;
   dateKey: string;
   runAs?: PublishRunAs;
+  forceNewPost?: boolean;
 }): Promise<string> => {
+  console.log('[publishAndActivateDailyPost] Starting', {
+    levelId: params.levelId,
+    dateKey: params.dateKey,
+    runAs: params.runAs,
+    forceNewPost: params.forceNewPost ?? false,
+  });
   const postId = await publishDailyPost(params);
+  console.log('[publishAndActivateDailyPost] Post created, now activating', {
+    levelId: params.levelId,
+    postId,
+  });
+
+  // Ensure the post is visible before activating
+  await ensurePostVisibility({
+    levelId: params.levelId,
+    postId,
+  });
+
   await activateDailyPuzzle(params.levelId);
+  console.log('[publishAndActivateDailyPost] Activation complete', { levelId: params.levelId });
   return postId;
 };
 
@@ -1036,9 +1482,7 @@ export const stagePuzzleForTomorrow = async (): Promise<{
     const generatedLevelIds: string[] = [];
 
     while (existingLevelIds.length + generatedLevelIds.length < 2) {
-      const generated = await generatePuzzleForDate(now, {
-        allowSelectionRefill: true,
-      });
+      const generated = await generatePuzzleForDate(now);
       generatedLevelIds.push(generated.levelId);
     }
 
@@ -1132,24 +1576,26 @@ export const publishStagedPuzzle = async (): Promise<{
   }
 
   if (stagedPointerMissingPuzzle) {
-    throw new Error(`Staged puzzle ${stagedLevelId} could not be found.`);
+    throw new PuzzleNotStagedError(`Staged puzzle ${stagedLevelId} could not be found.`);
   }
 
   if (!stagedLevelId) {
-    throw new Error('No staged puzzle is ready to publish.');
+    throw new PuzzleNotStagedError();
   }
 
   if (!stagedPuzzle) {
-    throw new Error(`Staged puzzle ${stagedLevelId} could not be found.`);
+    throw new PuzzleNotStagedError(`Staged puzzle ${stagedLevelId} could not be found.`);
   }
 
   if (stagedPuzzle.dateKey !== todayDateKey) {
-    throw new Error(
-      `Staged puzzle ${stagedPuzzle.levelId} is for ${stagedPuzzle.dateKey}, not ${todayDateKey}.`
-    );
+    throw new PuzzleDateMismatchError({
+      levelId: stagedPuzzle.levelId,
+      puzzleDateKey: stagedPuzzle.dateKey,
+      expectedDateKey: todayDateKey,
+    });
   }
 
-  throw new Error('No staged puzzle is ready to publish.');
+  throw new PuzzleNotStagedError();
 };
 
 export const injectManualPuzzle = async (params: {
@@ -1163,7 +1609,12 @@ export const injectManualPuzzle = async (params: {
   const dateKey = formatDateKey(now);
   const text = sanitizePhrase(params.text);
   const author = sanitizeAuthor(params.author);
-  if (!author || !looksLikeAllowedAuthor(author) || author.length > maxPuzzleAuthorLength) {
+  if (
+    !author ||
+    !looksLikeAllowedAuthor(author) ||
+    containsDisallowedContent(author) ||
+    author.length > maxPuzzleAuthorLength
+  ) {
     throw new Error(
       `Injected puzzle author invalid. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`
     );

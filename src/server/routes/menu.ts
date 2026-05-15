@@ -2,21 +2,26 @@ import { Hono } from 'hono';
 import type { UiResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
+import { clearSubredditGameData } from '../core/playtest-reset';
 import {
   formatModeratorRerollError,
   publishLastGeneratedChallenge,
   rerollAndPublish,
 } from '../core/admin';
-import type { MenuItemRequest } from '@devvit/web/shared';
 import { hasAdminAccess } from '../core/admin-auth';
 
 export const menu = new Hono();
 
 const requireAdmin = async (): Promise<UiResponse | null> => {
-  const allowed = await hasAdminAccess({
-    subredditName: context.subredditName,
-    username: context.username,
-  });
+  let allowed = false;
+  try {
+    allowed = await hasAdminAccess({
+      subredditName: context.subredditName,
+      username: context.username,
+    });
+  } catch (_error) {
+    return { showToast: 'Unable to verify moderator access right now. Please try again.' };
+  }
   if (allowed) {
     return null;
   }
@@ -48,8 +53,34 @@ menu.post('/post-create', async (c) => {
   }
 });
 
+menu.post('/mod-clear-subreddit-data', async (c) => {
+  const deny = await requireAdmin();
+  if (deny) {
+    return c.json<UiResponse>(deny, 200);
+  }
+  try {
+    const result = await clearSubredditGameData();
+    return c.json<UiResponse>(
+      {
+        showToast:
+          `Cleared subreddit game data for ${result.knownUsers} player(s), ` +
+          `${result.sessions} session(s), and ${result.deletedKeys} key(s).`,
+      },
+      200
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Error clearing subreddit game data: ${reason}`);
+    return c.json<UiResponse>(
+      {
+        showToast: `Failed to clear subreddit game data: ${reason}`,
+      },
+      200
+    );
+  }
+});
+
 menu.post('/mod-reroll', async (c) => {
-  await c.req.json<MenuItemRequest>();
   const deny = await requireAdmin();
   if (deny) {
     return c.json<UiResponse>(deny, 200);
@@ -76,7 +107,6 @@ menu.post('/mod-reroll', async (c) => {
 });
 
 menu.post('/mod-post-last-generated', async (c) => {
-  await c.req.json<MenuItemRequest>();
   const deny = await requireAdmin();
   if (deny) {
     return c.json<UiResponse>(deny, 200);
@@ -87,7 +117,6 @@ menu.post('/mod-post-last-generated', async (c) => {
       return c.json<UiResponse>(
         {
           showToast: `${published.levelId} was already posted.`,
-          navigateTo: `https://reddit.com/comments/${published.postId}`,
         },
         200
       );
@@ -96,7 +125,6 @@ menu.post('/mod-post-last-generated', async (c) => {
     return c.json<UiResponse>(
       {
         showToast: `Posted ${published.levelId}: ${published.challengeType} (${published.difficulty}/10)`,
-        navigateTo: `https://reddit.com/comments/${published.postId}`,
       },
       200
     );
@@ -113,7 +141,6 @@ menu.post('/mod-post-last-generated', async (c) => {
 });
 
 menu.post('/mod-inject', async (c) => {
-  await c.req.json<MenuItemRequest>();
   const deny = await requireAdmin();
   if (deny) {
     return c.json<UiResponse>(deny, 200);
@@ -123,6 +150,9 @@ menu.post('/mod-inject', async (c) => {
       showForm: {
         name: 'mod_inject_form',
         form: {
+          title: 'Inject Manual Puzzle',
+          description: 'Step 1 of 2. Submit the quote first; Decrypt will analyze it and recommend the best tier before publish.',
+          acceptLabel: 'Analyze Quote',
           fields: [
             {
               type: 'paragraph',
@@ -138,22 +168,6 @@ menu.post('/mod-inject', async (c) => {
               label: 'Author',
               required: true,
               helpText: 'Displayed as the quote/challenge author (max 28 characters).',
-            },
-            {
-              type: 'select',
-              name: 'difficulty',
-              label: 'Difficulty Profile',
-              required: true,
-              multiSelect: false,
-              defaultValue: ['medium'],
-              options: [
-                { label: 'Warmup (1-3)', value: 'warmup' },
-                { label: 'Medium (4-5)', value: 'medium' },
-                { label: 'Hard (6-8)', value: 'hard' },
-                { label: 'Expert (9-10)', value: 'expert' },
-              ],
-              helpText:
-                'This controls puzzle tuning, not source complexity. If the quote is naturally tougher or easier, the submit step will tell you before publish.',
             },
             {
               type: 'select',

@@ -121,6 +121,28 @@ const hasUnfairBlindTile = (puzzle: PuzzlePrivate): boolean => {
   return false;
 };
 
+const hasFullyPrefilledMultiLetterWord = (puzzle: PuzzlePrivate): boolean => {
+  const prefilledSet = new Set(puzzle.prefilledIndices);
+  const lettersByWord = new Map<number, number[]>();
+  for (const tile of puzzle.tiles) {
+    if (!tile.isLetter) {
+      continue;
+    }
+    const indices = lettersByWord.get(tile.wordIndex) ?? [];
+    indices.push(tile.index);
+    lettersByWord.set(tile.wordIndex, indices);
+  }
+  for (const indices of lettersByWord.values()) {
+    if (indices.length <= 1) {
+      continue;
+    }
+    if (indices.every((index) => prefilledSet.has(index))) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const hasOversizedWord = (puzzle: PuzzlePrivate): boolean =>
   hasWordLongerThan(puzzle.targetText, maxPuzzleWordLength);
 
@@ -144,6 +166,9 @@ export const validatePuzzle = (puzzle: PuzzlePrivate): {
   }
   if (hasUnfairBlindTile(puzzle)) {
     reasons.push('Blind tile fairness check failed.');
+  }
+  if (hasFullyPrefilledMultiLetterWord(puzzle)) {
+    reasons.push('A multi-letter word is fully prefilled.');
   }
   if (hasOversizedWord(puzzle)) {
     reasons.push(`Word length exceeds ${maxPuzzleWordLength} characters.`);

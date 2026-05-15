@@ -1,6 +1,10 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, KeyboardEvent } from 'react';
 import type { QuestDefinition, QuestReward } from '../../shared/quests';
+import type { QuestRewardDisplayItem } from '../app/game-formatters';
 import { tabButtonClass } from '../app/ui';
+import { ErrorCard } from '../components/ErrorCard';
+import { HudSprite } from '../components/HudSprite';
+import { PowerupSprite } from '../components/PowerupSprite';
 import type { QuestProgress, QuestStatus } from '../app/types';
 import { cn } from '../utils';
 
@@ -18,7 +22,10 @@ type QuestScreenProps = {
   claimedQuestIdSet: Set<string>;
   claimingQuestId: string | null;
   onClaimQuest: (questId: string) => void;
-  formatQuestReward: (reward: QuestReward) => { reward: string; flair: string | null };
+  formatQuestReward: (reward: QuestReward) => {
+    items: QuestRewardDisplayItem[];
+    flair: string | null;
+  };
   flairTagStyle: (flair: string) => CSSProperties | undefined;
   getQuestProgressValue: (quest: QuestDefinition, progress: QuestProgress) => number;
   isQuestHidden: (
@@ -47,12 +54,15 @@ export const QuestScreen = ({
   getQuestProgressValue,
   isQuestHidden,
 }: QuestScreenProps) => (
-  <section className="app-surface flex min-h-0 flex-1 flex-col" data-testid="quest-screen">
+  <section className="hub-screen app-surface flex min-h-0 flex-1 flex-col" data-testid="quest-screen">
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
-      <section className="app-surface-strong mb-3 rounded-xl border app-border px-4 py-3 text-center">
+      <section className="hub-header-panel panel-clear mb-3 rounded-xl px-4 py-3 text-center">
         <h2 className="app-text text-base font-black uppercase tracking-[0.04em]">Quests</h2>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <button className={tabButtonClass(questTab === 'daily')} onClick={() => onTabChange('daily')}>
+          <button
+            className={tabButtonClass(questTab === 'daily')}
+            onClick={() => onTabChange('daily')}
+          >
             Daily
           </button>
           <button
@@ -65,28 +75,23 @@ export const QuestScreen = ({
       </section>
       <div className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto pr-1">
         {questLoading && (
-          <div className="app-surface rounded-lg border app-border p-3 text-center text-xs font-semibold app-text-muted">
+          <div className="hub-card app-surface rounded-lg border app-border p-3 text-center text-xs font-semibold app-text-muted">
             Loading quests...
           </div>
         )}
         {!questLoading && !questStatus && (
-          <div className="app-surface rounded-lg border app-border p-3 text-center text-xs font-semibold app-text-muted">
-            <div>{questError ?? 'Unable to load quests.'}</div>
-            <button
-              className="btn-3d btn-neutral mt-2 px-3 py-1 text-[11px] font-bold uppercase"
-              onClick={onRetry}
-            >
-              Retry
-            </button>
-          </div>
+          <ErrorCard error={questError ?? 'Unable to load quests.'} onRetry={onRetry} />
         )}
         {questStatus && (
           <>
             {questTab === 'daily' && (
               <section className="space-y-2">
                 {visibleDailyQuests.length === 0 && (
-                  <div className="app-surface rounded-lg border app-border p-3 text-center text-xs font-semibold app-text-muted">
-                    All daily quests claimed. Come back tomorrow for a fresh set.
+                  <div className="hub-card app-surface rounded-lg border app-border p-6 text-center">
+                    <p className="app-text text-sm font-black uppercase">Daily Quests Cleared</p>
+                    <p className="app-text-muted mt-1 text-xs font-semibold">
+                      Fresh rewards arrive with tomorrow's cipher.
+                    </p>
                   </div>
                 )}
                 {visibleDailyQuests.map((quest) => {
@@ -100,10 +105,19 @@ export const QuestScreen = ({
                     <article
                       key={quest.id}
                       onClick={claimable ? () => onClaimQuest(quest.id) : undefined}
+                      role={claimable ? 'button' : 'article'}
+                      tabIndex={claimable ? 0 : -1}
+                      aria-disabled={!claimable}
+                      onKeyDown={claimable ? (event: KeyboardEvent<HTMLElement>) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onClaimQuest(quest.id);
+                        }
+                      } : undefined}
                       className={cn(
-                        'app-surface w-full max-w-full rounded-xl border app-border px-3 py-3',
+                        'hub-card w-full max-w-full rounded-xl border app-border px-3 py-3',
                         completed ? 'quest-complete' : '',
-                        claimable ? 'quest-claimable' : '',
+                        claimable ? 'quest-claimable cursor-pointer' : 'cursor-default',
                         isClaiming ? 'opacity-60' : ''
                       )}
                     >
@@ -115,9 +129,9 @@ export const QuestScreen = ({
                           </p>
                         </div>
                         <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
-                          <span className="app-text text-[11px] font-black uppercase">
-                            {rewardParts.reward}
-                          </span>
+                          <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
+                            {rewardParts.items.map((item) => renderRewardItem(item))}
+                          </div>
                           {rewardParts.flair && (
                             <span
                               className="quest-flair inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
@@ -158,10 +172,19 @@ export const QuestScreen = ({
                       <article
                         key={quest.id}
                         onClick={claimable ? () => onClaimQuest(quest.id) : undefined}
+                        role={claimable ? 'button' : 'article'}
+                        tabIndex={claimable ? 0 : -1}
+                        aria-disabled={!claimable}
+                        onKeyDown={claimable ? (event: KeyboardEvent<HTMLElement>) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            onClaimQuest(quest.id);
+                          }
+                        } : undefined}
                         className={cn(
-                          'app-surface w-full max-w-full rounded-xl border app-border px-3 py-3',
+                          'hub-card w-full max-w-full rounded-xl border app-border px-3 py-3',
                           completed ? 'quest-complete' : '',
-                          claimable ? 'quest-claimable' : '',
+                          claimable ? 'quest-claimable cursor-pointer' : 'cursor-default',
                           isClaiming ? 'opacity-60' : ''
                         )}
                       >
@@ -173,9 +196,9 @@ export const QuestScreen = ({
                             </p>
                           </div>
                           <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
-                            <span className="app-text text-[11px] font-black uppercase">
-                              {rewardParts.reward}
-                            </span>
+                            <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
+                              {rewardParts.items.map((item) => renderRewardItem(item))}
+                            </div>
                             {rewardParts.flair && (
                               <span
                                 className="quest-flair inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
@@ -201,4 +224,31 @@ export const QuestScreen = ({
       </div>
     </main>
   </section>
+);
+
+const renderRewardItem = (item: QuestRewardDisplayItem) => (
+  <span
+    key={`${item.kind}-${item.key}`}
+    data-testid={`quest-reward-item-${item.key}`}
+    role="img"
+    aria-label={
+      item.kind === 'coins'
+        ? `${item.count} coins reward`
+        : `${item.count} ${item.powerup} powerup reward`
+    }
+    className="hub-subpanel app-surface-subtle inline-flex items-center gap-1 rounded-full border app-border px-2 py-1 text-[10px] font-black"
+    title={item.kind === 'coins' ? `${item.count} coins` : `${item.count} ${item.powerup}`}
+  >
+    {item.kind === 'coins' ? (
+      <HudSprite icon="coin" decorative className="h-[14px] w-[14px]" />
+    ) : (
+      <PowerupSprite
+        powerup={item.powerup}
+        decorative
+        testId={`quest-reward-icon-${item.powerup}`}
+        className="h-[14px] w-[14px]"
+      />
+    )}
+    <span>x{item.count}</span>
+  </span>
 );

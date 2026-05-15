@@ -4,6 +4,7 @@ import type { ChallengeType } from '../../shared/game';
 
 const {
   clearUsedSignatureMock,
+  ensureAICandidatePoolSelectionMock,
   getBundledEndlessReservationOwnerMock,
   generatePuzzlePhraseMock,
   generatePuzzlePhraseBatchMock,
@@ -21,24 +22,28 @@ const {
   deletePuzzleDataMock,
   getAutoDailyLevelIdsForDateMock,
   getPuzzlePublicationReceiptMock,
-  takeAICandidateBatchMock,
   reserveUsedSignatureMock,
   savePuzzleMock,
   setPuzzlePublicationReceiptMock,
   setPuzzlePublishedPostIdMock,
   setStagedLevelIdMock,
   setDailyPointerMock,
+  transferUsedSignatureReservationMock,
   validatePuzzleMock,
   buildPuzzleMock,
   buildPublicPuzzleMock,
   runDummySolverMock,
   submitCustomPostMock,
+  takeAICandidateBatchMock,
+  getPostByIdMock,
+  approveMock,
   redisDelMock,
   redisIncrByMock,
   redisGetMock,
   redisSetMock,
 } = vi.hoisted(() => ({
   clearUsedSignatureMock: vi.fn(),
+  ensureAICandidatePoolSelectionMock: vi.fn(),
   getBundledEndlessReservationOwnerMock: vi.fn(),
   generatePuzzlePhraseMock: vi.fn(),
   generatePuzzlePhraseBatchMock: vi.fn(),
@@ -56,18 +61,21 @@ const {
   deletePuzzleDataMock: vi.fn(),
   getAutoDailyLevelIdsForDateMock: vi.fn(),
   getPuzzlePublicationReceiptMock: vi.fn(),
-  takeAICandidateBatchMock: vi.fn(),
   reserveUsedSignatureMock: vi.fn(),
   savePuzzleMock: vi.fn(),
   setPuzzlePublicationReceiptMock: vi.fn(),
   setPuzzlePublishedPostIdMock: vi.fn(),
   setStagedLevelIdMock: vi.fn(),
   setDailyPointerMock: vi.fn(),
+  transferUsedSignatureReservationMock: vi.fn(),
   validatePuzzleMock: vi.fn(),
   buildPuzzleMock: vi.fn(),
   buildPublicPuzzleMock: vi.fn(),
   runDummySolverMock: vi.fn(),
   submitCustomPostMock: vi.fn(),
+  takeAICandidateBatchMock: vi.fn(),
+  getPostByIdMock: vi.fn(),
+  approveMock: vi.fn(),
   redisDelMock: vi.fn(),
   redisIncrByMock: vi.fn(),
   redisGetMock: vi.fn(),
@@ -78,6 +86,8 @@ vi.mock('@devvit/web/server', () => ({
   context: { subredditName: 'decrypttest', subredditId: 't5_test' },
   reddit: {
     submitCustomPost: submitCustomPostMock,
+    getPostById: getPostByIdMock,
+    approve: approveMock,
   },
   redis: {
     del: redisDelMock,
@@ -104,10 +114,7 @@ const challengeTypePool = vi.hoisted(
 vi.mock('./ai', () => ({
   aiChallengeTypePool: challengeTypePool,
   generatePuzzlePhrase: generatePuzzlePhraseMock,
-}));
-
-vi.mock('./ai-pool', () => ({
-  takeAICandidateBatch: takeAICandidateBatchMock,
+  generatePuzzlePhraseBatch: generatePuzzlePhraseBatchMock,
 }));
 
 vi.mock('./config', () => ({
@@ -126,6 +133,11 @@ vi.mock('./dummy-solver', () => ({
 vi.mock('./difficulty-calibration', () => ({
   computeGlobalDailyBias: computeGlobalDailyBiasMock,
   computeAdaptiveHardnessBounds: computeAdaptiveHardnessBoundsMock,
+}));
+
+vi.mock('./ai-pool', () => ({
+  ensureAICandidatePoolSelection: ensureAICandidatePoolSelectionMock,
+  takeAICandidateBatch: takeAICandidateBatchMock,
 }));
 
 vi.mock('./endless-reservations', () => ({
@@ -151,6 +163,7 @@ vi.mock('./puzzle-store', () => ({
   setPuzzlePublishedPostId: setPuzzlePublishedPostIdMock,
   setStagedLevelId: setStagedLevelIdMock,
   setDailyPointer: setDailyPointerMock,
+  transferUsedSignatureReservation: transferUsedSignatureReservationMock,
 }));
 
 vi.mock('./validation', () => ({
@@ -158,6 +171,7 @@ vi.mock('./validation', () => ({
 }));
 
 import {
+  buildManualPuzzleWithSolverFallback,
   generatePuzzleForDate,
   injectManualPuzzle,
   publishDailyPost,
@@ -193,10 +207,10 @@ const hardValidPhrase = {
 
 afterEach(() => {
   clearUsedSignatureMock.mockReset();
+  ensureAICandidatePoolSelectionMock.mockReset();
   getBundledEndlessReservationOwnerMock.mockReset();
   generatePuzzlePhraseMock.mockReset();
   generatePuzzlePhraseBatchMock.mockReset();
-  takeAICandidateBatchMock.mockReset();
   getDecryptSettingsMock.mockReset();
   computeGlobalDailyBiasMock.mockReset();
   computeAdaptiveHardnessBoundsMock.mockReset();
@@ -217,11 +231,15 @@ afterEach(() => {
   setPuzzlePublishedPostIdMock.mockReset();
   setStagedLevelIdMock.mockReset();
   setDailyPointerMock.mockReset();
+  transferUsedSignatureReservationMock.mockReset();
   validatePuzzleMock.mockReset();
   buildPuzzleMock.mockReset();
   buildPublicPuzzleMock.mockReset();
   runDummySolverMock.mockReset();
   submitCustomPostMock.mockReset();
+  takeAICandidateBatchMock.mockReset();
+  getPostByIdMock.mockReset();
+  approveMock.mockReset();
   redisDelMock.mockReset();
   redisIncrByMock.mockReset();
   redisGetMock.mockReset();
@@ -235,12 +253,22 @@ beforeEach(() => {
   getPuzzleMappingMock.mockResolvedValue(null);
   peekNextLevelIdMock.mockResolvedValue('lvl_0001');
   savePuzzleMock.mockImplementation(async (params) => params.expectedLevelId ?? 'lvl_0001');
+  transferUsedSignatureReservationMock.mockResolvedValue(true);
   validatePuzzleMock.mockReturnValue({ valid: true, reasons: [] });
   buildPublicPuzzleMock.mockReturnValue({});
   runDummySolverMock.mockReturnValue({
     solvable: true,
     solvedRatio: 1,
     blindGuessRequired: false,
+  });
+  takeAICandidateBatchMock.mockResolvedValue({
+    candidates: [],
+    totalRequested: 3,
+    totalReturned: 0,
+  });
+  ensureAICandidatePoolSelectionMock.mockResolvedValue({
+    generated: 0,
+    locked: false,
   });
   computeAdaptiveHardnessBoundsMock.mockResolvedValue({
     easy: {
@@ -267,8 +295,8 @@ beforeEach(() => {
     return true;
   });
   
-  // Default pool mock implementation that wraps the single phrase mock
-  takeAICandidateBatchMock.mockImplementation(async (params) => {
+  // Default live batch mock implementation that wraps the single phrase mock.
+  generatePuzzlePhraseBatchMock.mockImplementation(async (params) => {
     const candidates = [];
     for (let i = 0; i < params.batchSize; i++) {
       try {
@@ -305,6 +333,17 @@ beforeEach(() => {
       totalReturned: candidates.length,
     };
   });
+  getPostByIdMock.mockResolvedValue({
+    id: 't3_daily123',
+    title: 'Daily Cipher',
+    subredditName: 'decrypttest',
+    approved: true,
+    removed: false,
+    spam: false,
+    removedBy: undefined,
+    removedByCategory: undefined,
+  });
+  approveMock.mockResolvedValue(undefined);
 });
 
 describe('generatePuzzleForDate', () => {
@@ -369,6 +408,77 @@ describe('generatePuzzleForDate', () => {
       levelId: 'lvl_0010',
       dateKey: '2026-03-07',
     });
+  });
+
+  it('uses pooled candidates before calling the live AI batch and schedules a refill', async () => {
+    const challengeTypeSeed = 123456789;
+    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
+    const baseType = expectedQueue[0] ?? 'QUOTE';
+
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 1,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    peekNextLevelIdMock.mockResolvedValue('lvl_0015');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
+    redisIncrByMock.mockResolvedValue(1);
+    redisGetMock.mockImplementation((key) => {
+      if (String(key).includes('daily_challenge_type_seed')) {
+        return `${challengeTypeSeed}`;
+      }
+      return null;
+    });
+    takeAICandidateBatchMock.mockResolvedValue({
+      candidates: [
+        {
+          ...hardValidPhrase,
+          challengeType: baseType,
+          reservationOwnerToken: 'pool_00000001',
+        },
+      ],
+      totalRequested: 3,
+      totalReturned: 1,
+    });
+    ensureAICandidatePoolSelectionMock.mockResolvedValue({
+      generated: 1,
+      locked: false,
+    });
+    buildPuzzleMock.mockReturnValue({
+      puzzlePrivate: { targetText: validPhrase.text },
+      puzzlePublic: {},
+    });
+    validatePuzzleMock.mockReturnValue({ valid: true, reasons: [] });
+
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(result).toEqual({
+      levelId: 'lvl_0015',
+      dateKey: '2026-03-07',
+    });
+    expect(takeAICandidateBatchMock).toHaveBeenCalledWith({
+      difficulty: expect.any(Number),
+      preferredType: baseType,
+      batchSize: 3,
+    });
+    expect(ensureAICandidatePoolSelectionMock).toHaveBeenCalledWith({
+      difficulty: expect.any(Number),
+      preferredType: baseType,
+      minimumCandidates: 3,
+      hardnessBoundsByTier: expect.anything(),
+    });
+    expect(transferUsedSignatureReservationMock).toHaveBeenCalledWith(
+      'THEQUICKBROWNFOXJUMPSOVERLAZYDOGSATNOON',
+      'pool_00000001',
+      expect.stringMatching(/^pending:/)
+    );
+    expect(generatePuzzlePhraseBatchMock).not.toHaveBeenCalled();
   });
 
   it('throws a typed error when all retries fail', async () => {
@@ -578,8 +688,10 @@ describe('generatePuzzleForDate', () => {
     expect(generatePuzzlePhraseMock).toHaveBeenCalled();
   });
 
-  it('fails without wrapping when all daily challenge type slots are already used', async () => {
+  it('wraps the daily challenge type queue when rerolls exceed the unique slot count', async () => {
     const challengeTypeSeed = 123456789;
+    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
+    const wrappedType = expectedQueue[0] ?? 'QUOTE';
 
     getDecryptSettingsMock.mockResolvedValue({
       aiMaxRetries: 1,
@@ -592,23 +704,35 @@ describe('generatePuzzleForDate', () => {
     getAutoDailyLevelIdsForDateMock.mockResolvedValue(
       Array.from({ length: challengeTypePool.length }, (_, index) => `lvl_${index + 1}`)
     );
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    peekNextLevelIdMock.mockResolvedValue('lvl_0020');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
     redisGetMock.mockImplementation((key) => {
       if (String(key).includes('daily_challenge_type_seed')) {
         return `${challengeTypeSeed}`;
       }
       return null;
     });
-
-    await expect(
-      generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'))
-    ).rejects.toMatchObject({
-      name: 'PuzzleGenerationFailedError',
-      dateKey: '2026-03-07',
-      reason: expect.stringContaining('No daily challenge type slots remain'),
+    generatePuzzlePhraseMock.mockResolvedValue({
+      ...warmupValidPhrase,
+      challengeType: wrappedType,
     });
+    buildPuzzleMock.mockReturnValue({
+      puzzlePrivate: { targetText: warmupValidPhrase.text },
+      puzzlePublic: {},
+    });
+    validatePuzzleMock.mockReturnValue({ valid: true, reasons: [] });
 
-    expect(takeAICandidateBatchMock).not.toHaveBeenCalled();
-    expect(savePuzzleMock).not.toHaveBeenCalled();
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(result).toEqual({
+      levelId: 'lvl_0020',
+      dateKey: '2026-03-07',
+    });
+    expect(generatePuzzlePhraseBatchMock).toHaveBeenCalled();
+    expect(savePuzzleMock).toHaveBeenCalledTimes(1);
   });
 
   it('fails fast when another puzzle generation is already holding the lock', async () => {
@@ -628,7 +752,142 @@ describe('generatePuzzleForDate', () => {
     ).rejects.toBeInstanceOf(PuzzleGenerationInProgressError);
 
     expect(getNextLevelIdMock).not.toHaveBeenCalled();
-    expect(takeAICandidateBatchMock).not.toHaveBeenCalled();
+    expect(generatePuzzlePhraseBatchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the manual solver fallback in the auto path before giving up on a candidate', async () => {
+    const challengeTypeSeed = 123456789;
+    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
+    const baseType = expectedQueue[0] ?? 'QUOTE';
+
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 1,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    peekNextLevelIdMock.mockResolvedValue('lvl_0030');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
+    redisIncrByMock.mockResolvedValue(1);
+    redisGetMock.mockImplementation((key) => {
+      if (String(key).includes('daily_challenge_type_seed')) {
+        return `${challengeTypeSeed}`;
+      }
+      return null;
+    });
+    generatePuzzlePhraseMock.mockResolvedValue({
+      ...hardValidPhrase,
+      challengeType: baseType,
+    });
+    buildPuzzleMock
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockReturnValueOnce({
+        puzzlePrivate: {
+          targetText: hardValidPhrase.text,
+          difficulty: 8,
+          prefilledIndices: [],
+          tiles: [],
+        },
+        puzzlePublic: {},
+      });
+    validatePuzzleMock.mockReturnValue({ valid: true, reasons: [] });
+
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(result).toEqual({
+      levelId: 'lvl_0030',
+      dateKey: '2026-03-07',
+    });
+    expect(buildPuzzleMock).toHaveBeenCalledTimes(5);
+    expect(buildPuzzleMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        levelId: 'lvl_0030',
+        skipSolvabilityCheck: true,
+        applyObstructionsOnSkip: true,
+      })
+    );
+    expect(savePuzzleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries the next filtered survivor when phase2 fails instead of burning the whole batch', async () => {
+    const challengeTypeSeed = 123456789;
+    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
+    const baseType = expectedQueue[0] ?? 'QUOTE';
+
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 1,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    peekNextLevelIdMock.mockResolvedValue('lvl_0040');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
+    redisIncrByMock.mockResolvedValue(1);
+    redisGetMock.mockImplementation((key) => {
+      if (String(key).includes('daily_challenge_type_seed')) {
+        return `${challengeTypeSeed}`;
+      }
+      return null;
+    });
+    generatePuzzlePhraseBatchMock.mockResolvedValue({
+      candidates: [
+        {
+          ...hardValidPhrase,
+          text: 'JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS',
+          challengeType: baseType,
+        },
+        {
+          ...hardValidPhrase,
+          text: 'WIZARD JAZZ PHANTOMS MIX BOLD QUICK VERBS',
+          challengeType: baseType,
+        },
+      ],
+      totalRequested: 3,
+      totalReturned: 2,
+    });
+    buildPuzzleMock
+      .mockReturnValueOnce({
+        puzzlePrivate: { targetText: 'JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS' },
+        puzzlePublic: {},
+      })
+      .mockReturnValueOnce({
+        puzzlePrivate: { targetText: 'WIZARD JAZZ PHANTOMS MIX BOLD QUICK VERBS' },
+        puzzlePublic: {},
+      });
+    validatePuzzleMock
+      .mockReturnValueOnce({ valid: false, reasons: ['phase2 failed'] })
+      .mockReturnValueOnce({ valid: true, reasons: [] });
+
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(result).toEqual({
+      levelId: 'lvl_0040',
+      dateKey: '2026-03-07',
+    });
+    expect(generatePuzzlePhraseBatchMock).toHaveBeenCalledTimes(1);
+    expect(buildPuzzleMock).toHaveBeenCalledTimes(2);
+    expect(savePuzzleMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -758,6 +1017,93 @@ describe('injectManualPuzzle', () => {
     );
   });
 
+  it('does not accept fallback reveals that fail phase2 validation', () => {
+    const fallbackPuzzle = {
+      levelId: 'lvl_0045',
+      dateKey: '2026-03-08',
+      targetText: 'AB CD',
+      author: 'AUTHOR',
+      challengeType: 'QUOTE',
+      source: 'MANUAL_INJECTED',
+      cipherType: 'random',
+      shiftAmount: null,
+      mapping: { A: 1, B: 2, C: 3, D: 4 },
+      reverseMapping: { '1': 'A', '2': 'B', '3': 'C', '4': 'D' },
+      tiles: [
+        { index: 0, char: 'A', isLetter: true, wordIndex: 0 },
+        { index: 1, char: 'B', isLetter: true, wordIndex: 0 },
+        { index: 2, char: ' ', isLetter: false, wordIndex: 0 },
+        { index: 3, char: 'C', isLetter: true, wordIndex: 1 },
+        { index: 4, char: 'D', isLetter: true, wordIndex: 1 },
+      ],
+      words: ['AB', 'CD'],
+      prefilledIndices: [0],
+      revealedIndices: [0],
+      revealed_indices: [0],
+      blindIndices: [],
+      lockIndices: [],
+      goldIndex: null,
+      padlockChains: [],
+      difficulty: 5,
+      cryptoHardness: 0.4,
+      isLogical: false,
+      createdAt: 123,
+    };
+
+    buildPuzzleMock
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('DUMMY_SOLVER_UNSATISFIED');
+      })
+      .mockReturnValue(fallbackPuzzle ? { puzzlePrivate: fallbackPuzzle, puzzlePublic: {} } : {});
+
+    runDummySolverMock.mockImplementation(({ revealedIndices }) => ({
+      solvable: Array.isArray(revealedIndices) && revealedIndices.length >= 2,
+      solvedRatio: Array.isArray(revealedIndices) && revealedIndices.length >= 2 ? 1 : 0.5,
+      blindGuessRequired: false,
+    }));
+
+    validatePuzzleMock.mockImplementation((candidate) => ({
+      valid: Array.isArray(candidate.prefilledIndices) && candidate.prefilledIndices.length <= 1,
+      reasons:
+        Array.isArray(candidate.prefilledIndices) && candidate.prefilledIndices.length <= 1
+          ? []
+          : ['A multi-letter word is fully prefilled.'],
+    }));
+
+    expect(() =>
+      buildManualPuzzleWithSolverFallback({
+        levelId: 'lvl_0045',
+        dateKey: '2026-03-08',
+        text: 'AB CD',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        source: 'MANUAL_INJECTED',
+        difficulty: 5,
+        logicalPercent: 10,
+        previousMapping: null,
+      })
+    ).toThrow('DUMMY_SOLVER_UNSATISFIED');
+    expect(buildPuzzleMock).toHaveBeenCalledTimes(5);
+    expect(buildPuzzleMock).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        levelId: 'lvl_0045',
+        seedKey: 'lvl_0045',
+        skipSolvabilityCheck: true,
+        applyObstructionsOnSkip: true,
+      })
+    );
+  });
+
   it('rejects a manual puzzle when its normalized phrase is reserved by endless staging', async () => {
     getDecryptSettingsMock.mockResolvedValue({
       aiMaxRetries: 3,
@@ -843,6 +1189,11 @@ describe('publishDailyPost', () => {
         dateKey: '2026-03-07',
       })
     );
+    expect(submitCustomPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entry: 'default',
+      })
+    );
   });
 
   it('submits moderator-triggered publishes as the acting user when requested', async () => {
@@ -874,6 +1225,70 @@ describe('publishDailyPost', () => {
 
     expect(setPuzzlePublishedPostIdMock).not.toHaveBeenCalled();
     expect(setPuzzlePublicationReceiptMock).not.toHaveBeenCalled();
+  });
+
+  it('fails publish when Reddit immediately marks the created post as removed', async () => {
+    submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });
+    getPostByIdMock.mockResolvedValue({
+      id: 't3_daily123',
+      title: 'Daily Cipher #3',
+      subredditName: 'decrypttest',
+      approved: false,
+      removed: true,
+      spam: false,
+      removedBy: 'AutoModerator',
+      removedByCategory: 'automod_filtered',
+    });
+
+    await expect(
+      publishDailyPost({
+        levelId: 'lvl_0003',
+        dateKey: '2026-03-07',
+      })
+    ).rejects.toThrow('removedByCategory=automod_filtered');
+
+    expect(approveMock).toHaveBeenCalledWith('t3_daily123');
+    expect(setPuzzlePublishedPostIdMock).not.toHaveBeenCalled();
+    expect(setPuzzlePublicationReceiptMock).not.toHaveBeenCalled();
+  });
+
+  it('recovers publish when approval clears an auto-filtered post', async () => {
+    submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });
+    getPostByIdMock
+      .mockResolvedValueOnce({
+        id: 't3_daily123',
+        title: 'Daily Cipher #3',
+        subredditName: 'decrypttest',
+        approved: false,
+        removed: true,
+        spam: false,
+        removedBy: 'AutoModerator',
+        removedByCategory: 'automod_filtered',
+      })
+      .mockResolvedValueOnce({
+        id: 't3_daily123',
+        title: 'Daily Cipher #3',
+        subredditName: 'decrypttest',
+        approved: true,
+        removed: false,
+        spam: false,
+        removedBy: undefined,
+        removedByCategory: undefined,
+      });
+
+    const postId = await publishDailyPost({
+      levelId: 'lvl_0003',
+      dateKey: '2026-03-07',
+    });
+
+    expect(postId).toBe('t3_daily123');
+    expect(approveMock).toHaveBeenCalledWith('t3_daily123');
+    expect(setPuzzlePublishedPostIdMock).toHaveBeenCalledWith(
+      'lvl_0003',
+      't3_daily123',
+      '2026-03-07'
+    );
+    expect(setPuzzlePublicationReceiptMock).toHaveBeenCalled();
   });
 
   it('repairs published state from the receipt without reposting', async () => {
@@ -982,6 +1397,64 @@ describe('publishAndActivateDailyPost', () => {
 
     expect(setDailyPointerMock).not.toHaveBeenCalled();
   });
+
+  it('does not activate the daily pointer when an existing published post is removed', async () => {
+    getPuzzlePublishedPostIdMock.mockResolvedValue('t3_existing123');
+    getPostByIdMock.mockResolvedValue({
+      id: 't3_existing123',
+      title: 'Daily Cipher #3',
+      subredditName: 'decrypttest',
+      approved: false,
+      removed: true,
+      spam: false,
+      removedBy: 'AutoModerator',
+      removedByCategory: 'automod_filtered',
+    });
+
+    await expect(
+      publishAndActivateDailyPost({
+        levelId: 'lvl_0003',
+        dateKey: '2026-03-07',
+      })
+    ).rejects.toThrow('removedByCategory=automod_filtered');
+
+    expect(approveMock).toHaveBeenCalledWith('t3_existing123');
+    expect(setDailyPointerMock).not.toHaveBeenCalled();
+  });
+
+  it('activates the daily pointer when approval clears an auto-filtered existing post', async () => {
+    getPuzzlePublishedPostIdMock.mockResolvedValue('t3_existing123');
+    getPostByIdMock
+      .mockResolvedValueOnce({
+        id: 't3_existing123',
+        title: 'Daily Cipher #3',
+        subredditName: 'decrypttest',
+        approved: false,
+        removed: true,
+        spam: false,
+        removedBy: 'AutoModerator',
+        removedByCategory: 'automod_filtered',
+      })
+      .mockResolvedValueOnce({
+        id: 't3_existing123',
+        title: 'Daily Cipher #3',
+        subredditName: 'decrypttest',
+        approved: true,
+        removed: false,
+        spam: false,
+        removedBy: undefined,
+        removedByCategory: undefined,
+      });
+
+    const postId = await publishAndActivateDailyPost({
+      levelId: 'lvl_0003',
+      dateKey: '2026-03-07',
+    });
+
+    expect(postId).toBe('t3_existing123');
+    expect(approveMock).toHaveBeenCalledWith('t3_existing123');
+    expect(setDailyPointerMock).toHaveBeenCalledWith('lvl_0003');
+  });
 });
 
 describe('stagePuzzleForTomorrow', () => {
@@ -1010,11 +1483,11 @@ describe('stagePuzzleForTomorrow', () => {
       return null;
     });
     generatePuzzlePhraseMock.mockResolvedValue({
-      ...warmupValidPhrase,
+      ...hardValidPhrase,
       challengeType: baseType,
     });
     buildPuzzleMock.mockReturnValue({
-      puzzlePrivate: { targetText: warmupValidPhrase.text },
+      puzzlePrivate: { targetText: hardValidPhrase.text },
       puzzlePublic: {},
     });
 

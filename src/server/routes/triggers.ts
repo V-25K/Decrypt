@@ -13,31 +13,42 @@ type TriggerRouteResult = {
   statusCode: 200;
 };
 
+import { reportAutomatedGenerationFailure } from '../core/generation-failure';
+import { formatDateKey } from '../core/serde';
+
 const handleAutomationBootstrapTrigger = async (
   input: OnAppInstallRequest | OnAppUpgradeRequest
 ): Promise<TriggerRouteResult> => {
   if (input.type === 'AppInstall') {
-    // Warm the AI candidate pool immediately so the first automated
-    // publish (at 00:00 UTC) has puzzles ready even when the app is
-    // installed between 00:00 and 22:00 (before the normal 22:00 cron).
+    // Kick off the normal daily staging flow on initial install so tomorrow's
+    // scheduled posts have saved puzzles ready without relying on a background
+    // AI-pool refill loop.
     try {
       await scheduler.runJob({
-        name: 'decrypt-refill-ai-pool-30m',
+        name: 'decrypt-generate-daily-2200',
         runAt: new Date(),
       });
-      console.log('[triggers] Scheduled immediate AI pool warm-up on install.');
+      console.log(`[triggers] Scheduled immediate daily staging on ${input.type.toLowerCase()}.`);
     } catch (error) {
       console.error(
-        `[triggers] Failed to schedule post-install pool warm-up: ${
+        `[triggers] Failed to schedule post-${input.type.toLowerCase()} daily staging: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
+      await reportAutomatedGenerationFailure({
+        source: 'trigger.on-app-install',
+        dateKey: formatDateKey(new Date()),
+        error,
+      });
     }
   }
   return {
     body: {
       status: 'success',
-      message: `Bootstrap trigger received (${input.type}); pool warm-up scheduled.`,
+      message:
+        input.type === 'AppInstall'
+          ? 'Bootstrap trigger received (AppInstall); requested an immediate daily staging run.'
+          : 'Bootstrap trigger received (AppUpgrade); no immediate staging or post creation was performed.',
     },
     statusCode: 200,
   };

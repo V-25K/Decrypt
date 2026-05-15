@@ -29,6 +29,7 @@ export interface LoadTimeMetrics {
 export class BundleOptimizer {
   private loadedModules = new Map<string, ModuleInfo>();
   private loadTimes: LoadTimeMetrics | null = null;
+  private performanceObserver: PerformanceObserver | null = null;
   private static instance: BundleOptimizer;
 
   static getInstance(): BundleOptimizer {
@@ -85,6 +86,8 @@ export class BundleOptimizer {
    * Measure page load performance metrics
    */
   measureLoadTimes(): LoadTimeMetrics {
+    this.dispose();
+
     if (typeof window === 'undefined' || !window.performance) {
       return {
         domContentLoaded: 0,
@@ -105,15 +108,16 @@ export class BundleOptimizer {
     let largestContentfulPaint = 0;
     if ('PerformanceObserver' in window) {
       try {
-        const observer = new PerformanceObserver((list) => {
+        this.performanceObserver = new PerformanceObserver((list) => {
 	          const entries = list.getEntries();
 	          const lastEntry = entries[entries.length - 1];
 	          if (lastEntry) {
 	            largestContentfulPaint = lastEntry.startTime;
 	          }
         });
-        observer.observe({ entryTypes: ['largest-contentful-paint'] });
+        this.performanceObserver.observe({ entryTypes: ['largest-contentful-paint'] });
       } catch (e) {
+        this.performanceObserver = null;
         // LCP not supported
       }
     }
@@ -214,6 +218,15 @@ export class BundleOptimizer {
   clearTracking(): void {
     this.loadedModules.clear();
     this.loadTimes = null;
+    this.dispose();
+  }
+
+  dispose(): void {
+    if (!this.performanceObserver) {
+      return;
+    }
+    this.performanceObserver.disconnect();
+    this.performanceObserver = null;
   }
 
   private calculateChunkSizes(): Record<string, number> {
@@ -248,7 +261,7 @@ export class BundleOptimizer {
  */
 export class ModuleManager {
   private static instance: ModuleManager;
-  private loadedModules = new Map<string, Promise<any>>();
+  private loadedModules = new Map<string, Promise<unknown>>();
   private bundleOptimizer = BundleOptimizer.getInstance();
 
   static getInstance(): ModuleManager {
@@ -263,7 +276,7 @@ export class ModuleManager {
    */
   async loadModule<T>(moduleId: string, loader: () => Promise<T>): Promise<T> {
     if (this.loadedModules.has(moduleId)) {
-      return this.loadedModules.get(moduleId)!;
+      return this.loadedModules.get(moduleId) as Promise<T>;
     }
 
     const modulePromise = this.loadModuleWithTracking(moduleId, loader);
@@ -294,11 +307,8 @@ export class ModuleManager {
   }
 
   private async loadModuleWithTracking<T>(moduleId: string, loader: () => Promise<T>): Promise<T> {
-    const startTime = performance.now();
-    
     try {
       const module = await loader();
-	      performance.now() - startTime;
       
       // Estimate module size (simplified)
       const estimatedSize = this.estimateModuleSize(module);
@@ -312,7 +322,7 @@ export class ModuleManager {
     }
   }
 
-  private estimateModuleSize(module: any): number {
+  private estimateModuleSize(module: unknown): number {
     // Simplified size estimation
     try {
       const serialized = JSON.stringify(module);

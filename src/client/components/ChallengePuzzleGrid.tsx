@@ -1,8 +1,17 @@
-import { memo, type ReactNode, type RefObject } from 'react';
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { cn } from '../utils';
-import { lockEmoji, maxWordTileColumns, wordContinuationGlyph } from '../app/constants';
-import { type PuzzleRenderToken } from '../utils';
+import { maxWordTileColumns, wordContinuationGlyph } from '../app/constants';
+import { getPuzzleNavigableTileRows, type PuzzleRenderToken } from '../utils';
 import type { PuzzlePublicTile } from '../app/types';
+import { UiSprite } from './UiSprite';
 
 type ChallengePuzzleGridProps = {
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -77,21 +86,76 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
     getLetterTileState,
     getLetterTileClass,
   } = _props;
+  const tileButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  const navigableTileRows = useMemo(
+    () => getPuzzleNavigableTileRows(puzzleTokenLines, maxWordTileColumns),
+    [puzzleTokenLines]
+  );
+  const navigableTileIndices = useMemo(
+    () => navigableTileRows.flatMap((row) => row),
+    [navigableTileRows]
+  );
+  const handleTileKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, tileIndex: number) => {
+      const currentIndex = navigableTileIndices.indexOf(tileIndex);
+      if (currentIndex < 0) {
+        return;
+      }
+
+      let nextTileIndex: number | undefined;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        const offset = event.key === 'ArrowRight' ? 1 : -1;
+        nextTileIndex = navigableTileIndices[currentIndex + offset];
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const currentRowIndex = navigableTileRows.findIndex((row) =>
+          row.includes(tileIndex)
+        );
+        const currentRow = navigableTileRows[currentRowIndex];
+        if (!currentRow) {
+          return;
+        }
+        const targetRow =
+          navigableTileRows[currentRowIndex + (event.key === 'ArrowDown' ? 1 : -1)];
+        if (!targetRow) {
+          return;
+        }
+        const columnIndex = currentRow.indexOf(tileIndex);
+        nextTileIndex =
+          targetRow[Math.min(Math.max(columnIndex, 0), targetRow.length - 1)];
+      } else {
+        return;
+      }
+
+      if (nextTileIndex === undefined) {
+        return;
+      }
+
+      event.preventDefault();
+      handleTileSelection(nextTileIndex);
+      tileButtonRefs.current.get(nextTileIndex)?.focus();
+    },
+    [handleTileSelection, navigableTileIndices, navigableTileRows]
+  );
 
   return (
     <main className="flex flex-1 min-h-0 px-2 py-2">
       <div className="min-w-0 flex-1">
         <div
           ref={viewportRef}
-          className={`flex h-full justify-center overflow-x-hidden overflow-y-auto ${
+          data-testid="puzzle-viewport"
+          data-scroll-mode={isInlineMode ? 'locked' : 'auto'}
+          className={`flex h-full justify-center overflow-x-hidden ${
+            isInlineMode ? 'overflow-y-hidden' : 'overflow-y-auto'
+          } ${
             isPuzzleVerticallyCentered ? 'items-center' : 'items-start'
           }`}
         >
           <div
+            data-testid="puzzle-scale-wrap"
             className="flex w-full justify-center"
             style={{ transform: `scale(${puzzleScale})`, transformOrigin: 'top center' }}
           >
-            <div ref={contentRef} className="inline-block max-w-full">
+            <div ref={contentRef} data-testid="puzzle-content" className="inline-block max-w-full">
               <div
                 data-testid="puzzle-token-wrap"
                 className="flex flex-col items-center gap-y-[4px]"
@@ -186,8 +250,17 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
                                 return (
                                   <button
                                     key={tile.index}
+                                    ref={(node) => {
+                                      if (node) {
+                                        tileButtonRefs.current.set(tile.index, node);
+                                      } else {
+                                        tileButtonRefs.current.delete(tile.index);
+                                      }
+                                    }}
                                     disabled={disabled}
                                     onClick={() => handleTileSelection(tile.index)}
+                                    onKeyDown={(event) => handleTileKeyDown(event, tile.index)}
+                                    aria-label={`Cipher tile ${tile.index + 1}`}
                                     data-tile-state={tileState}
                                     className={getLetterTileClass(
                                       selectedTile === tile.index,
@@ -203,7 +276,7 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
                                         {lockDots ? (
                                           <span className="lock-dot-col">{lockDots}</span>
                                         ) : null}
-                                        <span className="lock-emoji">{lockEmoji}</span>
+                                        <UiSprite icon="lock" decorative className="lock-sprite" />
                                       </span>
                                     )}
 
@@ -230,14 +303,14 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
                                     />
 
                                     <span
-                                      className={`app-text-soft block min-h-[10px] ${
+                                      className={`app-text-soft flex min-h-[10px] items-center justify-center leading-none ${
                                         isInlineMode ? 'mt-0.5' : 'mt-1'
                                       } ${puzzleCipherClass}`}
                                     >
                                       {tile.isLocked ? (
                                         '\u00A0'
                                       ) : tile.isBlind ? (
-                                        <span className="cipher-blind-mark">?</span>
+                                        <UiSprite icon="question" decorative className="cipher-blind-mark" />
                                       ) : (
                                         tile.cipherNumber ?? '\u00A0'
                                       )}
@@ -271,6 +344,30 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
       </div>
     </main>
   );
-});
+}, (prev, next) =>
+  prev.viewportRef === next.viewportRef &&
+  prev.contentRef === next.contentRef &&
+  prev.isPuzzleVerticallyCentered === next.isPuzzleVerticallyCentered &&
+  prev.puzzleScale === next.puzzleScale &&
+  prev.puzzleTokenLines === next.puzzleTokenLines &&
+  prev.isInlineMode === next.isInlineMode &&
+  prev.selectedTile === next.selectedTile &&
+  prev.busy === next.busy &&
+  prev.isComplete === next.isComplete &&
+  prev.isGameOver === next.isGameOver &&
+  prev.pendingGuessByTile === next.pendingGuessByTile &&
+  prev.correctGuessTileIndices === next.correctGuessTileIndices &&
+  prev.wrongGuessTileIndices === next.wrongGuessTileIndices &&
+  prev.puzzleMarkClass === next.puzzleMarkClass &&
+  prev.puzzleTileUnderlineWidthClass === next.puzzleTileUnderlineWidthClass &&
+  prev.puzzleCipherClass === next.puzzleCipherClass &&
+  prev.punctuationTileMinWidthClass === next.punctuationTileMinWidthClass &&
+  prev.punctuationMarkClass === next.punctuationMarkClass &&
+  prev.separatorGlyphClass === next.separatorGlyphClass &&
+  prev.handleTileSelection === next.handleTileSelection &&
+  prev.renderPunctuationTile === next.renderPunctuationTile &&
+  prev.getLetterTileState === next.getLetterTileState &&
+  prev.getLetterTileClass === next.getLetterTileClass
+);
 
 ChallengePuzzleGrid.displayName = 'ChallengePuzzleGrid';

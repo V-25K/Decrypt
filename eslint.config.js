@@ -6,6 +6,32 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default defineConfig([
+  {
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build/**',
+      'eslint.config.js',
+      '**/vite.config.ts',
+      'devvit.config.ts',
+      'src/**/*.test.*',
+      'src/**/*.spec.*',
+      'src/**/*property*.ts',
+      'src/**/*property*.tsx',
+      'src/**/*exploration*.ts',
+      'src/**/*.d.ts',
+      'src/**/*.js',
+      'src/shared/bundle-analysis.ts',
+    ],
+  },
+  {
+    files: ['**/*.js'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2023,
+      globals: globals.node,
+    },
+  },
   tseslint.configs.recommended,
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -18,10 +44,26 @@ export default defineConfig([
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+    },
   },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ['src/shared/**/*.{ts,tsx,mjs,cjs,js}'],
+    files: ['src/shared/**/*.test.*', 'src/shared/**/*property*.ts'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      globals: globals.browser,
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
+  {
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    files: ['src/shared/**/*.{ts,tsx}'],
+    ignores: ['src/shared/**/*.test.*', 'src/shared/**/*property*.ts'],
     languageOptions: {
       ecmaVersion: 2023,
       globals: globals.browser,
@@ -29,6 +71,9 @@ export default defineConfig([
         project: ['./tools/tsconfig.shared.json'],
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
     },
   },
   {
@@ -54,29 +99,19 @@ export default defineConfig([
         'warn',
         { allowConstantExport: true },
       ],
+      '@typescript-eslint/no-floating-promises': 'error',
     },
   },
   {
-    files: ['**/*.{js,mjs,cjs,ts,tsx}'],
+    files: ['**/*.{ts,tsx}'],
     rules: {
-      '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-unused-vars': ['off'],
       'no-unused-vars': ['off'],
     },
-    ignores: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/build/**',
-      'eslint.config.js',
-      '**/vite.config.ts',
-      'devvit.config.ts',
-    ],
     languageOptions: {
       parserOptions: {
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    plugins: { js },
-    extends: ['js/recommended'],
   },
 ]);

@@ -4,6 +4,7 @@ import {
   challengeTypeSchema,
 } from '../../shared/game.ts';
 import {
+  containsDisallowedContent,
   difficultyToTier,
   exceedsPuzzleTotalLength,
   type HardnessBoundsByTier,
@@ -38,6 +39,7 @@ export type ChallengeCandidate = {
   text: string;
   author: string;
   challengeType: ChallengeType;
+  reservationOwnerToken?: string;
 };
 
 export type BatchGenerationResult = {
@@ -53,6 +55,8 @@ const batchPayloadSchema = z.array(
     challenge_type: z.string().min(1),
   })
 );
+
+type RawChallengeCandidate = z.infer<typeof batchPayloadSchema>[number];
 
 const bannedExactWords = [
   'FUCK',
@@ -84,16 +88,6 @@ export const aiChallengeTypePool: ChallengeType[] = [
   'SAYING',
   'PROVERB',
 ];
-
-const containsBannedContent = (input: string): boolean => {
-  const upper = input.toUpperCase();
-  const exactWords = upper.split(/[^A-Z0-9]+/).filter((token) => token.length > 0);
-  const hasExactMatch = bannedExactWords.some((word) => exactWords.includes(word));
-  if (hasExactMatch) {
-    return true;
-  }
-  return bannedSubstrings.some((fragment) => upper.includes(fragment));
-};
 
 type GeminiSafetySetting = {
   category:
@@ -208,32 +202,150 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const readErrorField = (error: unknown, field: string): unknown =>
   isRecord(error) ? error[field] : undefined;
 
+const redactSensitiveText = (value: string): string =>
+  value
+    .replace(
+      /([?&](?:key|api[_-]?key)=)([^&\s"'`]+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /((?:^|[\s"'`:=]))(AIza[0-9A-Za-z\-_]{16,})\b/g,
+      '$1[REDACTED_API_KEY]'
+    )
+    .replace(
+      /((?:key|api[_-]?key)\s*[:=]\s*)([^,\s}"'`]+)/gi,
+      '$1[REDACTED]'
+    );
+
 const describeRequestError = (error: unknown): string => {
   if (error instanceof Error) {
-    const parts = [`name=${error.name ?? 'Error'}`, `message=${error.message}`];
+    const parts = [
+      `name=${redactSensitiveText(error.name ?? 'Error')}`,
+      `message=${redactSensitiveText(error.message)}`,
+    ];
     const code = readErrorField(error, 'code');
     const errno = readErrorField(error, 'errno');
     const details = readErrorField(error, 'details');
     const causeField = readErrorField(error, 'cause');
     if (code !== undefined) {
-      parts.push(`code=${String(code)}`);
+      parts.push(`code=${redactSensitiveText(String(code))}`);
     }
     if (errno !== undefined) {
-      parts.push(`errno=${String(errno)}`);
+      parts.push(`errno=${redactSensitiveText(String(errno))}`);
     }
     if (details !== undefined) {
-      parts.push(`details=${String(details)}`);
+      parts.push(`details=${redactSensitiveText(String(details))}`);
     }
     if (causeField !== undefined) {
       const cause =
         causeField instanceof Error
-          ? `${causeField.name}: ${causeField.message}`
-          : String(causeField);
+          ? `${redactSensitiveText(causeField.name)}: ${redactSensitiveText(causeField.message)}`
+          : redactSensitiveText(String(causeField));
       parts.push(`cause=${cause}`);
     }
     return parts.join(' ');
   }
-  return `value=${String(error)}`;
+  return `value=${redactSensitiveText(String(error))}`;
+};
+
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const geminiValidationCache = new Map<string, number>();
+const geminiValidationTtlMs = 5 * 60 * 1000;
+
+const isTransientAiError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const lower = error.message.toLowerCase();
+  return (
+    lower.includes('timed out') ||
+    lower.includes('abort') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('connection reset') ||
+    lower.includes('response status=429') ||
+    lower.includes('response status=500') ||
+    lower.includes('response status=502') ||
+    lower.includes('response status=503') ||
+    lower.includes('response status=504') ||
+    lower.includes('invalid json syntax') ||
+    lower.includes('missing json payload') ||
+    lower.includes('invalid gemini response shape')
+  );
+};
+
+export const assertGeminiApiReady = async (apiKey: string): Promise<void> => {
+  const normalizedKey = apiKey.trim();
+  if (!normalizedKey) {
+    throw new Error('Gemini API key missing');
+  }
+
+  const cachedAt = geminiValidationCache.get(normalizedKey) ?? 0;
+  if (Date.now() - cachedAt <= geminiValidationTtlMs) {
+    return;
+  }
+
+  const endpoint = new URL(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash'
+  );
+  endpoint.searchParams.set('key', normalizedKey);
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint.toString(), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+  } catch (error) {
+    throw new Error(
+      `[assertGeminiApiReady] request failed: ${describeRequestError(error)}`
+    );
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    const bodyPreview = responseText.trim().slice(0, 200);
+    throw new Error(
+      `[assertGeminiApiReady] response status=${response.status} body=${bodyPreview || 'empty'}`
+    );
+  }
+
+  geminiValidationCache.set(normalizedKey, Date.now());
+};
+
+const retryAsync = async <T>(
+  fn: () => Promise<T>,
+  options: { maxAttempts: number; initialDelayMs: number; backoffFactor: number }
+): Promise<T> => {
+  let attempt = 0;
+  let lastError: unknown;
+
+  while (attempt < options.maxAttempts) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const isLastAttempt = attempt === options.maxAttempts - 1;
+      if (isLastAttempt || !isTransientAiError(error)) {
+        throw error;
+      }
+      const delay = options.initialDelayMs * Math.pow(options.backoffFactor, attempt);
+      console.warn('[retryAsync] transient AI error; retrying', {
+        attempt: attempt + 1,
+        maxAttempts: options.maxAttempts,
+        delayMs: delay,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await wait(delay);
+      attempt += 1;
+    }
+  }
+
+  throw lastError;
 };
 
 const preferredPromptLengthBounds = (
@@ -296,14 +408,7 @@ export const generatePuzzlePhraseBatch = async (params: {
     throw new Error('Gemini API key missing for generatePuzzlePhraseBatch');
   }
 
-  // Log batch generation start
-  console.log('[generatePuzzlePhraseBatch] Starting batch generation', {
-    levelId: params.levelId,
-    difficulty: params.difficulty,
-    difficultyLabel: params.difficultyLabel,
-    preferredType: params.preferredType,
-    batchSize: params.batchSize,
-  });
+  await assertGeminiApiReady(params.apiKey);
 
   const tier = difficultyToTier(params.difficulty);
   const promptProfile = quotePromptProfileForDifficulty(
@@ -414,113 +519,121 @@ export const generatePuzzlePhraseBatch = async (params: {
     'Every word should be short enough for mobile and the phrase must contain at least one repeated letter overall. ' +
     `RULES=${JSON.stringify(promptRules)}`;
 
-  let response: Response;
-  try {
-    // Add timeout to prevent hanging requests
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-    
-    response = await fetch(endpoint.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        safetySettings: geminiSafetySettingsForMode(params.safetyMode),
-        contents: [
-          {
-            parts: [{ text: instruction }],
-          },
-        ],
-        generationConfig: {
-          temperature: temperatureForDifficulty(params.difficulty),
-          responseMimeType: 'application/json',
+  const fetchAndParsePayload = async (): Promise<RawChallengeCandidate[]> => {
+    let response: Response;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      response = await fetch(endpoint.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('[generatePuzzlePhraseBatch] request timed out after 30 seconds');
-    }
-    throw new Error(
-      `[generatePuzzlePhraseBatch] request failed: ${describeRequestError(error)}`
-    );
-  }
-
-  if (!response.ok) {
-    const responseText = await response.text().catch(() => '');
-    const bodyPreview = responseText.trim().slice(0, 300);
-    throw new Error(
-      `[generatePuzzlePhraseBatch] response status=${response.status} body=${bodyPreview || 'empty'}`
-    );
-  }
-
-  const raw = await response.json();
-  const parsed = geminiResponseSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error('[generatePuzzlePhraseBatch] invalid Gemini response shape');
-  }
-
-  const candidate = parsed.data.candidates[0];
-  const candidateText = candidate?.content.parts[0]?.text ?? '';
-  
-  // Enhanced logging for debugging
-  console.log('[generatePuzzlePhraseBatch] Raw response preview:', {
-    length: candidateText.length,
-    preview: candidateText.slice(0, 300),
-    hasArrayBrackets: candidateText.includes('[') && candidateText.includes(']'),
-    hasObjectBrackets: candidateText.includes('{') && candidateText.includes('}'),
-  });
-  
-  const extracted = extractJson(candidateText);
-  if (!extracted) {
-    console.error('[generatePuzzlePhraseBatch] Failed to extract JSON', {
-      candidateTextLength: candidateText.length,
-      candidateTextPreview: candidateText.slice(0, 500),
-    });
-    throw new Error('[generatePuzzlePhraseBatch] missing JSON payload');
-  }
-
-  let payloadArray: unknown;
-  try {
-    payloadArray = JSON.parse(extracted);
-  } catch (parseError) {
-    console.error('[generatePuzzlePhraseBatch] JSON parse failed', {
-      extractedLength: extracted.length,
-      extractedPreview: extracted.slice(0, 500),
-      parseError: parseError instanceof Error ? parseError.message : 'unknown',
-      rawResponsePreview: candidateText.slice(0, 500),
-    });
-    throw new Error('[generatePuzzlePhraseBatch] invalid JSON syntax');
-  }
-
-  const payloadParsed = batchPayloadSchema.safeParse(payloadArray);
-  if (!payloadParsed.success) {
-    // Try wrapping in array if Gemini returned a single object instead of an array
-    const singleObjectSchema = z.object({
-      target_string: z.string().min(3),
-      author: z.string().min(1),
-      challenge_type: z.string().min(1),
-    });
-    const singleParsed = singleObjectSchema.safeParse(payloadArray);
-    if (singleParsed.success) {
-      console.warn('[generatePuzzlePhraseBatch] Gemini returned single object instead of array, wrapping in array');
-      payloadArray = [singleParsed.data];
-    } else {
-      console.error('[generatePuzzlePhraseBatch] Payload schema mismatch', {
-        zodError: payloadParsed.error.message,
-        payloadPreview: JSON.stringify(payloadArray).slice(0, 300),
+        body: JSON.stringify({
+          safetySettings: geminiSafetySettingsForMode(params.safetyMode),
+          contents: [
+            {
+              parts: [{ text: instruction }],
+            },
+          ],
+          generationConfig: {
+            temperature: temperatureForDifficulty(params.difficulty),
+            responseMimeType: 'application/json',
+          },
+        }),
+        signal: controller.signal,
       });
-      throw new Error('[generatePuzzlePhraseBatch] payload schema mismatch');
+
+      clearTimeout(timeoutId);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('[generatePuzzlePhraseBatch] request timed out after 30 seconds');
+      }
+      throw new Error(
+        `[generatePuzzlePhraseBatch] request failed: ${describeRequestError(error)}`
+      );
     }
-  }
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      const bodyPreview = responseText.trim().slice(0, 300);
+      throw new Error(
+        `[generatePuzzlePhraseBatch] response status=${response.status} body=${bodyPreview || 'empty'}`
+      );
+    }
+
+    const raw = await response.json();
+    const parsed = geminiResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('[generatePuzzlePhraseBatch] invalid Gemini response shape');
+    }
+
+    const candidate = parsed.data.candidates[0];
+    const candidateText = candidate?.content.parts[0]?.text ?? '';
+
+    console.log('[generatePuzzlePhraseBatch] Raw response preview:', {
+      length: candidateText.length,
+      preview: candidateText.slice(0, 300),
+      hasArrayBrackets: candidateText.includes('[') && candidateText.includes(']'),
+      hasObjectBrackets: candidateText.includes('{') && candidateText.includes('}'),
+    });
+
+    const extracted = extractJson(candidateText);
+    if (!extracted) {
+      console.error('[generatePuzzlePhraseBatch] Failed to extract JSON', {
+        candidateTextLength: candidateText.length,
+        candidateTextPreview: candidateText.slice(0, 500),
+      });
+      throw new Error('[generatePuzzlePhraseBatch] missing JSON payload');
+    }
+
+    let payloadArray: unknown;
+    try {
+      payloadArray = JSON.parse(extracted);
+    } catch (parseError) {
+      console.error('[generatePuzzlePhraseBatch] JSON parse failed', {
+        extractedLength: extracted.length,
+        extractedPreview: extracted.slice(0, 500),
+        parseError: parseError instanceof Error ? parseError.message : 'unknown',
+        rawResponsePreview: candidateText.slice(0, 500),
+      });
+      throw new Error('[generatePuzzlePhraseBatch] invalid JSON syntax');
+    }
+
+    const payloadParsed = batchPayloadSchema.safeParse(payloadArray);
+    if (!payloadParsed.success) {
+      const singleObjectSchema = z.object({
+        target_string: z.string().min(3),
+        author: z.string().min(1),
+        challenge_type: z.string().min(1),
+      });
+      const singleParsed = singleObjectSchema.safeParse(payloadArray);
+      if (singleParsed.success) {
+        console.warn('[generatePuzzlePhraseBatch] Gemini returned single object instead of array, wrapping in array');
+        payloadArray = [singleParsed.data];
+      } else {
+        console.error('[generatePuzzlePhraseBatch] Payload schema mismatch', {
+          zodError: payloadParsed.error.message,
+          payloadPreview: JSON.stringify(payloadArray).slice(0, 300),
+        });
+        throw new Error('[generatePuzzlePhraseBatch] payload schema mismatch');
+      }
+    }
+
+    return Array.isArray(payloadArray)
+      ? (payloadArray as RawChallengeCandidate[])
+      : ([payloadArray as RawChallengeCandidate]);
+  };
+
+  const dataToProcess = await retryAsync(fetchAndParsePayload, {
+    maxAttempts: 3,
+    initialDelayMs: 1000,
+    backoffFactor: 2,
+  });
 
   const validCandidates: ChallengeCandidate[] = [];
   const rejectionReasons: Record<string, number> = {};
-  const dataToProcess = Array.isArray(payloadArray) ? payloadArray : (payloadParsed.success ? payloadParsed.data : []);
 
   for (let i = 0; i < dataToProcess.length; i++) {
     const item = dataToProcess[i];
@@ -567,7 +680,7 @@ export const generatePuzzlePhraseBatch = async (params: {
         continue;
       }
 
-      if (containsBannedContent(text)) {
+      if (containsDisallowedContent(text)) {
         const reason = 'banned_word_text';
         rejectionReasons[reason] = (rejectionReasons[reason] || 0) + 1;
         console.warn(
@@ -576,7 +689,7 @@ export const generatePuzzlePhraseBatch = async (params: {
         continue;
       }
 
-      if (containsBannedContent(author)) {
+      if (containsDisallowedContent(author)) {
         const reason = 'banned_word_author';
         rejectionReasons[reason] = (rejectionReasons[reason] || 0) + 1;
         console.warn(

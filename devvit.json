@@ -34,6 +34,9 @@
   "media": {
     "dir": "public"
   },
+  "marketingAssets": {
+    "icon": "public/icon.png"
+  },
   "server": {
     "dir": "dist/server",
     "entry": "index.cjs"
@@ -67,21 +70,25 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-inject"
+      },
+      {
+        "label": "Decrypt: Clear Subreddit Game Data",
+        "description": "Clear this subreddit's Decrypt game data, including players, challenges, and progress",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-clear-subreddit-data"
       }
     ]
   },
   "forms": {
-    "mod_inject_form": "/internal/forms/mod-inject-submit"
+    "mod_inject_form": "/internal/forms/mod-inject-submit",
+    "mod_inject_review_form": "/internal/forms/mod-inject-review-submit"
   },
   "scheduler": {
     "tasks": {
       "decrypt-generate-daily-2200": {
         "endpoint": "/internal/scheduler/generate-daily",
         "cron": "0 22 * * *"
-      },
-      "decrypt-refill-ai-pool-30m": {
-        "endpoint": "/internal/scheduler/refill-ai-pool",
-        "cron": "*/30 * * * *"
       },
       "decrypt-publish-daily-0000": {
         "endpoint": "/internal/scheduler/publish-daily",
@@ -112,7 +119,7 @@
     "subreddit": {
       "publishHourUtc": {
         "type": "number",
-        "label": "Daily publish hour (UTC)",
+        "label": "Daily publish hour (UTC) - Display Only",
         "defaultValue": 0,
         "validationEndpoint": "/internal/settings/validate-publish-hour"
       },

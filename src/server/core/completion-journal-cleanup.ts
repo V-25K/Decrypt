@@ -1,5 +1,4 @@
 import { redis } from '@devvit/web/server';
-import { defaultPerformanceConfig } from '../../shared/performance';
 import { keyCompletionFinalizeJournal } from './keys';
 import { getKnownUserIds, getCompletedLevels } from './state';
 
@@ -23,8 +22,15 @@ export interface CompletionEntry {
   mode: string;
   createdAt: string;
   updatedAt?: string;
-  [key: string]: any; // For step fields like 'step:finalized'
+  [key: string]: string | number | undefined;
 }
+
+const defaultCleanupPolicy: CleanupPolicy & { scheduleHours: number[] } = {
+  maxAge: 90 * 24 * 60 * 60 * 1000,
+  minRetainCount: 100,
+  batchSize: 1000,
+  scheduleHours: [2, 3, 4, 5],
+};
 
 /**
  * CompletionJournalCleanup class implements automated cleanup of completion journal entries
@@ -41,9 +47,9 @@ export class CompletionJournalCleanup {
 
   constructor(policy?: Partial<CleanupPolicy>) {
     this.policy = {
-      maxAge: defaultPerformanceConfig.cleanup.maxAgeMs,
-      minRetainCount: defaultPerformanceConfig.cleanup.minRetainCount,
-      batchSize: defaultPerformanceConfig.cleanup.batchSize,
+      maxAge: defaultCleanupPolicy.maxAge,
+      minRetainCount: defaultCleanupPolicy.minRetainCount,
+      batchSize: defaultCleanupPolicy.batchSize,
       ...policy
     };
   }
@@ -260,7 +266,7 @@ export class CompletionJournalCleanup {
     const hour = now.getUTCHours();
     
     // Check if we're in the configured low-traffic hours (2-6 AM UTC by default)
-    const scheduleHours = defaultPerformanceConfig.cleanup.scheduleHours;
+    const scheduleHours = defaultCleanupPolicy.scheduleHours;
     const isLowTrafficPeriod = scheduleHours.includes(hour);
     
     if (!isLowTrafficPeriod) {

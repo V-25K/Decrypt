@@ -448,9 +448,11 @@ const primeMocks = () => {
   });
 };
 
-const renderGame = async (): Promise<void> => {
+const renderGame = async (
+  rootMarkup = '<div id="root" data-initial-screen="home"></div>'
+): Promise<void> => {
   ensureLocalStorageMock();
-  document.body.innerHTML = '<div id="root"></div>';
+  document.body.innerHTML = rootMarkup;
   const gameModule = await import('./game');
   gameModule.mountGame();
 };
@@ -634,6 +636,31 @@ describe('Game updates', { timeout: 15000 }, () => {
     expect(text).toContain('Current Rank');
   });
 
+  it('renders quest reward icons in both daily and milestone tabs', async () => {
+    primeMocks();
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="nav-quest"]')));
+
+    document
+      .querySelector('[data-testid="nav-quest"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-screen"]')));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-item-coins"]')));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-icon-hammer"]')));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-icon-shield"]')));
+
+    const milestoneButton = Array.from(
+      document.querySelectorAll('[data-testid="quest-screen"] button')
+    ).find((button) => button.textContent?.trim() === 'Milestone');
+    milestoneButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => (document.body.textContent ?? '').includes('Pocket Change'));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-icon-hammer"]')));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-icon-shield"]')));
+  });
+
   it('renders avg solve time values for daily and endless stats tabs', async () => {
     primeMocks();
     await renderGame();
@@ -741,9 +768,9 @@ describe('Game updates', { timeout: 15000 }, () => {
     await waitFor(() => Boolean(document.querySelector('[data-testid="retry-buy-dialog"]')));
     expect(document.body.textContent ?? '').toContain('Buy Retry');
     expect(document.body.textContent ?? '').toContain('35');
-    expect(document.body.textContent ?? '').toContain('This retry score: No penalty');
+    expect(document.body.textContent ?? '').toContain('Score will count as: No penalty');
     expect(document.body.textContent ?? '').toContain(
-      'If you fail again, the next retry would be 70'
+      'If you fail again: next retry would cost 70'
     );
     expect(purchaseDailyRetryMutation).not.toHaveBeenCalled();
 
@@ -1007,6 +1034,56 @@ describe('Game updates', { timeout: 15000 }, () => {
           'Joined'
         )
     );
+  });
+
+  it('locks inline puzzle scrolling by fitting to both viewport width and height', async () => {
+    primeMocks();
+    getWebViewModeMock.mockReturnValue('inline');
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="puzzle-viewport"]')));
+
+    const viewport = document.querySelector(
+      '[data-testid="puzzle-viewport"]'
+    ) as HTMLDivElement | null;
+    const content = document.querySelector(
+      '[data-testid="puzzle-content"]'
+    ) as HTMLDivElement | null;
+    const scaleWrap = document.querySelector(
+      '[data-testid="puzzle-scale-wrap"]'
+    ) as HTMLDivElement | null;
+
+    expect(viewport).not.toBeNull();
+    expect(content).not.toBeNull();
+    expect(scaleWrap).not.toBeNull();
+
+    Object.defineProperty(viewport!, 'clientWidth', {
+      configurable: true,
+      get: () => 240,
+    });
+    Object.defineProperty(viewport!, 'clientHeight', {
+      configurable: true,
+      get: () => 120,
+    });
+    Object.defineProperty(content!, 'scrollWidth', {
+      configurable: true,
+      get: () => 300,
+    });
+    Object.defineProperty(content!, 'scrollHeight', {
+      configurable: true,
+      get: () => 240,
+    });
+
+    window.dispatchEvent(new Event('resize'));
+
+    await waitFor(
+      () => scaleWrap?.style.transform === 'scale(0.5)'
+    );
+
+    expect(viewport?.dataset.scrollMode).toBe('locked');
+    expect(scaleWrap?.style.transform).toBe('scale(0.5)');
   });
 
   it('shows a toast instead of leaking an exception when comment sharing rejects', async () => {

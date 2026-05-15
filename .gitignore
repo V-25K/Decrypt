@@ -23,7 +23,7 @@ coverage
 # Local editor / IDE files
 .vscode/
 .idea/
-./kiro
+.kiro/
 
 # Local environment and secrets
 .env
@@ -36,6 +36,11 @@ devvit_logs_capture*.txt
 # Local workspace instructions / tooling
 AGENTS.md
 tools/
+.agent.md
+.claude/
+.codex/
+tmp/
+progress.md
 
 # Local one-off debugging scripts (keep production/admin debug endpoints versioned)
 scripts/debug-local/

@@ -326,9 +326,10 @@ const buildCalibrationArtifact = async (): Promise<CalibrationArtifact> => {
       index < HARDNESS_BAND_SCAN_LIMIT &&
       entry.telemetry.plays >= MIN_QUALIFIED_PLAYS_FOR_HARDNESS_BANDS
     ) {
-      const observedTier = observedTierFromSmoothedRate(
-        smoothedWinRate(entry.telemetry.wins, entry.telemetry.plays)
-      );
+      const observedTier = observedTierFromTelemetry({
+        telemetry: entry.telemetry,
+        targetTimeSeconds: entry.puzzle.targetTimeSeconds ?? null,
+      });
       const profile = computePhraseDifficultyProfile(entry.puzzle.targetText);
       samplesByTier[observedTier].push({
         uniqueLetterCount: profile.uniqueLetterCount,
@@ -352,9 +353,10 @@ const buildCalibrationArtifact = async (): Promise<CalibrationArtifact> => {
         ? entry.puzzle.cryptoHardness
         : computePhraseDifficultyProfile(entry.puzzle.targetText).cryptoHardness;
     const primaryTier = tierFromDifficulty(entry.puzzle.difficulty);
-    const observedTier = observedTierFromSmoothedRate(
-      smoothedWinRate(entry.telemetry.wins, entry.telemetry.plays)
-    );
+    const observedTier = observedTierFromTelemetry({
+      telemetry: entry.telemetry,
+      targetTimeSeconds: entry.puzzle.targetTimeSeconds ?? null,
+    });
     const shift = tierShift(primaryTier, observedTier);
     eligibleLevels += 1;
     hardnessValues.push(puzzleHardness);
@@ -468,6 +470,63 @@ export const observedTierFromSmoothedRate = (rate: number): DifficultyTier => {
   return 'medium';
 };
 
+export const telemetryEaseScore = (params: {
+  wins: number;
+  plays: number;
+  failures: number;
+  abandons: number;
+  averageSolveSeconds: number;
+  averageUsedPowerups: number;
+  averageMistakes: number;
+  averageRetryCount: number;
+  targetTimeSeconds?: number | null;
+}): number => {
+  const completionEase = smoothedWinRate(params.wins, params.plays);
+  const failureRate = params.plays > 0 ? params.failures / params.plays : 0;
+  const abandonRate = params.plays > 0 ? params.abandons / params.plays : 0;
+  const hintPressure = clampNumber(params.averageUsedPowerups / 2.5, 0, 1);
+  const mistakePressure = clampNumber(params.averageMistakes / 3, 0, 1);
+  const retryPressure = clampNumber(params.averageRetryCount / 2, 0, 1);
+  const slowPressure =
+    typeof params.targetTimeSeconds === 'number' && params.targetTimeSeconds > 0
+      ? Math.max(
+          0,
+          clampNumber(params.averageSolveSeconds / (params.targetTimeSeconds * 1.35), 0, 1.4) -
+            0.45
+        )
+      : 0;
+
+  return clampNumber(
+    completionEase -
+      failureRate * 0.18 -
+      abandonRate * 0.24 -
+      hintPressure * 0.14 -
+      mistakePressure * 0.08 -
+      retryPressure * 0.06 -
+      slowPressure * 0.12,
+    0,
+    1
+  );
+};
+
+export const observedTierFromTelemetry = (params: {
+  telemetry: Awaited<ReturnType<typeof getQualifiedLevelTelemetry>>;
+  targetTimeSeconds?: number | null;
+}): DifficultyTier =>
+  observedTierFromSmoothedRate(
+    telemetryEaseScore({
+      wins: params.telemetry.wins,
+      plays: params.telemetry.plays,
+      failures: params.telemetry.failures ?? 0,
+      abandons: params.telemetry.abandons ?? 0,
+      averageSolveSeconds: params.telemetry.averageSolveSeconds ?? 0,
+      averageUsedPowerups: params.telemetry.averageUsedPowerups ?? 0,
+      averageMistakes: params.telemetry.averageMistakes ?? 0,
+      averageRetryCount: params.telemetry.averageRetryCount ?? 0,
+      targetTimeSeconds: params.targetTimeSeconds ?? null,
+    })
+  );
+
 export const tierShift = (
   primaryTier: DifficultyTier,
   observedTier: DifficultyTier
@@ -498,8 +557,24 @@ export const applyBiasToDifficulty = (
 
 export const computeAdaptiveHardnessBounds =
   async (): Promise<HardnessBoundsByTier> => {
-    const artifact = await getCalibrationArtifact();
-    return artifact.hardnessBoundsByTier;
+    try {
+      const artifact = await getCalibrationArtifact();
+      return artifact.hardnessBoundsByTier;
+    } catch (error) {
+      console.warn(
+        `Difficulty calibration failed, using fallback bounds: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`
+      );
+      // Fallback to last known good bounds or defaults
+      const fallback = await readCachedCalibrationArtifact();
+      if (fallback) {
+        console.log('Using cached calibration bounds as fallback');
+        return fallback.hardnessBoundsByTier;
+      }
+      console.log('Using default calibration bounds as fallback');
+      return getDefaultHardnessBoundsByTier();
+    }
   };
 
 export const getGlobalDailyCalibrationSnapshot =

@@ -94,6 +94,38 @@ describe('Bundle Analysis Tools', () => {
       expect(metrics.totalLoadTime).toBe(200); // 300 - 100
     });
 
+    it('should disconnect performance observers between measurements and disposal', () => {
+      const disconnectMocks: Array<ReturnType<typeof vi.fn>> = [];
+      const observeMocks: Array<ReturnType<typeof vi.fn>> = [];
+
+      class MockPerformanceObserver {
+        observe = vi.fn();
+        disconnect = vi.fn();
+
+        constructor(_callback: PerformanceObserverCallback) {
+          observeMocks.push(this.observe);
+          disconnectMocks.push(this.disconnect);
+        }
+      }
+
+      Object.defineProperty(globalThis, 'PerformanceObserver', {
+        configurable: true,
+        value: MockPerformanceObserver
+      });
+      mockWindow.PerformanceObserver = MockPerformanceObserver;
+
+      bundleOptimizer.measureLoadTimes();
+      expect(observeMocks[0]).toHaveBeenCalledWith({
+        entryTypes: ['largest-contentful-paint']
+      });
+
+      bundleOptimizer.measureLoadTimes();
+      expect(disconnectMocks[0]).toHaveBeenCalledTimes(1);
+
+      bundleOptimizer.dispose();
+      expect(disconnectMocks[1]).toHaveBeenCalledTimes(1);
+    });
+
     it('should provide optimization recommendations', () => {
       // Add a large module
       bundleOptimizer.trackModuleLoad('large-module', 200 * 1024); // 200KB

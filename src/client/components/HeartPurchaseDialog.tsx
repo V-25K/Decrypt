@@ -1,18 +1,35 @@
-import { coinEmoji, coinHeartRefillCost, coinHeartTopUpCost, heartEmoji } from '../app/constants';
+import { coinHeartRefillCost, coinHeartTopUpCost } from '../app/constants';
+import { HudSprite } from './HudSprite';
 
 type HeartPurchaseDialogProps = {
   coins: number;
   busy: boolean;
   limitReached: boolean;
+  purchasesToday: number;
+  maxPurchasesPerDay: number;
+  limitResetTs: number;
   onRefill: () => void;
   onTopUp: () => void;
   onCancel: () => void;
+};
+
+const formatTimeUntil = (targetTs: number): string => {
+  const totalMinutes = Math.max(0, Math.ceil((targetTs - Date.now()) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m`;
 };
 
 export const HeartPurchaseDialog = ({
   coins,
   busy,
   limitReached,
+  purchasesToday,
+  maxPurchasesPerDay,
+  limitResetTs,
   onRefill,
   onTopUp,
   onCancel,
@@ -25,8 +42,9 @@ export const HeartPurchaseDialog = ({
     <div className="app-surface w-full max-w-[300px] rounded border app-border p-4">
       <div className="app-text mb-2 flex items-center justify-between text-sm font-bold">
         <span>Restore Hearts</span>
-        <span className="text-xs font-black">
-          {coinEmoji} {coins}
+        <span className="inline-flex items-center gap-1 text-xs font-black">
+          <HudSprite icon="coin" decorative className="h-4 w-4" />
+          <span>{coins}</span>
         </span>
       </div>
       <div className="mb-3 grid grid-cols-2 gap-2">
@@ -36,7 +54,10 @@ export const HeartPurchaseDialog = ({
           onClick={onRefill}
           disabled={busy || limitReached || coins < coinHeartRefillCost}
         >
-          <span className="block">{coinEmoji} {coinHeartRefillCost}</span>
+          <span className="flex items-center justify-center gap-1">
+            <HudSprite icon="coin" decorative className="h-4 w-4" />
+            <span>{coinHeartRefillCost}</span>
+          </span>
           <span className="block text-[9px] opacity-70">Full refill</span>
         </button>
         <button
@@ -45,13 +66,22 @@ export const HeartPurchaseDialog = ({
           onClick={onTopUp}
           disabled={busy || limitReached || coins < coinHeartTopUpCost}
         >
-          <span className="block">{coinEmoji} {coinHeartTopUpCost}</span>
-          <span className="block text-[9px] opacity-70">+1 {heartEmoji}</span>
+          <span className="flex items-center justify-center gap-1">
+            <HudSprite icon="coin" decorative className="h-4 w-4" />
+            <span>{coinHeartTopUpCost}</span>
+          </span>
+          <span className="flex items-center justify-center gap-1 text-[9px] opacity-70">
+            <span>+1</span>
+            <HudSprite icon="heart" decorative className="h-3.5 w-3.5" />
+          </span>
         </button>
       </div>
       {limitReached && (
         <div className="app-text-soft mb-2 text-center text-[11px]">
-          Daily coin limit reached.
+          <p>
+            Daily coin limit reached ({purchasesToday}/{maxPurchasesPerDay}).
+          </p>
+          <p className="mt-1">Resets in {formatTimeUntil(limitResetTs)}</p>
         </div>
       )}
       <button

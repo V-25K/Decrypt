@@ -1,5 +1,17 @@
 import type { PowerupType } from './types';
 
+export type HudSpriteType = 'coin' | 'heart';
+export type UiSpriteType =
+  | 'home'
+  | 'lock'
+  | 'question'
+  | 'shop'
+  | 'quest'
+  | 'stats'
+  | 'leaderboard'
+  | 'settings'
+  | 'sound';
+
 export const coinEmoji = '\u{1FA99}';
 export const crossMarkEmoji = '\u{274C}';
 export const lockEmoji = '\u{1F512}';
@@ -20,6 +32,47 @@ export const powerupLabel: Record<PowerupType, string> = {
   rocket: 'Rocket',
 };
 
+export const powerupAssetPath: Record<PowerupType, string> = {
+  hammer: '/powerup_hammer.png',
+  wand: '/powerup_wand.png',
+  shield: '/powerup_shield.png',
+  rocket: '/powerup_rocket.png',
+};
+
+export const hudSpriteLabel: Record<HudSpriteType, string> = {
+  coin: 'Coins',
+  heart: 'Heart',
+};
+
+export const hudSpriteAssetPath: Record<HudSpriteType, string> = {
+  coin: '/hud_coin.png',
+  heart: '/hud_heart.png',
+};
+
+export const uiSpriteLabel: Record<UiSpriteType, string> = {
+  home: 'Home',
+  lock: 'Lock',
+  question: 'Question mark',
+  shop: 'Shop',
+  quest: 'Quest',
+  stats: 'Stats',
+  leaderboard: 'Leaderboard',
+  settings: 'Settings',
+  sound: 'Sound',
+};
+
+export const uiSpriteAssetPath: Record<UiSpriteType, string> = {
+  home: '/ui_home.png',
+  lock: '/ui_lock.png',
+  question: '/ui_question.png',
+  shop: '/ui_shop.png',
+  quest: '/ui_quest.png',
+  stats: '/ui_stats.png',
+  leaderboard: '/ui_leaderboard.png',
+  settings: '/ui_settings.png',
+  sound: '/ui_sound.png',
+};
+
 export const coinHeartRefillCost = 350;
 export const coinHeartTopUpCost = 150;
 export const maxCoinHeartPurchasesPerDay = 2;
@@ -36,13 +89,6 @@ export const getDailyRetryCost = (retryCount: number): number => {
     return dailyRetryCostSecond;
   }
   return dailyRetryCostCap;
-};
-
-export const powerupIcon: Record<PowerupType, string> = {
-  hammer: '\u{1F528}',
-  wand: '\u{1FA84}',
-  shield: '\u{1F6E1}\u{FE0F}',
-  rocket: '\u{1F680}',
 };
 
 export const helpSlides = [
@@ -68,7 +114,8 @@ export const helpSlides = [
     title: 'Protect your mistakes',
     description:
       'Solve the phrase before your mistakes run out. Powerups can reveal tiles or save a risky move.',
-    hint: `${powerupIcon.hammer} Hammer targets one tile. ${powerupIcon.wand} Wand reveals a letter. ${powerupIcon.shield} Shield blocks one miss. ${powerupIcon.rocket} Rocket reveals multiple tiles.`,
+    hint:
+      'Hammer targets one tile. Wand reveals a letter. Shield blocks one miss. Rocket reveals multiple tiles.',
   },
   {
     id: 'finish',

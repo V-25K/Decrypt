@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import type { DeviceTier } from '../app/types';
+import { UiSprite } from './UiSprite';
 import { cn } from '../utils';
 
 type SettingsOverlayProps = {
@@ -57,13 +58,16 @@ export const SettingsOverlay = ({
         <section className="app-surface-strong rounded-lg border app-border px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <h3
-                className={`${
-                  deviceTier === 'mobile' ? 'text-[10px]' : 'text-[11px]'
-                } app-text font-black uppercase`}
-              >
-                Audio
-              </h3>
+              <div className="flex items-center gap-2">
+                <UiSprite icon="sound" decorative className="h-4 w-4 shrink-0" />
+                <h3
+                  className={`${
+                    deviceTier === 'mobile' ? 'text-[10px]' : 'text-[11px]'
+                  } app-text font-black uppercase`}
+                >
+                  Audio
+                </h3>
+              </div>
               <p
                 className={`${
                   deviceTier === 'mobile' ? 'text-[9px]' : 'text-[10px]'

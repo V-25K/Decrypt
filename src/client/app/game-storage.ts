@@ -13,6 +13,14 @@ const expandedScreenIntentKey = 'decrypt-expanded-screen-intent';
 const expandedScreenIntentTtlMs = 5000;
 const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
 const correctGuessStateStorageKeyPrefix = 'decrypt-correct-guess-tiles-v1:';
+const storageMigrationMarkerPrefix = 'decrypt-storage-migrated-v1:';
+const expandedIntentScreens = ['shop', 'home', 'quest', 'stats', 'leaderboard'] as const;
+const entrypointScreens = ['challenge', 'home', 'shop', 'quest', 'stats', 'leaderboard'] as const;
+
+const isAppScreen = <TScreen extends AppScreen>(
+  value: string,
+  allowedScreens: readonly TScreen[]
+): value is TScreen => allowedScreens.some((screen) => screen === value);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -45,8 +53,17 @@ const isCompletionResult = (
   );
 };
 
-const correctGuessStorageKey = (levelId: string): string =>
-  `${correctGuessStateStorageKeyPrefix}${levelId}`;
+export const getStorageKey = (userId: string, baseKey: string): string =>
+  `decrypt:${userId}:${baseKey}`;
+
+const outcomeStorageKey = (userId: string): string =>
+  getStorageKey(userId, 'challenge-outcome-v1');
+
+const correctGuessStorageKey = (userId: string, levelId: string): string =>
+  getStorageKey(userId, `correct-guess-tiles-v1:${levelId}`);
+
+const storageMigrationMarkerKey = (userId: string): string =>
+  `${storageMigrationMarkerPrefix}${userId}`;
 
 export const setExpandedScreenIntent = (screen: AppScreen): void => {
   try {
@@ -72,11 +89,7 @@ export const consumeExpandedScreenIntent = (): AppScreen | null => {
     const tsValue = parsed.ts;
     if (
       typeof screenValue === 'string' &&
-      (screenValue === 'shop' ||
-        screenValue === 'home' ||
-        screenValue === 'quest' ||
-        screenValue === 'stats' ||
-        screenValue === 'leaderboard') &&
+      isAppScreen(screenValue, expandedIntentScreens) &&
       typeof tsValue === 'number' &&
       Date.now() - tsValue <= expandedScreenIntentTtlMs
     ) {
@@ -90,33 +103,67 @@ export const consumeExpandedScreenIntent = (): AppScreen | null => {
 
 export const readEntrypointScreen = (): AppScreen | null => {
   const value = document.getElementById('root')?.getAttribute('data-initial-screen');
-  if (
-    value === 'home' ||
-    value === 'shop' ||
-    value === 'quest' ||
-    value === 'stats' ||
-    value === 'leaderboard'
-  ) {
+  if (typeof value === 'string' && isAppScreen(value, entrypointScreens)) {
     return value;
   }
   return null;
 };
 
-export const persistOutcomeState = (state: PersistedOutcomeState | null): void => {
+export const migrateSessionStorageForUser = (userId: string): void => {
   try {
+    const markerKey = storageMigrationMarkerKey(userId);
+    const hasMigrated = sessionStorage.getItem(markerKey) === '1';
+
+    const existingOutcome = sessionStorage.getItem(outcomeStorageKey(userId));
+    const legacyOutcome = sessionStorage.getItem(outcomeStateStorageKey);
+    if (!hasMigrated && !existingOutcome && legacyOutcome) {
+      sessionStorage.setItem(outcomeStorageKey(userId), legacyOutcome);
+    }
+    sessionStorage.removeItem(outcomeStateStorageKey);
+
+    const legacyCorrectGuessKeys = [];
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith(correctGuessStateStorageKeyPrefix)) {
+        legacyCorrectGuessKeys.push(key);
+      }
+    }
+
+    for (const legacyKey of legacyCorrectGuessKeys) {
+      const levelId = legacyKey.slice(correctGuessStateStorageKeyPrefix.length);
+      const legacyValue = sessionStorage.getItem(legacyKey);
+      const nextKey = correctGuessStorageKey(userId, levelId);
+      if (!hasMigrated && !sessionStorage.getItem(nextKey) && legacyValue) {
+        sessionStorage.setItem(nextKey, legacyValue);
+      }
+      sessionStorage.removeItem(legacyKey);
+    }
+
+    sessionStorage.setItem(markerKey, '1');
+  } catch (_error) {
+    // Ignore migration failures; storage callers still fail closed.
+  }
+};
+
+export const persistOutcomeState = (
+  userId: string,
+  state: PersistedOutcomeState | null
+): void => {
+  try {
+    const key = outcomeStorageKey(userId);
     if (!state) {
-      sessionStorage.removeItem(outcomeStateStorageKey);
+      sessionStorage.removeItem(key);
       return;
     }
-    sessionStorage.setItem(outcomeStateStorageKey, JSON.stringify(state));
+    sessionStorage.setItem(key, JSON.stringify(state));
   } catch (_error) {
     // Ignore persistence failures.
   }
 };
 
-export const readOutcomeState = (): PersistedOutcomeState | null => {
+export const readOutcomeState = (userId: string): PersistedOutcomeState | null => {
   try {
-    const raw = sessionStorage.getItem(outcomeStateStorageKey);
+    const raw = sessionStorage.getItem(outcomeStorageKey(userId));
     if (!raw) {
       return null;
     }
@@ -157,6 +204,7 @@ export const readOutcomeState = (): PersistedOutcomeState | null => {
 };
 
 export const persistCorrectGuessIndices = (
+  userId: string,
   levelId: string,
   indices: Iterable<number>
 ): void => {
@@ -165,7 +213,7 @@ export const persistCorrectGuessIndices = (
       .filter((value) => Number.isInteger(value) && value >= 0)
       .sort((left, right) => left - right);
     sessionStorage.setItem(
-      correctGuessStorageKey(levelId),
+      correctGuessStorageKey(userId, levelId),
       JSON.stringify(dedupedSorted)
     );
   } catch (_error) {
@@ -173,9 +221,9 @@ export const persistCorrectGuessIndices = (
   }
 };
 
-export const readCorrectGuessIndices = (levelId: string): number[] => {
+export const readCorrectGuessIndices = (userId: string, levelId: string): number[] => {
   try {
-    const raw = sessionStorage.getItem(correctGuessStorageKey(levelId));
+    const raw = sessionStorage.getItem(correctGuessStorageKey(userId, levelId));
     if (!raw) {
       return [];
     }
@@ -196,9 +244,9 @@ export const readCorrectGuessIndices = (levelId: string): number[] => {
   }
 };
 
-export const clearCorrectGuessIndices = (levelId: string): void => {
+export const clearCorrectGuessIndices = (userId: string, levelId: string): void => {
   try {
-    sessionStorage.removeItem(correctGuessStorageKey(levelId));
+    sessionStorage.removeItem(correctGuessStorageKey(userId, levelId));
   } catch (_error) {
     // Ignore persistence failures.
   }

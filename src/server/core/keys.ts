@@ -118,15 +118,28 @@ export const keyLevelQualifiedPlayers = (levelId: string) =>
 export const keyLevelQualifiedWins = (levelId: string) =>
   `decrypt:level:${levelId}:qualified_wins`;
 
+export const keyLevelQualifiedFailures = (levelId: string) =>
+  `decrypt:level:${levelId}:qualified_failures`;
+
+export const keyLevelQualifiedOutcomes = (levelId: string) =>
+  `decrypt:level:${levelId}:qualified_outcomes`;
+
 export const keyKnownUsersIndex = 'decrypt:index:known_users';
 
 export const keySessionIndex = 'decrypt:index:sessions';
+
+export const keyPaymentOrderIndex = 'decrypt:index:payment_orders';
+
+export const keyModeratorAccessCacheIndex = 'decrypt:index:moderator_access_cache';
 
 export const keyShareCompletionReceipt = (userId: string, levelId: string) =>
   `decrypt:user:${userId}:share_receipt:${levelId}`;
 
 export const keySharedLevels = (userId: string) =>
   `decrypt:user:${userId}:shared_levels`;
+
+export const keyUserDailyDataDates = (userId: string) =>
+  `decrypt:user:${userId}:daily_data_dates`;
 
 export const keyProcessedOrder = (orderId: string) =>
   `decrypt:payments:processed_order:${orderId}`;
@@ -137,14 +150,14 @@ export const keyRefundProcessedOrder = (orderId: string) =>
 export const keyGrantedOrderSkus = (orderId: string) =>
   `decrypt:payments:granted_order_skus:${orderId}`;
 
+export const keyOrderGrantRecord = (orderId: string) =>
+  `decrypt:payments:order_grant_record:${orderId}`;
+
+export const keyModeratorAccessCache = (subredditName: string, username: string) =>
+  `decrypt:cache:mod:${subredditName}:${username}`;
+
 export const keyUserCoinHeartPurchases = (userId: string, dateKey: string) =>
   `decrypt:user:${userId}:coin-heart-purchases:${dateKey}`;
-
-export const keyEndlessActiveCatalogVersion =
-  'decrypt:endless:active_catalog_version';
-
-export const keyEndlessCatalogSequence = (catalogVersion: string) =>
-  `decrypt:endless:catalog:${catalogVersion}:sequence`;
 
 export const keyUserEndlessCursor = (userId: string) =>
   `decrypt:user:${userId}:endless:cursor`;
