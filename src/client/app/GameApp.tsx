@@ -36,6 +36,10 @@ import {
   getStableChallengeBackgroundIndex,
 } from './challenge-backgrounds';
 import {
+  buildActiveChallengeSessionPatch,
+  buildCompleteChallengeSessionPatch,
+  buildGameOverChallengeSessionPatch,
+  buildRestoredOutcomeSessionPatch,
   challengeSessionReducer,
   initialChallengeSessionState,
   type ChallengeSessionState,
@@ -1057,12 +1061,12 @@ export const GameApp = () => {
           clearCorrectGuessIndices(storageUserId, activeLevelId);
         }
       }
-      patchChallengeSession({
-        heartsRemaining: session.heartsRemaining,
-        isShieldActive: session.session.shieldIsActive,
-        isGameOver: false,
-        isComplete: false,
-      });
+      patchChallengeSession(
+        buildActiveChallengeSessionPatch({
+          heartsRemaining: session.heartsRemaining,
+          isShieldActive: session.session.shieldIsActive,
+        })
+      );
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
       setChallengeStartTs(
@@ -1138,12 +1142,9 @@ export const GameApp = () => {
         }
       } else if (outcomeDecision === 'show-paid-retry') {
         const storageUserId = currentUserIdRef.current;
-        patchChallengeSession({
-          heartsRemaining: loaded.puzzle.heartsMax,
-          isShieldActive: false,
-          isComplete: false,
-          isGameOver: true,
-        });
+        patchChallengeSession(
+          buildGameOverChallengeSessionPatch(loaded.puzzle.heartsMax)
+        );
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
         setChallengeStartTs(null);
@@ -1279,12 +1280,13 @@ export const GameApp = () => {
         }
         if (outcomeDecision.branch === 'restore-persisted') {
           const restoredOutcome = outcomeDecision.persistedOutcome;
-          patchChallengeSession({
-            heartsRemaining: loaded.puzzle.heartsMax,
-            isShieldActive: false,
-            isComplete: restoredOutcome.isComplete,
-            isGameOver: restoredOutcome.isGameOver,
-          });
+          patchChallengeSession(
+            buildRestoredOutcomeSessionPatch({
+              heartsRemaining: loaded.puzzle.heartsMax,
+              isComplete: restoredOutcome.isComplete,
+              isGameOver: restoredOutcome.isGameOver,
+            })
+          );
           setCompletionResult(restoredOutcome.completion ?? null);
           const restoredSolveSeconds =
             resolvePersistedOutcomeSolveSeconds(restoredOutcome);
@@ -1295,12 +1297,9 @@ export const GameApp = () => {
           setChallengeStartTs(null);
           clearTileFeedback();
         } else if (outcomeDecision.branch === 'show-paid-retry') {
-          patchChallengeSession({
-            heartsRemaining: loaded.puzzle.heartsMax,
-            isShieldActive: false,
-            isComplete: false,
-            isGameOver: true,
-          });
+          patchChallengeSession(
+            buildGameOverChallengeSessionPatch(loaded.puzzle.heartsMax)
+          );
           setCompletionResult(null);
           setCompletionSolveSeconds(null);
           setChallengeStartTs(null);
@@ -1311,12 +1310,9 @@ export const GameApp = () => {
           );
         } else if (outcomeDecision.branch === 'already-completed') {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
-          patchChallengeSession({
-            heartsRemaining: loaded.puzzle.heartsMax,
-            isShieldActive: false,
-            isComplete: true,
-            isGameOver: false,
-          });
+          patchChallengeSession(
+            buildCompleteChallengeSessionPatch(loaded.puzzle.heartsMax)
+          );
           setCompletionResult(null);
           setCompletionSolveSeconds(
             await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
@@ -2521,12 +2517,12 @@ export const GameApp = () => {
       if (storageUserId) {
         clearCorrectGuessIndices(storageUserId, levelId);
       }
-      patchChallengeSession({
-        heartsRemaining: result.heartsRemaining,
-        isShieldActive: result.session.shieldIsActive,
-        isGameOver: false,
-        isComplete: false,
-      });
+      patchChallengeSession(
+        buildActiveChallengeSessionPatch({
+          heartsRemaining: result.heartsRemaining,
+          isShieldActive: result.session.shieldIsActive,
+        })
+      );
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
       setChallengeStartTs(

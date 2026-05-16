@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildActiveChallengeSessionPatch,
+  buildCompleteChallengeSessionPatch,
+  buildGameOverChallengeSessionPatch,
+  buildRestoredOutcomeSessionPatch,
   challengeSessionReducer,
   initialChallengeSessionState,
 } from './challenge-session-state';
@@ -48,5 +52,50 @@ describe('challengeSessionReducer', () => {
     });
 
     expect(next).toBe(initialChallengeSessionState);
+  });
+
+  it('builds an active attempt patch', () => {
+    expect(
+      buildActiveChallengeSessionPatch({
+        heartsRemaining: 2,
+        isShieldActive: true,
+      })
+    ).toEqual({
+      heartsRemaining: 2,
+      isShieldActive: true,
+      isGameOver: false,
+      isComplete: false,
+    });
+  });
+
+  it('builds terminal outcome patches', () => {
+    expect(buildGameOverChallengeSessionPatch(3)).toEqual({
+      heartsRemaining: 3,
+      isShieldActive: false,
+      isComplete: false,
+      isGameOver: true,
+    });
+
+    expect(buildCompleteChallengeSessionPatch(3)).toEqual({
+      heartsRemaining: 3,
+      isShieldActive: false,
+      isComplete: true,
+      isGameOver: false,
+    });
+  });
+
+  it('builds a restored outcome patch', () => {
+    expect(
+      buildRestoredOutcomeSessionPatch({
+        heartsRemaining: 3,
+        isComplete: false,
+        isGameOver: true,
+      })
+    ).toEqual({
+      heartsRemaining: 3,
+      isShieldActive: false,
+      isComplete: false,
+      isGameOver: true,
+    });
   });
 });

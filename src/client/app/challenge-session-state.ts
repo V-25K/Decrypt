@@ -23,6 +23,45 @@ export const initialChallengeSessionState: ChallengeSessionState = {
   isComplete: false,
 };
 
+export const buildActiveChallengeSessionPatch = (params: {
+  heartsRemaining: number;
+  isShieldActive: boolean;
+}): Partial<ChallengeSessionState> => ({
+  heartsRemaining: params.heartsRemaining,
+  isShieldActive: params.isShieldActive,
+  isGameOver: false,
+  isComplete: false,
+});
+
+export const buildGameOverChallengeSessionPatch = (
+  heartsRemaining: number
+): Partial<ChallengeSessionState> => ({
+  heartsRemaining,
+  isShieldActive: false,
+  isComplete: false,
+  isGameOver: true,
+});
+
+export const buildCompleteChallengeSessionPatch = (
+  heartsRemaining: number
+): Partial<ChallengeSessionState> => ({
+  heartsRemaining,
+  isShieldActive: false,
+  isComplete: true,
+  isGameOver: false,
+});
+
+export const buildRestoredOutcomeSessionPatch = (params: {
+  heartsRemaining: number;
+  isComplete: boolean;
+  isGameOver: boolean;
+}): Partial<ChallengeSessionState> => ({
+  heartsRemaining: params.heartsRemaining,
+  isShieldActive: false,
+  isComplete: params.isComplete,
+  isGameOver: params.isGameOver,
+});
+
 const normalizeChallengeSessionState = (
   state: ChallengeSessionState
 ): ChallengeSessionState =>
