@@ -98,6 +98,33 @@ export const getBootstrapOutcomeDecision = ({
   };
 };
 
+type LoadLevelOutcomeDecisionParams = {
+  mode: 'daily' | 'endless';
+  requiresPaidRetry: boolean;
+  alreadyCompleted: boolean;
+};
+
+export type LoadLevelOutcomeDecision =
+  | 'already-completed'
+  | 'show-paid-retry'
+  | 'start-session';
+
+export const getLoadLevelOutcomeDecision = ({
+  mode,
+  requiresPaidRetry,
+  alreadyCompleted,
+}: LoadLevelOutcomeDecisionParams): LoadLevelOutcomeDecision => {
+  if (alreadyCompleted) {
+    return 'already-completed';
+  }
+
+  if (mode === 'daily' && requiresPaidRetry) {
+    return 'show-paid-retry';
+  }
+
+  return 'start-session';
+};
+
 export const resolveCompletionSolveSeconds = (
   completion: Pick<CompletionResult, 'solveSeconds'> | null | undefined,
   fallbackSolveSeconds: number | null

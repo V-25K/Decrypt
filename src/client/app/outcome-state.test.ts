@@ -3,6 +3,7 @@ import {
   buildPersistedCompleteOutcomeState,
   buildPersistedGameOverOutcomeState,
   getBootstrapOutcomeDecision,
+  getLoadLevelOutcomeDecision,
   isPersistedOutcomeForLevel,
   resolveCompletionSolveSeconds,
   resolvePersistedOutcomeSolveSeconds,
@@ -111,6 +112,34 @@ describe('outcome state helpers', () => {
       persistedOutcome: null,
       shouldClearStalePersisted: false,
     });
+  });
+
+  it('chooses already-completed first for direct level loads', () => {
+    expect(
+      getLoadLevelOutcomeDecision({
+        mode: 'daily',
+        requiresPaidRetry: true,
+        alreadyCompleted: true,
+      })
+    ).toBe('already-completed');
+  });
+
+  it('chooses paid retry only for direct daily level loads', () => {
+    expect(
+      getLoadLevelOutcomeDecision({
+        mode: 'daily',
+        requiresPaidRetry: true,
+        alreadyCompleted: false,
+      })
+    ).toBe('show-paid-retry');
+
+    expect(
+      getLoadLevelOutcomeDecision({
+        mode: 'endless',
+        requiresPaidRetry: true,
+        alreadyCompleted: false,
+      })
+    ).toBe('start-session');
   });
 
   it('resolves completion solve seconds before fallback seconds', () => {

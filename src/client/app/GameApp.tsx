@@ -123,6 +123,7 @@ import {
   buildPersistedCompleteOutcomeState,
   buildPersistedGameOverOutcomeState,
   getBootstrapOutcomeDecision,
+  getLoadLevelOutcomeDecision,
   resolveCompletionSolveSeconds,
   resolvePersistedOutcomeSolveSeconds,
 } from './outcome-state';
@@ -1109,8 +1110,13 @@ export const GameApp = () => {
       setPuzzleView(loaded.puzzle, { resetSelection: true });
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
+      const outcomeDecision = getLoadLevelOutcomeDecision({
+        mode: nextMode,
+        requiresPaidRetry: loaded.requiresPaidRetry,
+        alreadyCompleted: loaded.alreadyCompleted,
+      });
 
-      if (loaded.alreadyCompleted) {
+      if (outcomeDecision === 'already-completed') {
         const storageUserId = currentUserIdRef.current;
         if (storageUserId) {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
@@ -1130,7 +1136,7 @@ export const GameApp = () => {
             })
           );
         }
-      } else if (nextMode === 'daily' && loaded.requiresPaidRetry) {
+      } else if (outcomeDecision === 'show-paid-retry') {
         const storageUserId = currentUserIdRef.current;
         patchChallengeSession({
           heartsRemaining: loaded.puzzle.heartsMax,
