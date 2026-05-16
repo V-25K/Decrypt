@@ -117,7 +117,6 @@ import {
   migrateSessionStorageForUser,
   persistCorrectGuessIndices,
   persistOutcomeState,
-  readCorrectGuessIndices,
   readEntrypointScreen,
   readOutcomeState,
   setExpandedScreenIntent,
@@ -156,6 +155,7 @@ import {
   setPuzzleViewInGameState,
   setSelectedTileInGameState,
 } from './game-state-actions';
+import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
 
@@ -898,37 +898,17 @@ export const GameApp = () => {
     }
   }, []);
 
-  const readRestoredCorrectGuessFeedback = useCallback(
-    (activeLevelId: string, view: Puzzle): Set<number> => {
-      const storageUserId = currentUserIdRef.current;
-      if (!storageUserId) {
-        return new Set();
-      }
-      const storedIndices = readCorrectGuessIndices(storageUserId, activeLevelId);
-      if (storedIndices.length === 0) {
-        return new Set();
-      }
-      const validIndices = storedIndices.filter((index) => {
-        const tile = view.tiles[index];
-        return Boolean(tile && tile.isLetter && tile.displayChar !== '_');
-      });
-      const restored = new Set(validIndices);
-      persistCorrectGuessIndices(storageUserId, activeLevelId, restored);
-      return restored;
-    },
-    []
-  );
-
   const applyServerPuzzleView = useCallback(
     (
       activeLevelId: string,
       view: Puzzle,
       options: { resetSelection?: boolean } = {}
     ) => {
-      const restoredCorrectGuessIndices = readRestoredCorrectGuessFeedback(
-        activeLevelId,
-        view
-      );
+      const restoredCorrectGuessIndices = readRestoredCorrectGuessFeedback({
+        userId: currentUserIdRef.current,
+        levelId: activeLevelId,
+        view,
+      });
       puzzleRef.current = view;
       updateGameState((previous) =>
         applyServerPuzzleViewToGameState(
@@ -939,7 +919,7 @@ export const GameApp = () => {
         )
       );
     },
-    [readRestoredCorrectGuessFeedback, updateGameState]
+    [updateGameState]
   );
 
   const refreshCurrentView = async (activeLevelId: string): Promise<Puzzle> => {
