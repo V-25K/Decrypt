@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ChangeEvent,
@@ -143,6 +144,50 @@ import { ImmutableGameState } from './ImmutableGameState';
 
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
+type ChallengeMode = 'daily' | 'endless';
+type ChallengeSessionState = {
+  levelId: string;
+  mode: ChallengeMode;
+  heartsRemaining: number;
+  isShieldActive: boolean;
+  isGameOver: boolean;
+  isComplete: boolean;
+};
+type ChallengeSessionAction = { type: 'patch'; changes: Partial<ChallengeSessionState> };
+
+const initialChallengeSessionState: ChallengeSessionState = {
+  levelId: '',
+  mode: 'daily',
+  heartsRemaining: 3,
+  isShieldActive: false,
+  isGameOver: false,
+  isComplete: false,
+};
+
+const normalizeChallengeSessionState = (
+  state: ChallengeSessionState
+): ChallengeSessionState =>
+  state.isComplete && state.isGameOver ? { ...state, isGameOver: false } : state;
+
+const areChallengeSessionStatesEqual = (
+  a: ChallengeSessionState,
+  b: ChallengeSessionState
+): boolean =>
+  a.levelId === b.levelId &&
+  a.mode === b.mode &&
+  a.heartsRemaining === b.heartsRemaining &&
+  a.isShieldActive === b.isShieldActive &&
+  a.isGameOver === b.isGameOver &&
+  a.isComplete === b.isComplete;
+
+const challengeSessionReducer = (
+  state: ChallengeSessionState,
+  action: ChallengeSessionAction
+): ChallengeSessionState => {
+  const next = normalizeChallengeSessionState({ ...state, ...action.changes });
+  return areChallengeSessionStatesEqual(state, next) ? state : next;
+};
+
 const criticalUiImageAssets = [
   getChallengeBackgroundAsset(0),
   '/backgrounds/home.webp',
@@ -404,33 +449,29 @@ export const GameApp = () => {
   const [subredditName, setSubredditName] = useState<string | null>(null);
   const [endlessCatalogStatus, setEndlessCatalogStatus] =
     useState<EndlessCatalogStatus | null>(null);
-  const [levelId, setLevelId] = useState('');
-  const [mode, setMode] = useState<'daily' | 'endless'>('daily');
-  const [heartsRemaining, setHeartsRemaining] = useState(3);
-  const [isShieldActive, setIsShieldActive] = useState(false);
+  const [challengeSession, dispatchChallengeSession] = useReducer(
+    challengeSessionReducer,
+    initialChallengeSessionState
+  );
+  const {
+    levelId,
+    mode,
+    heartsRemaining,
+    isShieldActive,
+    isGameOver,
+    isComplete,
+  } = challengeSession;
   const [gameState, setGameState] = useState(() => ImmutableGameState.empty());
   const puzzle = gameState.puzzle;
   const selectedTile = gameState.selectedTileIndex;
-  const [isGameOver, _setIsGameOver] = useState(false);
-  const [isComplete, _setIsComplete] = useState(false);
   const puzzleRef = useRef<Puzzle | null>(null);
 
-  const applicationOutcomeLockRef = useRef(false);
-
-  const setIsComplete = useCallback((value: boolean | ((prevState: boolean) => boolean)) => {
-    _setIsComplete((prev) => {
-      const nextValue = typeof value === 'function' ? value(prev) : value;
-      applicationOutcomeLockRef.current = nextValue;
-      return nextValue;
-    });
-  }, []);
-
-  const setIsGameOver = useCallback((value: boolean | ((prevState: boolean) => boolean)) => {
-    _setIsGameOver((prev) => {
-      if (applicationOutcomeLockRef.current) return false;
-      return typeof value === 'function' ? value(prev) : value;
-    });
-  }, []);
+  const patchChallengeSession = useCallback(
+    (changes: Partial<ChallengeSessionState>) => {
+      dispatchChallengeSession({ type: 'patch', changes });
+    },
+    []
+  );
   const [completionResult, setCompletionResult] = useState<RouterOutputs['game']['completeSession'] | null>(null);
   const [completionSolveSeconds, setCompletionSolveSeconds] = useState<number | null>(null);
   const [challengeStartTs, setChallengeStartTs] = useState<number | null>(null);
@@ -1178,10 +1219,12 @@ export const GameApp = () => {
           clearCorrectGuessIndices(storageUserId, activeLevelId);
         }
       }
-      setHeartsRemaining(session.heartsRemaining);
-      setIsShieldActive(session.session.shieldIsActive);
-      setIsGameOver(false);
-      setIsComplete(false);
+      patchChallengeSession({
+        heartsRemaining: session.heartsRemaining,
+        isShieldActive: session.session.shieldIsActive,
+        isGameOver: false,
+        isComplete: false,
+      });
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
       setChallengeStartTs(
@@ -1212,21 +1255,20 @@ export const GameApp = () => {
       }
       throw error;
     }
-    // setIsComplete and setIsGameOver are stable state setters from useState
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clearTileFeedback, refreshBootstrapState]);
+  }, [clearTileFeedback, patchChallengeSession, refreshBootstrapState]);
 
   const loadLevel = async (nextMode: 'daily' | 'endless') => {
-    setIsComplete(false);
-    setIsGameOver(false);
-    setIsShieldActive(false);
+    patchChallengeSession({
+      isComplete: false,
+      isGameOver: false,
+      isShieldActive: false,
+    });
     setBusy(true);
     try {
       const loaded = await trpc.game.loadLevel.query({
         mode: nextMode,
       });
-      setMode(nextMode);
-      setLevelId(loaded.levelId);
+      patchChallengeSession({ mode: nextMode, levelId: loaded.levelId });
       setPuzzleView(loaded.puzzle, { resetSelection: true });
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
@@ -1236,8 +1278,7 @@ export const GameApp = () => {
         if (storageUserId) {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
         }
-        setIsComplete(true);
-        setIsGameOver(false);
+        patchChallengeSession({ isComplete: true, isGameOver: false });
         setCompletionResult(null);
         setCompletionSolveSeconds(
           await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
@@ -1254,13 +1295,15 @@ export const GameApp = () => {
         }
       } else if (nextMode === 'daily' && loaded.requiresPaidRetry) {
         const storageUserId = currentUserIdRef.current;
-        setIsComplete(false);
-        setIsGameOver(true);
+        patchChallengeSession({
+          heartsRemaining: loaded.puzzle.heartsMax,
+          isShieldActive: false,
+          isComplete: false,
+          isGameOver: true,
+        });
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
         setChallengeStartTs(null);
-        setHeartsRemaining(loaded.puzzle.heartsMax);
-        setIsShieldActive(false);
         clearTileFeedback();
         if (storageUserId) {
           persistOutcomeState(storageUserId, {
@@ -1310,8 +1353,7 @@ export const GameApp = () => {
       setNextDailyRetryCost(retryQuote.nextRetryCost);
       setNextDailyRetryScoreFactor(retryQuote.nextRetryScoreFactor);
       setRequiresPaidRetry(false);
-      setIsComplete(completed);
-      setIsGameOver(false);
+      patchChallengeSession({ isComplete: completed, isGameOver: false });
       setCompletionResult(completed ? result : null);
       const resolvedSolveSeconds =
         completed
@@ -1381,8 +1423,7 @@ export const GameApp = () => {
           void loadFeaturedOffer();
           void loadQuestStatus();
         });
-        setMode('daily');
-        setLevelId(loaded.levelId);
+        patchChallengeSession({ mode: 'daily', levelId: loaded.levelId });
         setPuzzleView(loaded.puzzle, { resetSelection: true });
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
@@ -1394,8 +1435,12 @@ export const GameApp = () => {
           persistOutcomeState(storageUserId, null);
         }
         if (canRestorePersisted && persistedOutcome) {
-          setIsComplete(persistedOutcome.isComplete);
-          setIsGameOver(persistedOutcome.isGameOver);
+          patchChallengeSession({
+            heartsRemaining: loaded.puzzle.heartsMax,
+            isShieldActive: false,
+            isComplete: persistedOutcome.isComplete,
+            isGameOver: persistedOutcome.isGameOver,
+          });
           setCompletionResult(persistedOutcome.completion ?? null);
           const restoredSolveSeconds =
             persistedOutcome.solveSeconds ??
@@ -1407,17 +1452,17 @@ export const GameApp = () => {
               (await loadCompletionSolveSecondsFromDatabase(loaded.levelId))
           );
           setChallengeStartTs(null);
-          setHeartsRemaining(loaded.puzzle.heartsMax);
-          setIsShieldActive(false);
           clearTileFeedback();
         } else if (loaded.requiresPaidRetry && !loaded.alreadyCompleted) {
-          setIsComplete(false);
-          setIsGameOver(true);
+          patchChallengeSession({
+            heartsRemaining: loaded.puzzle.heartsMax,
+            isShieldActive: false,
+            isComplete: false,
+            isGameOver: true,
+          });
           setCompletionResult(null);
           setCompletionSolveSeconds(null);
           setChallengeStartTs(null);
-          setHeartsRemaining(loaded.puzzle.heartsMax);
-          setIsShieldActive(false);
           clearTileFeedback();
           persistOutcomeState(storageUserId, {
             levelId: loaded.levelId,
@@ -1429,15 +1474,17 @@ export const GameApp = () => {
           });
         } else if (loaded.alreadyCompleted) {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
-          setIsComplete(true);
-          setIsGameOver(false);
+          patchChallengeSession({
+            heartsRemaining: loaded.puzzle.heartsMax,
+            isShieldActive: false,
+            isComplete: true,
+            isGameOver: false,
+          });
           setCompletionResult(null);
           setCompletionSolveSeconds(
             await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
           );
           setChallengeStartTs(null);
-          setHeartsRemaining(loaded.puzzle.heartsMax);
-          setIsShieldActive(false);
           clearTileFeedback();
         } else {
           await startLevel(loaded.levelId, 'daily');
@@ -1469,13 +1516,14 @@ export const GameApp = () => {
       cancelled = true;
       cancelDeferredNonCritical();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isComplete, setIsComplete, and setIsGameOver are stable or intentionally excluded
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isComplete is intentionally excluded from bootstrap.
   }, [
     applyDailyRetryState,
     clearTileFeedback,
     loadCompletionSolveSecondsFromDatabase,
     loadFeaturedOffer,
     loadQuestStatus,
+    patchChallengeSession,
     refreshBootstrapState,
     applyServerPuzzleView,
     startLevel,
@@ -1958,10 +2006,16 @@ export const GameApp = () => {
       playSfx('wrong');
       flashWrongTile(tileIndex);
     }
-    setHeartsRemaining(result.heartsRemaining);
+    const guessSessionChanges: Partial<ChallengeSessionState> = {
+      heartsRemaining: result.heartsRemaining,
+    };
     if (result.shieldConsumed) {
-      setIsShieldActive(false);
+      guessSessionChanges.isShieldActive = false;
     }
+    if (!result.isLevelComplete && result.isGameOver) {
+      guessSessionChanges.isGameOver = true;
+    }
+    patchChallengeSession(guessSessionChanges);
     const shouldRefresh =
       result.newlyUnlockedChainIds.length > 0 || result.lockProgressChanged;
     const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
@@ -1971,7 +2025,6 @@ export const GameApp = () => {
       if (result.isLevelComplete) {
         await finishLevel();
       } else if (result.isGameOver) {
-        setIsGameOver(true);
         setRequiresPaidRetry(mode === 'daily');
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
@@ -2271,7 +2324,7 @@ export const GameApp = () => {
           selectedTileIndex: nextSelectedTile,
         });
       });
-      setIsShieldActive(used.session.shieldIsActive);
+      patchChallengeSession({ isShieldActive: used.session.shieldIsActive });
       if (item === 'shield') {
         showToast('Shield active for next mistake.');
       }
@@ -2508,8 +2561,7 @@ export const GameApp = () => {
   };
 
   const loadModeAndOpenChallenge = async (nextMode: 'daily' | 'endless') => {
-    setIsComplete(false);
-    setIsGameOver(false);
+    patchChallengeSession({ isComplete: false, isGameOver: false });
     if (nextMode === 'endless' && !endlessCatalogAvailable) {
       showToast('Endless mode is not available yet.');
       return;
@@ -2670,7 +2722,6 @@ export const GameApp = () => {
       });
       setProfile(result.profile);
       setInventory(result.inventory);
-      setHeartsRemaining(result.heartsRemaining);
       setDailyRetryCount(result.retryCount);
       setNextDailyRetryCost(result.nextRetryCost);
       setNextDailyRetryScoreFactor(result.nextRetryScoreFactor);
@@ -2679,14 +2730,17 @@ export const GameApp = () => {
       if (storageUserId) {
         clearCorrectGuessIndices(storageUserId, levelId);
       }
-      setIsGameOver(false);
-      setIsComplete(false);
+      patchChallengeSession({
+        heartsRemaining: result.heartsRemaining,
+        isShieldActive: result.session.shieldIsActive,
+        isGameOver: false,
+        isComplete: false,
+      });
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
       setChallengeStartTs(
         hasChallengeActivity(result.session) ? result.session.startTimestamp : null
       );
-      setIsShieldActive(result.session.shieldIsActive);
       if (storageUserId) {
         persistOutcomeState(storageUserId, null);
       }
@@ -2788,7 +2842,7 @@ export const GameApp = () => {
     try {
       await startLevel(levelId, mode);
       await refreshCurrentView(levelId);
-      setIsGameOver(false);
+      patchChallengeSession({ isGameOver: false });
     } finally {
       setBusy(false);
     }
