@@ -68,7 +68,6 @@ import {
   crossMarkEmoji,
   heartEmoji,
   infiniteHeartsIcon,
-  heartRefillIntervalMs,
   inlineMaxWordsPerLine,
   maxWordTileColumns,
   maxOutcomeCrowdAvatars,
@@ -153,6 +152,10 @@ import {
   isQuestHidden,
   questCards,
 } from './game-formatters';
+import {
+  canBuyCoinHeartsFromState,
+  getHeartState,
+} from './heart-state';
 import {
   addWrongGuessTileInGameState,
   applyServerPuzzleViewToGameState,
@@ -2806,37 +2809,27 @@ export const GameApp = () => {
   const showSuccessOverlay = isComplete;
   const isDailyComplete = mode === 'daily' && isComplete;
   const showPaidDailyRetryCta = mode === 'daily' && isGameOver && requiresPaidRetry;
-  const maxLives = 3;
-  const hasInfiniteHearts = profile.infiniteHeartsExpiryTs > headerNowTs;
-  const infiniteHeartsRemainingMs = Math.max(0, profile.infiniteHeartsExpiryTs - headerNowTs);
-  const baseLives = Math.min(maxLives, Math.max(0, profile.hearts));
-  const elapsedSinceLastRefillMs = Math.max(0, headerNowTs - profile.lastHeartRefillTs);
-  const earnedRefills =
-    baseLives >= maxLives ? 0 : Math.floor(elapsedSinceLastRefillMs / heartRefillIntervalMs);
-  const currentLives = hasInfiniteHearts
-    ? maxLives
-    : Math.min(maxLives, baseLives + earnedRefills);
-  const nextLifeRemainingMs = (() => {
-    if (hasInfiniteHearts || currentLives >= maxLives) {
-      return 0;
-    }
-    const cycleElapsedMs = elapsedSinceLastRefillMs % heartRefillIntervalMs;
-    return cycleElapsedMs === 0 ? heartRefillIntervalMs : heartRefillIntervalMs - cycleElapsedMs;
-  })();
-  const canUseLifeForChallenge = hasInfiniteHearts || currentLives > 0;
-  const lifeStatusText = hasInfiniteHearts
-    ? `Infinite ${formatCountdown(infiniteHeartsRemainingMs)}`
-    : currentLives >= maxLives
-      ? 'Full'
-      : `+1 in ${formatCountdown(nextLifeRemainingMs)}`;
+  const heartState = getHeartState({
+    hearts: profile.hearts,
+    infiniteHeartsExpiryTs: profile.infiniteHeartsExpiryTs,
+    lastHeartRefillTs: profile.lastHeartRefillTs,
+    nowTs: headerNowTs,
+  });
+  const {
+    hasInfiniteHearts,
+    currentLives,
+    canUseLifeForChallenge,
+    lifeStatusText,
+    heartsNotFull,
+  } = heartState;
   const coinRefillAffordable = profile.coins >= coinHeartRefillCost;
   const coinTopUpAffordable = profile.coins >= coinHeartTopUpCost;
-  const heartsNotFull = currentLives < maxLives;
-  const canBuyCoinHearts =
-    !hasInfiniteHearts &&
-    !coinHeartLimitReached &&
-    !heartPurchaseBusy &&
-    heartsNotFull;
+  const canBuyCoinHearts = canBuyCoinHeartsFromState({
+    hasInfiniteHearts,
+    coinHeartLimitReached,
+    heartPurchaseBusy,
+    heartsNotFull,
+  });
   const completionQuote = (() => {
     const solvedLetters = puzzle.words.join('');
     let letterCursor = 0;
