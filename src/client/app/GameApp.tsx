@@ -144,6 +144,18 @@ import {
   isQuestHidden,
   questCards,
 } from './game-formatters';
+import {
+  addWrongGuessTileInGameState,
+  applyServerPuzzleViewToGameState,
+  clearTileFeedbackInGameState,
+  findAdjacentGuessableTileIndex,
+  findNextGuessableTileIndex,
+  isGuessableTileAtIndex,
+  removeWrongGuessTileInGameState,
+  retainOrAdvanceSelectedTileIndex,
+  setPuzzleViewInGameState,
+  setSelectedTileInGameState,
+} from './game-state-actions';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
 
@@ -492,7 +504,9 @@ export const GameApp = () => {
   );
   const setSelectedTileIndex = useCallback(
     (tileIndex: number | null) => {
-      updateGameState((previous) => previous.setSelectedTileIndex(tileIndex));
+      updateGameState((previous) =>
+        setSelectedTileInGameState(previous, tileIndex)
+      );
     },
     [updateGameState]
   );
@@ -503,10 +517,7 @@ export const GameApp = () => {
     ) => {
       puzzleRef.current = nextPuzzle;
       updateGameState((previous) =>
-        previous.update({
-          puzzle: nextPuzzle,
-          ...(options.resetSelection ? { selectedTileIndex: null } : {}),
-        })
+        setPuzzleViewInGameState(previous, nextPuzzle, options)
       );
     },
     [updateGameState]
@@ -919,20 +930,14 @@ export const GameApp = () => {
         view
       );
       puzzleRef.current = view;
-      updateGameState((previous) => {
-        const previousSelectedTile = previous.selectedTileIndex;
-        const nextSelectedTile =
-          options.resetSelection || previousSelectedTile === null
-            ? null
-            : isGuessableTileAtIndex(view, previousSelectedTile)
-              ? previousSelectedTile
-              : null;
-        return previous.update({
-          puzzle: view,
-          correctGuessIndices: restoredCorrectGuessIndices,
-          selectedTileIndex: nextSelectedTile,
-        });
-      });
+      updateGameState((previous) =>
+        applyServerPuzzleViewToGameState(
+          previous,
+          view,
+          restoredCorrectGuessIndices,
+          options
+        )
+      );
     },
     [readRestoredCorrectGuessFeedback, updateGameState]
   );
@@ -974,22 +979,6 @@ export const GameApp = () => {
     }
     return currentPuzzle.tiles.some(
       (tile) => tile.isLetter && tile.displayChar === '_' && !tile.isLocked
-    );
-  };
-
-  const isGuessableTileAtIndex = (
-    currentPuzzle: Puzzle | null,
-    tileIndex: number
-  ): boolean => {
-    if (!currentPuzzle) {
-      return false;
-    }
-    const tile = currentPuzzle.tiles[tileIndex];
-    return Boolean(
-      tile &&
-        tile.isLetter &&
-        !tile.isLocked &&
-        tile.displayChar === '_'
     );
   };
 
@@ -1058,36 +1047,6 @@ export const GameApp = () => {
     [isShieldActive, puzzle, tokens]
   );
 
-  const findAdjacentGuessableTileIndex = (
-    currentPuzzle: Puzzle | null,
-    fromIndex: number,
-    direction: 1 | -1
-  ): number | null => {
-    if (!currentPuzzle) {
-      return null;
-    }
-    const tileCount = currentPuzzle.tiles.length;
-    if (tileCount <= 0) {
-      return null;
-    }
-    const startIndex =
-      Number.isInteger(fromIndex) && fromIndex >= 0 && fromIndex < tileCount
-        ? fromIndex
-        : 0;
-    for (let offset = 1; offset <= tileCount; offset += 1) {
-      const index = (startIndex + offset * direction + tileCount) % tileCount;
-      if (isGuessableTileAtIndex(currentPuzzle, index)) {
-        return index;
-      }
-    }
-    return null;
-  };
-
-  const findNextGuessableTileIndex = (
-    currentPuzzle: Puzzle | null,
-    fromIndex: number
-  ): number | null => findAdjacentGuessableTileIndex(currentPuzzle, fromIndex, 1);
-
   const buildDispatchableChunk = (
     entries: Array<{ levelId: string; tileIndex: number; letter: string }>,
     currentPuzzle: Puzzle | null
@@ -1128,30 +1087,22 @@ export const GameApp = () => {
     });
     wrongGuessTimeoutsRef.current.clear();
     updateGameState((previous) =>
-      previous.update({
-        correctGuessIndices: new Set(),
-        wrongGuessIndices: new Set(),
-        ...(options.resetSelection ? { selectedTileIndex: null } : {}),
-      })
+      clearTileFeedbackInGameState(previous, options)
     );
   }, [updateGameState]);
 
   const flashWrongTile = (tileIndex: number) => {
-    updateGameState((previous) => {
-      const next = new Set(previous.wrongGuessIndices);
-      next.add(tileIndex);
-      return previous.setWrongGuessIndices(next);
-    });
+    updateGameState((previous) =>
+      addWrongGuessTileInGameState(previous, tileIndex)
+    );
     const existingTimeout = wrongGuessTimeoutsRef.current.get(tileIndex);
     if (existingTimeout !== undefined) {
       window.clearTimeout(existingTimeout);
     }
     const timeoutId = window.setTimeout(() => {
-      updateGameState((previous) => {
-        const next = new Set(previous.wrongGuessIndices);
-        next.delete(tileIndex);
-        return previous.setWrongGuessIndices(next);
-      });
+      updateGameState((previous) =>
+        removeWrongGuessTileInGameState(previous, tileIndex)
+      );
       wrongGuessTimeoutsRef.current.delete(tileIndex);
     }, 1000);
     wrongGuessTimeoutsRef.current.set(tileIndex, timeoutId);
@@ -1952,15 +1903,10 @@ export const GameApp = () => {
         if (storageUserId) {
           persistCorrectGuessIndices(storageUserId, levelId, next);
         }
-        const nextSelectedTile =
-          previous.selectedTileIndex === null ||
-          isGuessableTileAtIndex(nextPuzzle, previous.selectedTileIndex)
-            ? previous.selectedTileIndex
-            : findNextGuessableTileIndex(nextPuzzle, previous.selectedTileIndex);
         return previous.update({
           puzzle: nextPuzzle,
           correctGuessIndices: next,
-          selectedTileIndex: nextSelectedTile,
+          selectedTileIndex: retainOrAdvanceSelectedTileIndex(previous, nextPuzzle),
         });
       });
     } else if (result.errorCode !== 'TILE_LOCKED') {
@@ -2275,14 +2221,9 @@ export const GameApp = () => {
         hasChallengeActivity(used.session) ? used.session.startTimestamp : null
       );
       updateGameState((previous) => {
-        const nextSelectedTile =
-          previous.selectedTileIndex === null ||
-          isGuessableTileAtIndex(nextPuzzle, previous.selectedTileIndex)
-            ? previous.selectedTileIndex
-            : findNextGuessableTileIndex(nextPuzzle, previous.selectedTileIndex);
         return previous.update({
           puzzle: nextPuzzle,
-          selectedTileIndex: nextSelectedTile,
+          selectedTileIndex: retainOrAdvanceSelectedTileIndex(previous, nextPuzzle),
         });
       });
       patchChallengeSession({ isShieldActive: used.session.shieldIsActive });
