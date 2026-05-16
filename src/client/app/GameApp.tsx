@@ -404,15 +404,16 @@ export const GameApp = () => {
   const [subredditName, setSubredditName] = useState<string | null>(null);
   const [endlessCatalogStatus, setEndlessCatalogStatus] =
     useState<EndlessCatalogStatus | null>(null);
-  const [puzzle, setPuzzle] = useState<Puzzle | null>(null);
   const [levelId, setLevelId] = useState('');
   const [mode, setMode] = useState<'daily' | 'endless'>('daily');
   const [heartsRemaining, setHeartsRemaining] = useState(3);
   const [isShieldActive, setIsShieldActive] = useState(false);
   const [gameState, setGameState] = useState(() => ImmutableGameState.empty());
+  const puzzle = gameState.puzzle;
   const selectedTile = gameState.selectedTileIndex;
   const [isGameOver, _setIsGameOver] = useState(false);
   const [isComplete, _setIsComplete] = useState(false);
+  const puzzleRef = useRef<Puzzle | null>(null);
 
   const applicationOutcomeLockRef = useRef(false);
 
@@ -498,7 +499,7 @@ export const GameApp = () => {
       nextPuzzle: Puzzle | null,
       options: { resetSelection?: boolean } = {}
     ) => {
-      setPuzzle(nextPuzzle);
+      puzzleRef.current = nextPuzzle;
       updateGameState((previous) =>
         previous.update({
           puzzle: nextPuzzle,
@@ -545,7 +546,6 @@ export const GameApp = () => {
   >([]);
   const processingGuessRef = useRef(false);
   const completionInProgressRef = useRef(false);
-  const puzzleRef = useRef<Puzzle | null>(null);
   const heartbeatInFlightRef = useRef(false);
   const communityJoinRecorded = profile?.communityJoinRecorded === true;
   const communityJoinLabel = joiningCommunity
@@ -916,7 +916,7 @@ export const GameApp = () => {
         activeLevelId,
         view
       );
-      setPuzzle(view);
+      puzzleRef.current = view;
       updateGameState((previous) => {
         const previousSelectedTile = previous.selectedTileIndex;
         const nextSelectedTile =
@@ -1933,7 +1933,7 @@ export const GameApp = () => {
         revealedTiles.length > 0
           ? revealedTiles.map((tile) => tile.index)
           : result.revealedIndices;
-      setPuzzle(nextPuzzle);
+      puzzleRef.current = nextPuzzle;
       updateGameState((previous) => {
         const next = new Set<number>(previous.correctGuessIndices);
         for (const index of revealedIndicesForAnimation) {
@@ -2248,18 +2248,18 @@ export const GameApp = () => {
         itemType: item,
         targetIndex: item === 'hammer' || item === 'wand' ? selectedTile : null,
       });
-	      if (!used.success) {
-	        showToast(used.reason ?? 'Powerup failed.');
-	        return;
-	      }
-	      const revealedTiles = Array.isArray(used.revealedTiles) ? used.revealedTiles : [];
-	      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
-	      setProfile(used.profile);
-	      setInventory(used.inventory);
-	      setPuzzle(nextPuzzle);
-	      setChallengeStartTs(
-	        hasChallengeActivity(used.session) ? used.session.startTimestamp : null
-	      );
+      if (!used.success) {
+        showToast(used.reason ?? 'Powerup failed.');
+        return;
+      }
+      const revealedTiles = Array.isArray(used.revealedTiles) ? used.revealedTiles : [];
+      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
+      setProfile(used.profile);
+      setInventory(used.inventory);
+      puzzleRef.current = nextPuzzle;
+      setChallengeStartTs(
+        hasChallengeActivity(used.session) ? used.session.startTimestamp : null
+      );
       updateGameState((previous) => {
         const nextSelectedTile =
           previous.selectedTileIndex === null ||
