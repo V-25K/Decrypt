@@ -188,6 +188,11 @@ import {
   buildRetryDialogState,
   getRetryAction,
 } from './retry-flow';
+import {
+  hasActiveGuessWork,
+  isBusyOrGuessBlocked,
+  isOfferPurchaseBlocked,
+} from './action-guards';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
 
@@ -1011,6 +1016,21 @@ export const GameApp = () => {
       wrongGuessTimeoutsRef.current.delete(tileIndex);
     }, 1000);
     wrongGuessTimeoutsRef.current.set(tileIndex, timeoutId);
+  };
+
+  const readGuessWorkSnapshot = () => ({
+    processingGuess: processingGuessRef.current,
+    guessInFlight,
+    queuedGuessCount,
+  });
+
+  const hasPendingGuessWork = (): boolean =>
+    hasActiveGuessWork(readGuessWorkSnapshot());
+
+  const showFinishGuessesToastIfNeeded = (): void => {
+    if (hasPendingGuessWork()) {
+      showToast('Finish current guesses first.');
+    }
   };
 
   useEffect(() => {
@@ -2033,17 +2053,15 @@ export const GameApp = () => {
       !puzzle ||
       !profile ||
       !inventory ||
-      busy ||
+      isBusyOrGuessBlocked({
+        busy,
+        ...readGuessWorkSnapshot(),
+      }) ||
       isGameOver ||
       isComplete ||
-      completionInProgressRef.current ||
-      processingGuessRef.current ||
-      guessInFlight ||
-      queuedGuessCount > 0
+      completionInProgressRef.current
     ) {
-      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-        showToast('Finish current guesses first.');
-      }
+      showFinishGuessesToastIfNeeded();
       return;
     }
     if (inventory[item] <= 0) {
@@ -2127,10 +2145,8 @@ export const GameApp = () => {
   };
 
   const openBuyDialog = (item: PowerupType) => {
-    if (busy || processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-        showToast('Finish current guesses first.');
-      }
+    if (isBusyOrGuessBlocked({ busy, ...readGuessWorkSnapshot() })) {
+      showFinishGuessesToastIfNeeded();
       return;
     }
     const maxQuantity = maxPurchasableQuantity(item);
@@ -2146,7 +2162,12 @@ export const GameApp = () => {
   };
 
   const handleQuickPowerupTap = (item: PowerupType) => {
-    if (!inventory || busy || guessInFlight || queuedGuessCount > 0 || isGameOver || isComplete) {
+    if (
+      !inventory ||
+      isBusyOrGuessBlocked({ busy, ...readGuessWorkSnapshot() }) ||
+      isGameOver ||
+      isComplete
+    ) {
       return;
     }
     if (inventory[item] > 0) {
@@ -2163,17 +2184,15 @@ export const GameApp = () => {
   const confirmBuy = async () => {
     if (
       !buyDialog ||
-      busy ||
-      processingGuessRef.current ||
-      guessInFlight ||
-      queuedGuessCount > 0 ||
+      isBusyOrGuessBlocked({
+        busy,
+        ...readGuessWorkSnapshot(),
+      }) ||
       !profile ||
       !inventory ||
       !levelId
     ) {
-      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-        showToast('Finish current guesses first.');
-      }
+      showFinishGuessesToastIfNeeded();
       return;
     }
     const max = maxPurchasableQuantity(buyDialog.item);
@@ -2208,10 +2227,8 @@ export const GameApp = () => {
   };
 
   const openRetryDialog = () => {
-    if (busy || processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-        showToast('Finish current guesses first.');
-      }
+    if (isBusyOrGuessBlocked({ busy, ...readGuessWorkSnapshot() })) {
+      showFinishGuessesToastIfNeeded();
       return;
     }
     if (!profile) {
@@ -2234,15 +2251,13 @@ export const GameApp = () => {
 
   const handleProductPurchase = async (sku: string) => {
     if (
-      offerBusy ||
-      busy ||
-      processingGuessRef.current ||
-      guessInFlight ||
-      queuedGuessCount > 0
+      isOfferPurchaseBlocked({
+        offerBusy,
+        busy,
+        ...readGuessWorkSnapshot(),
+      })
     ) {
-      if (processingGuessRef.current || guessInFlight || queuedGuessCount > 0) {
-        showToast('Finish current guesses first.');
-      }
+      showFinishGuessesToastIfNeeded();
       return;
     }
     setOfferBusy(true);
