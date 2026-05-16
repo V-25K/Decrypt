@@ -524,6 +524,13 @@ export const GameApp = () => {
     },
     [updateGameState]
   );
+  const setPuzzleView = useCallback(
+    (nextPuzzle: Puzzle | null) => {
+      setPuzzle(nextPuzzle);
+      updateGameState((previous) => previous.setPuzzle(nextPuzzle));
+    },
+    [updateGameState]
+  );
   const hasClaimableQuest = useMemo(() => {
     if (!questStatus) {
       return false;
@@ -926,7 +933,7 @@ export const GameApp = () => {
 
   const refreshCurrentView = async (activeLevelId: string): Promise<Puzzle> => {
     const view = await trpc.game.getCurrentView.query({ levelId: activeLevelId });
-    setPuzzle(view);
+    setPuzzleView(view);
     restoreCorrectGuessFeedback(activeLevelId, view);
     setSelectedTile((previous) => {
       if (previous === null) {
@@ -1227,7 +1234,7 @@ export const GameApp = () => {
       });
       setMode(nextMode);
       setLevelId(loaded.levelId);
-      setPuzzle(loaded.puzzle);
+      setPuzzleView(loaded.puzzle);
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
       setSelectedTile(null);
@@ -1384,7 +1391,7 @@ export const GameApp = () => {
         });
         setMode('daily');
         setLevelId(loaded.levelId);
-        setPuzzle(loaded.puzzle);
+        setPuzzleView(loaded.puzzle);
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
         setSelectedTile(null);
@@ -1450,7 +1457,7 @@ export const GameApp = () => {
         if (cancelled) {
           return;
         }
-        setPuzzle(view);
+        setPuzzleView(view);
         restoreCorrectGuessFeedback(loaded.levelId, view);
         setSelectedTile(null);
       } catch (error) {
@@ -1957,7 +1964,7 @@ export const GameApp = () => {
         }
         return findNextGuessableTileIndex(nextPuzzle, previous);
       });
-      setPuzzle(nextPuzzle);
+      setPuzzleView(nextPuzzle);
     } else if (result.errorCode !== 'TILE_LOCKED') {
       playSfx('wrong');
       flashWrongTile(tileIndex);
@@ -2260,7 +2267,7 @@ export const GameApp = () => {
 	      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
 	      setProfile(used.profile);
 	      setInventory(used.inventory);
-	      setPuzzle(nextPuzzle);
+	      setPuzzleView(nextPuzzle);
 	      setChallengeStartTs(
 	        hasChallengeActivity(used.session) ? used.session.startTimestamp : null
 	      );
