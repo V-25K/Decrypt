@@ -511,9 +511,17 @@ export const GameApp = () => {
     [updateGameState]
   );
   const setPuzzleView = useCallback(
-    (nextPuzzle: Puzzle | null) => {
+    (
+      nextPuzzle: Puzzle | null,
+      options: { resetSelection?: boolean } = {}
+    ) => {
       setPuzzle(nextPuzzle);
-      updateGameState((previous) => previous.setPuzzle(nextPuzzle));
+      updateGameState((previous) =>
+        previous.update({
+          puzzle: nextPuzzle,
+          ...(options.resetSelection ? { selectedTileIndex: null } : {}),
+        })
+      );
     },
     [updateGameState]
   );
@@ -1129,7 +1137,7 @@ export const GameApp = () => {
     return dispatchable;
   };
 
-  const clearTileFeedback = useCallback(() => {
+  const clearTileFeedback = useCallback((options: { resetSelection?: boolean } = {}) => {
     wrongGuessTimeoutsRef.current.forEach((timeoutId) => {
       window.clearTimeout(timeoutId);
     });
@@ -1138,6 +1146,7 @@ export const GameApp = () => {
       previous.update({
         correctGuessIndices: new Set(),
         wrongGuessIndices: new Set(),
+        ...(options.resetSelection ? { selectedTileIndex: null } : {}),
       })
     );
   }, [updateGameState]);
@@ -1198,8 +1207,7 @@ export const GameApp = () => {
       if (storageUserId) {
         persistOutcomeState(storageUserId, null);
       }
-      setSelectedTile(null);
-      clearTileFeedback();
+      clearTileFeedback({ resetSelection: true });
       return true;
     } catch (error) {
       const message =
@@ -1236,10 +1244,9 @@ export const GameApp = () => {
       });
       setMode(nextMode);
       setLevelId(loaded.levelId);
-      setPuzzleView(loaded.puzzle);
+      setPuzzleView(loaded.puzzle, { resetSelection: true });
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
-      setSelectedTile(null);
 
       if (loaded.alreadyCompleted) {
         const storageUserId = currentUserIdRef.current;
@@ -1393,10 +1400,9 @@ export const GameApp = () => {
         });
         setMode('daily');
         setLevelId(loaded.levelId);
-        setPuzzleView(loaded.puzzle);
+        setPuzzleView(loaded.puzzle, { resetSelection: true });
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
-        setSelectedTile(null);
         const storageUserId = bootstrap.userId;
         const persistedOutcome = readOutcomeState(storageUserId);
         const canRestorePersisted =
@@ -2702,8 +2708,7 @@ export const GameApp = () => {
         persistOutcomeState(storageUserId, null);
       }
       setRetryDialog(null);
-      setSelectedTile(null);
-      clearTileFeedback();
+      clearTileFeedback({ resetSelection: true });
       await refreshCurrentView(levelId);
     } catch (error) {
       const message =
