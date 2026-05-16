@@ -41,6 +41,63 @@ export const isPersistedOutcomeForLevel = (
   levelId: string
 ): outcome is PersistedOutcomeState => outcome !== null && outcome.levelId === levelId;
 
+type BootstrapOutcomeDecisionParams = {
+  persistedOutcome: PersistedOutcomeState | null;
+  levelId: string;
+  requiresPaidRetry: boolean;
+  alreadyCompleted: boolean;
+};
+
+export type BootstrapOutcomeDecision =
+  | {
+      branch: 'restore-persisted';
+      persistedOutcome: PersistedOutcomeState;
+      shouldClearStalePersisted: false;
+    }
+  | {
+      branch: 'show-paid-retry' | 'already-completed' | 'start-session';
+      persistedOutcome: null;
+      shouldClearStalePersisted: boolean;
+    };
+
+export const getBootstrapOutcomeDecision = ({
+  persistedOutcome,
+  levelId,
+  requiresPaidRetry,
+  alreadyCompleted,
+}: BootstrapOutcomeDecisionParams): BootstrapOutcomeDecision => {
+  if (isPersistedOutcomeForLevel(persistedOutcome, levelId)) {
+    return {
+      branch: 'restore-persisted',
+      persistedOutcome,
+      shouldClearStalePersisted: false,
+    };
+  }
+
+  const shouldClearStalePersisted = persistedOutcome !== null;
+  if (requiresPaidRetry && !alreadyCompleted) {
+    return {
+      branch: 'show-paid-retry',
+      persistedOutcome: null,
+      shouldClearStalePersisted,
+    };
+  }
+
+  if (alreadyCompleted) {
+    return {
+      branch: 'already-completed',
+      persistedOutcome: null,
+      shouldClearStalePersisted,
+    };
+  }
+
+  return {
+    branch: 'start-session',
+    persistedOutcome: null,
+    shouldClearStalePersisted,
+  };
+};
+
 export const resolveCompletionSolveSeconds = (
   completion: Pick<CompletionResult, 'solveSeconds'> | null | undefined,
   fallbackSolveSeconds: number | null

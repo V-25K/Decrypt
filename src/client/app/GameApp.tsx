@@ -122,7 +122,7 @@ import {
 import {
   buildPersistedCompleteOutcomeState,
   buildPersistedGameOverOutcomeState,
-  isPersistedOutcomeForLevel,
+  getBootstrapOutcomeDecision,
   resolveCompletionSolveSeconds,
   resolvePersistedOutcomeSolveSeconds,
 } from './outcome-state';
@@ -1262,30 +1262,33 @@ export const GameApp = () => {
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
         const storageUserId = bootstrap.userId;
         const persistedOutcome = readOutcomeState(storageUserId);
-        const canRestorePersisted = isPersistedOutcomeForLevel(
+        const outcomeDecision = getBootstrapOutcomeDecision({
           persistedOutcome,
-          loaded.levelId
-        );
-        if (persistedOutcome && persistedOutcome.levelId !== loaded.levelId) {
+          levelId: loaded.levelId,
+          requiresPaidRetry: loaded.requiresPaidRetry,
+          alreadyCompleted: loaded.alreadyCompleted,
+        });
+        if (outcomeDecision.shouldClearStalePersisted) {
           persistOutcomeState(storageUserId, null);
         }
-        if (canRestorePersisted) {
+        if (outcomeDecision.branch === 'restore-persisted') {
+          const restoredOutcome = outcomeDecision.persistedOutcome;
           patchChallengeSession({
             heartsRemaining: loaded.puzzle.heartsMax,
             isShieldActive: false,
-            isComplete: persistedOutcome.isComplete,
-            isGameOver: persistedOutcome.isGameOver,
+            isComplete: restoredOutcome.isComplete,
+            isGameOver: restoredOutcome.isGameOver,
           });
-          setCompletionResult(persistedOutcome.completion ?? null);
+          setCompletionResult(restoredOutcome.completion ?? null);
           const restoredSolveSeconds =
-            resolvePersistedOutcomeSolveSeconds(persistedOutcome);
+            resolvePersistedOutcomeSolveSeconds(restoredOutcome);
           setCompletionSolveSeconds(
             restoredSolveSeconds ??
               (await loadCompletionSolveSecondsFromDatabase(loaded.levelId))
           );
           setChallengeStartTs(null);
           clearTileFeedback();
-        } else if (loaded.requiresPaidRetry && !loaded.alreadyCompleted) {
+        } else if (outcomeDecision.branch === 'show-paid-retry') {
           patchChallengeSession({
             heartsRemaining: loaded.puzzle.heartsMax,
             isShieldActive: false,
@@ -1300,7 +1303,7 @@ export const GameApp = () => {
             storageUserId,
             buildPersistedGameOverOutcomeState(loaded.levelId)
           );
-        } else if (loaded.alreadyCompleted) {
+        } else if (outcomeDecision.branch === 'already-completed') {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
           patchChallengeSession({
             heartsRemaining: loaded.puzzle.heartsMax,
