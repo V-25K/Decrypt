@@ -120,6 +120,13 @@ import {
   setExpandedScreenIntent,
 } from './game-storage';
 import {
+  buildPersistedCompleteOutcomeState,
+  buildPersistedGameOverOutcomeState,
+  isPersistedOutcomeForLevel,
+  resolveCompletionSolveSeconds,
+  resolvePersistedOutcomeSolveSeconds,
+} from './outcome-state';
+import {
   buildOutcomeCrowdBubbles,
   syncOutcomeCrowdNodePosition,
   type OutcomeCrowdBubble,
@@ -1095,14 +1102,14 @@ export const GameApp = () => {
           await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
         );
         if (storageUserId) {
-          persistOutcomeState(storageUserId, {
-            levelId: loaded.levelId,
-            isComplete: true,
-            isGameOver: false,
-            completion: null,
-            solveSeconds: null,
-            savedAt: Date.now(),
-          });
+          persistOutcomeState(
+            storageUserId,
+            buildPersistedCompleteOutcomeState({
+              levelId: loaded.levelId,
+              completion: null,
+              solveSeconds: null,
+            })
+          );
         }
       } else if (nextMode === 'daily' && loaded.requiresPaidRetry) {
         const storageUserId = currentUserIdRef.current;
@@ -1117,14 +1124,10 @@ export const GameApp = () => {
         setChallengeStartTs(null);
         clearTileFeedback();
         if (storageUserId) {
-          persistOutcomeState(storageUserId, {
-            levelId: loaded.levelId,
-            isComplete: false,
-            isGameOver: true,
-            completion: null,
-            solveSeconds: null,
-            savedAt: Date.now(),
-          });
+          persistOutcomeState(
+            storageUserId,
+            buildPersistedGameOverOutcomeState(loaded.levelId)
+          );
         }
       } else {
         await startLevel(loaded.levelId, nextMode);
@@ -1168,19 +1171,19 @@ export const GameApp = () => {
       setCompletionResult(completed ? result : null);
       const resolvedSolveSeconds =
         completed
-          ? (typeof result.solveSeconds === 'number' ? result.solveSeconds : fallbackSolveSeconds)
+          ? resolveCompletionSolveSeconds(result, fallbackSolveSeconds)
           : null;
       setCompletionSolveSeconds(resolvedSolveSeconds);
       if (completed) {
         if (storageUserId) {
-          persistOutcomeState(storageUserId, {
-            levelId: activeLevelId,
-            isComplete: true,
-            isGameOver: false,
-            completion: result,
-            solveSeconds: resolvedSolveSeconds,
-            savedAt: Date.now(),
-          });
+          persistOutcomeState(
+            storageUserId,
+            buildPersistedCompleteOutcomeState({
+              levelId: activeLevelId,
+              completion: result,
+              solveSeconds: resolvedSolveSeconds,
+            })
+          );
         }
       } else {
         if (storageUserId) {
@@ -1240,12 +1243,14 @@ export const GameApp = () => {
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
         const storageUserId = bootstrap.userId;
         const persistedOutcome = readOutcomeState(storageUserId);
-        const canRestorePersisted =
-          persistedOutcome !== null && persistedOutcome.levelId === loaded.levelId;
+        const canRestorePersisted = isPersistedOutcomeForLevel(
+          persistedOutcome,
+          loaded.levelId
+        );
         if (persistedOutcome && persistedOutcome.levelId !== loaded.levelId) {
           persistOutcomeState(storageUserId, null);
         }
-        if (canRestorePersisted && persistedOutcome) {
+        if (canRestorePersisted) {
           patchChallengeSession({
             heartsRemaining: loaded.puzzle.heartsMax,
             isShieldActive: false,
@@ -1254,10 +1259,7 @@ export const GameApp = () => {
           });
           setCompletionResult(persistedOutcome.completion ?? null);
           const restoredSolveSeconds =
-            persistedOutcome.solveSeconds ??
-            (typeof persistedOutcome.completion?.solveSeconds === 'number'
-              ? persistedOutcome.completion.solveSeconds
-              : null);
+            resolvePersistedOutcomeSolveSeconds(persistedOutcome);
           setCompletionSolveSeconds(
             restoredSolveSeconds ??
               (await loadCompletionSolveSecondsFromDatabase(loaded.levelId))
@@ -1275,14 +1277,10 @@ export const GameApp = () => {
           setCompletionSolveSeconds(null);
           setChallengeStartTs(null);
           clearTileFeedback();
-          persistOutcomeState(storageUserId, {
-            levelId: loaded.levelId,
-            isComplete: false,
-            isGameOver: true,
-            completion: null,
-            solveSeconds: null,
-            savedAt: Date.now(),
-          });
+          persistOutcomeState(
+            storageUserId,
+            buildPersistedGameOverOutcomeState(loaded.levelId)
+          );
         } else if (loaded.alreadyCompleted) {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
           patchChallengeSession({
@@ -1815,14 +1813,10 @@ export const GameApp = () => {
         await refreshBootstrapState();
         const storageUserId = currentUserIdRef.current;
         if (storageUserId) {
-          persistOutcomeState(storageUserId, {
-            levelId,
-            isComplete: false,
-            isGameOver: true,
-            completion: null,
-            solveSeconds: null,
-            savedAt: Date.now(),
-          });
+          persistOutcomeState(
+            storageUserId,
+            buildPersistedGameOverOutcomeState(levelId)
+          );
         }
     } else {
       if (viewPromise) {
