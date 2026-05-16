@@ -498,20 +498,6 @@ export const GameApp = () => {
     },
     [updateGameState]
   );
-  const setCorrectGuessTileIndices = useCallback(
-    (value: SetStateAction<ReadonlySet<number>>) => {
-      updateGameState((previous) =>
-        previous.setCorrectGuessIndices(
-          new Set(
-            typeof value === 'function'
-              ? value(previous.correctGuessIndices)
-              : value
-          )
-        )
-      );
-    },
-    [updateGameState]
-  );
   const setWrongGuessTileIndices = useCallback(
     (value: SetStateAction<ReadonlySet<number>>) => {
       updateGameState((previous) =>
@@ -908,43 +894,59 @@ export const GameApp = () => {
     }
   }, []);
 
-  const restoreCorrectGuessFeedback = useCallback(
-      (activeLevelId: string, view: Puzzle) => {
+  const readRestoredCorrectGuessFeedback = useCallback(
+    (activeLevelId: string, view: Puzzle): Set<number> => {
       const storageUserId = currentUserIdRef.current;
       if (!storageUserId) {
-        setCorrectGuessTileIndices(new Set());
-        return;
+        return new Set();
       }
       const storedIndices = readCorrectGuessIndices(storageUserId, activeLevelId);
       if (storedIndices.length === 0) {
-        setCorrectGuessTileIndices(new Set());
-        return;
+        return new Set();
       }
       const validIndices = storedIndices.filter((index) => {
         const tile = view.tiles[index];
         return Boolean(tile && tile.isLetter && tile.displayChar !== '_');
       });
       const restored = new Set(validIndices);
-      setCorrectGuessTileIndices(restored);
       persistCorrectGuessIndices(storageUserId, activeLevelId, restored);
+      return restored;
     },
-    [setCorrectGuessTileIndices]
+    []
+  );
+
+  const applyServerPuzzleView = useCallback(
+    (
+      activeLevelId: string,
+      view: Puzzle,
+      options: { resetSelection?: boolean } = {}
+    ) => {
+      const restoredCorrectGuessIndices = readRestoredCorrectGuessFeedback(
+        activeLevelId,
+        view
+      );
+      setPuzzle(view);
+      updateGameState((previous) => {
+        const previousSelectedTile = previous.selectedTileIndex;
+        const nextSelectedTile =
+          options.resetSelection || previousSelectedTile === null
+            ? null
+            : isGuessableTileAtIndex(view, previousSelectedTile)
+              ? previousSelectedTile
+              : null;
+        return previous.update({
+          puzzle: view,
+          correctGuessIndices: restoredCorrectGuessIndices,
+          selectedTileIndex: nextSelectedTile,
+        });
+      });
+    },
+    [readRestoredCorrectGuessFeedback, updateGameState]
   );
 
   const refreshCurrentView = async (activeLevelId: string): Promise<Puzzle> => {
     const view = await trpc.game.getCurrentView.query({ levelId: activeLevelId });
-    setPuzzleView(view);
-    restoreCorrectGuessFeedback(activeLevelId, view);
-    setSelectedTile((previous) => {
-      if (previous === null) {
-        return null;
-      }
-      const tile = view.tiles[previous];
-      if (!tile || !tile.isLetter || tile.displayChar !== '_' || tile.isLocked) {
-        return null;
-      }
-      return previous;
-    });
+    applyServerPuzzleView(activeLevelId, view);
     return view;
   };
 
@@ -1457,9 +1459,7 @@ export const GameApp = () => {
         if (cancelled) {
           return;
         }
-        setPuzzleView(view);
-        restoreCorrectGuessFeedback(loaded.levelId, view);
-        setSelectedTile(null);
+        applyServerPuzzleView(loaded.levelId, view, { resetSelection: true });
       } catch (error) {
         if (!cancelled) {
           setBootstrapError(
@@ -1488,7 +1488,7 @@ export const GameApp = () => {
     loadFeaturedOffer,
     loadQuestStatus,
     refreshBootstrapState,
-    restoreCorrectGuessFeedback,
+    applyServerPuzzleView,
     startLevel,
     bootstrapAttempt,
   ]);
