@@ -32,6 +32,7 @@ import {
   getChallengeBackgroundAsset,
   getStableChallengeBackgroundIndex,
 } from './challenge-backgrounds';
+import { getAppViewState } from './app-view-state';
 import {
   buildActiveChallengeSessionPatch,
   buildCompleteChallengeSessionPatch,
@@ -2776,23 +2777,29 @@ export const GameApp = () => {
     : 'w-[clamp(18px,5vw,24px)]';
   const punctuationTileMinWidthClass = isInlineMode ? 'min-w-[2px]' : 'min-w-[4px]';
   const featuredOfferView = getFeaturedOfferView(featuredOffer);
-  const layoutTestId = isInlineMode ? 'layout-inline' : 'layout-expanded-stacked';
-  const isHomeScreen = activeScreen === 'home';
-  const isShopScreen = activeScreen === 'shop';
-  const isQuestScreen = activeScreen === 'quest';
-  const isStatsScreen = activeScreen === 'stats';
-  const isLeaderboardScreen = activeScreen === 'leaderboard';
-  const isHubScreen =
-    isHomeScreen ||
-    isShopScreen ||
-    isQuestScreen ||
-    isStatsScreen ||
-    isLeaderboardScreen;
-  const showOutcomeOverlay = isChallengeScreen && (isGameOver || isComplete);
-  const showChallengeBackdrop = isChallengeScreen && !showOutcomeOverlay;
-  const showSuccessOverlay = isComplete;
-  const isDailyComplete = mode === 'daily' && isComplete;
-  const showPaidDailyRetryCta = mode === 'daily' && isGameOver && requiresPaidRetry;
+  const appViewState = getAppViewState({
+    activeScreen,
+    isChallengeScreen,
+    isComplete,
+    isGameOver,
+    isInlineMode,
+    mode,
+    requiresPaidRetry,
+  });
+  const {
+    layoutTestId,
+    isHomeScreen,
+    isShopScreen,
+    isQuestScreen,
+    isStatsScreen,
+    isLeaderboardScreen,
+    isHubScreen,
+    showOutcomeOverlay,
+    showChallengeBackdrop,
+    showSuccessOverlay,
+    isDailyComplete,
+    showPaidDailyRetryCta,
+  } = appViewState;
   const heartState = getHeartState({
     hearts: profile.hearts,
     infiniteHeartsExpiryTs: profile.infiniteHeartsExpiryTs,
