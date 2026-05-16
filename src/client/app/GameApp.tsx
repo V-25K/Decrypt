@@ -155,6 +155,11 @@ import {
   setPuzzleViewInGameState,
   setSelectedTileInGameState,
 } from './game-state-actions';
+import {
+  buildDispatchableGuessChunk,
+  filterGuessQueueForLevel,
+  type GuessQueueEntry,
+} from './guess-queue';
 import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
@@ -554,9 +559,7 @@ export const GameApp = () => {
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const wrongGuessTimeoutsRef = useRef<Map<number, number>>(new Map());
   const currentUserIdRef = useRef<string | null>(null);
-  const guessQueueRef = useRef<
-    Array<{ levelId: string; tileIndex: number; letter: string }>
-  >([]);
+  const guessQueueRef = useRef<GuessQueueEntry[]>([]);
   const processingGuessRef = useRef(false);
   const completionInProgressRef = useRef(false);
   const heartbeatInFlightRef = useRef(false);
@@ -1026,40 +1029,6 @@ export const GameApp = () => {
     },
     [isShieldActive, puzzle, tokens]
   );
-
-  const buildDispatchableChunk = (
-    entries: Array<{ levelId: string; tileIndex: number; letter: string }>,
-    currentPuzzle: Puzzle | null
-  ): Array<{ levelId: string; tileIndex: number; letter: string }> => {
-    if (!currentPuzzle || entries.length === 0) {
-      return [];
-    }
-    const dispatchable: Array<{ levelId: string; tileIndex: number; letter: string }> = [];
-    const seenTileIndices = new Set<number>();
-    const seenCipherNumbers = new Set<number>();
-    for (const entry of entries) {
-      if (seenTileIndices.has(entry.tileIndex)) {
-        continue;
-      }
-      if (!isGuessableTileAtIndex(currentPuzzle, entry.tileIndex)) {
-        continue;
-      }
-      const tile = currentPuzzle.tiles[entry.tileIndex];
-      const cipherNumber = tile?.cipherNumber;
-      if (
-        typeof cipherNumber === 'number' &&
-        seenCipherNumbers.has(cipherNumber)
-      ) {
-        continue;
-      }
-      dispatchable.push(entry);
-      seenTileIndices.add(entry.tileIndex);
-      if (typeof cipherNumber === 'number') {
-        seenCipherNumbers.add(cipherNumber);
-      }
-    }
-    return dispatchable;
-  };
 
   const clearTileFeedback = useCallback((options: { resetSelection?: boolean } = {}) => {
     wrongGuessTimeoutsRef.current.forEach((timeoutId) => {
@@ -2006,7 +1975,7 @@ export const GameApp = () => {
         if (batch.length === 0) {
           continue;
         }
-        const filtered = batch.filter((entry) => entry.levelId === levelId);
+        const filtered = filterGuessQueueForLevel(batch, levelId);
         if (filtered.length === 0) {
           continue;
         }
@@ -2036,7 +2005,7 @@ export const GameApp = () => {
         }
         for (let offset = 0; offset < filtered.length; offset += 20) {
           const chunk = filtered.slice(offset, offset + 20);
-          const dispatchableChunk = buildDispatchableChunk(chunk, optimisticPuzzle);
+          const dispatchableChunk = buildDispatchableGuessChunk(chunk, optimisticPuzzle);
           if (dispatchableChunk.length === 0) {
             continue;
           }
