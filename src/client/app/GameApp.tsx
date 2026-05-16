@@ -160,6 +160,11 @@ import {
   filterGuessQueueForLevel,
   type GuessQueueEntry,
 } from './guess-queue';
+import {
+  applyRevealedTiles,
+  countRemainingLetters,
+  hasAvailableLetters,
+} from './puzzle-view';
 import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
@@ -931,61 +936,15 @@ export const GameApp = () => {
     return view;
   };
 
-  const applyRevealedTiles = (
-    currentPuzzle: Puzzle | null,
-    revealedTiles: { index: number; letter: string }[]
-  ): Puzzle | null => {
-    if (!currentPuzzle || revealedTiles.length === 0) {
-      return currentPuzzle;
-    }
-    const revealMap = new Map<number, string>();
-    for (const tile of revealedTiles) {
-      revealMap.set(tile.index, tile.letter);
-    }
-    const nextTiles = currentPuzzle.tiles.map((tile) => {
-      const letter = revealMap.get(tile.index);
-      if (!letter) {
-        return tile;
-      }
-      return {
-        ...tile,
-        displayChar: letter,
-        isSessionRevealed: true,
-      };
-    });
-    return { ...currentPuzzle, tiles: nextTiles };
-  };
-
-  const hasAvailableLetters = (currentPuzzle: Puzzle | null): boolean => {
-    if (!currentPuzzle) {
-      return false;
-    }
-    return currentPuzzle.tiles.some(
-      (tile) => tile.isLetter && tile.displayChar === '_' && !tile.isLocked
-    );
-  };
-
-  const getCurrentRemainingLetters = useCallback(
-    (currentPuzzle: Puzzle | null): number => {
-      if (!currentPuzzle) {
-        return 10;
-      }
-      return currentPuzzle.tiles.filter(
-        (tile) => tile.isLetter && tile.displayChar === '_'
-      ).length;
-    },
-    []
-  );
-
   const getCurrentPowerupUnitPrice = useCallback(
     (item: PowerupType, currentPuzzle: Puzzle | null): number => {
       const pricingContext = {
-        remainingLetters: getCurrentRemainingLetters(currentPuzzle),
+        remainingLetters: countRemainingLetters(currentPuzzle),
         ...(currentPuzzle ? { difficulty: currentPuzzle.difficulty } : {}),
       };
       return getPowerupPrice(item, pricingContext);
     },
-    [getCurrentRemainingLetters]
+    []
   );
 
   const getPowerupValidity = useCallback(
@@ -2758,7 +2717,7 @@ export const GameApp = () => {
   const buyDialogUnitPrice = buyDialog
     ? getCurrentPowerupUnitPrice(buyDialog.item, puzzle)
     : 0;
-  const buyDialogRemainingLetters = getCurrentRemainingLetters(puzzle);
+  const buyDialogRemainingLetters = countRemainingLetters(puzzle);
   const buyDialogPowerupValidity = buyDialog
     ? getPowerupValidity(buyDialog.item)
     : { valid: true, reason: null };
