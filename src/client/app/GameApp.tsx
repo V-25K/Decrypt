@@ -10,7 +10,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type SetStateAction,
 } from 'react';
 import {
   getWebViewMode,
@@ -488,25 +487,9 @@ export const GameApp = () => {
     },
     []
   );
-  const setSelectedTile = useCallback(
-    (value: SetStateAction<number | null>) => {
-      updateGameState((previous) =>
-        previous.setSelectedTileIndex(
-          typeof value === 'function' ? value(previous.selectedTileIndex) : value
-        )
-      );
-    },
-    [updateGameState]
-  );
-  const setWrongGuessTileIndices = useCallback(
-    (value: SetStateAction<ReadonlySet<number>>) => {
-      updateGameState((previous) =>
-        previous.setWrongGuessIndices(
-          new Set(
-            typeof value === 'function' ? value(previous.wrongGuessIndices) : value
-          )
-        )
-      );
+  const setSelectedTileIndex = useCallback(
+    (tileIndex: number | null) => {
+      updateGameState((previous) => previous.setSelectedTileIndex(tileIndex));
     },
     [updateGameState]
   );
@@ -1152,20 +1135,20 @@ export const GameApp = () => {
   }, [updateGameState]);
 
   const flashWrongTile = (tileIndex: number) => {
-    setWrongGuessTileIndices((previous) => {
-      const next = new Set(previous);
+    updateGameState((previous) => {
+      const next = new Set(previous.wrongGuessIndices);
       next.add(tileIndex);
-      return next;
+      return previous.setWrongGuessIndices(next);
     });
     const existingTimeout = wrongGuessTimeoutsRef.current.get(tileIndex);
     if (existingTimeout !== undefined) {
       window.clearTimeout(existingTimeout);
     }
     const timeoutId = window.setTimeout(() => {
-      setWrongGuessTileIndices((previous) => {
-        const next = new Set(previous);
+      updateGameState((previous) => {
+        const next = new Set(previous.wrongGuessIndices);
         next.delete(tileIndex);
-        return next;
+        return previous.setWrongGuessIndices(next);
       });
       wrongGuessTimeoutsRef.current.delete(tileIndex);
     }, 1000);
@@ -3169,7 +3152,7 @@ export const GameApp = () => {
     if (nextTileIndex === null) {
       return;
     }
-    setSelectedTile(nextTileIndex);
+    setSelectedTileIndex(nextTileIndex);
     focusInlineInputProxy();
   };
 
@@ -3205,7 +3188,7 @@ export const GameApp = () => {
     }
 
     if (selectedTile === null) {
-      setSelectedTile(
+      setSelectedTileIndex(
         key === 'ArrowLeft' || key === 'ArrowUp'
           ? (puzzleNavigableTileIndices[puzzleNavigableTileIndices.length - 1] ?? null)
           : (puzzleNavigableTileIndices[0] ?? null)
@@ -3221,7 +3204,7 @@ export const GameApp = () => {
         selectedTile,
         key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1
       );
-      setSelectedTile(
+      setSelectedTileIndex(
         fallbackTileIndex ??
           (key === 'ArrowLeft' || key === 'ArrowUp'
             ? (puzzleNavigableTileIndices[puzzleNavigableTileIndices.length - 1] ?? null)
@@ -3253,7 +3236,7 @@ export const GameApp = () => {
     if (nextTileIndex === undefined) {
       return true;
     }
-    setSelectedTile(nextTileIndex);
+    setSelectedTileIndex(nextTileIndex);
     focusInlineInputProxy();
     return true;
   };
