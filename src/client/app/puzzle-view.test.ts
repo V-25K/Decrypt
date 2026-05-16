@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyRevealedTiles,
+  buildCompletionQuote,
   countRemainingLetters,
   hasAvailableLetters,
 } from './puzzle-view';
@@ -24,6 +25,7 @@ const puzzle = (tiles: PuzzlePublicTile[]): Puzzle => ({
   levelId: 'daily-1',
   quote: 'ABC',
   normalizedQuote: 'ABC',
+  words: ['ABC'],
   tiles,
   heartsMax: 3,
   difficulty: 2,
@@ -83,5 +85,29 @@ describe('puzzle-view helpers', () => {
         ])
       )
     ).toBe(1);
+  });
+
+  it('rebuilds the completion quote from solved words and punctuation tiles', () => {
+    expect(
+      buildCompletionQuote({
+        ...puzzle([
+          tile(0, { displayChar: '_' }),
+          tile(1, { displayChar: '_' }),
+          tile(2, { isLetter: false, displayChar: ' ' }),
+          tile(3, { displayChar: '_' }),
+          tile(4, { isLetter: false, displayChar: '!' }),
+        ]),
+        words: ['HI', 'A'],
+      })
+    ).toBe('HI A!');
+  });
+
+  it('falls back to solved words when tiles cannot rebuild visible text', () => {
+    expect(
+      buildCompletionQuote({
+        ...puzzle([]),
+        words: ['FALL', 'BACK'],
+      })
+    ).toBe('FALL BACK');
   });
 });

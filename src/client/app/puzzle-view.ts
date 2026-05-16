@@ -47,3 +47,19 @@ export const countRemainingLetters = (puzzle: Puzzle | null): number => {
     (tile) => tile.isLetter && tile.displayChar === '_'
   ).length;
 };
+
+export const buildCompletionQuote = (puzzle: Puzzle): string => {
+  const solvedLetters = puzzle.words.join('');
+  let letterCursor = 0;
+  const rebuilt = puzzle.tiles
+    .map((tile) => {
+      if (!tile.isLetter) {
+        return tile.displayChar;
+      }
+      const nextLetter = solvedLetters.charAt(letterCursor);
+      letterCursor += 1;
+      return nextLetter || tile.displayChar;
+    })
+    .join('');
+  return rebuilt.trim().length > 0 ? rebuilt : puzzle.words.join(' ');
+};

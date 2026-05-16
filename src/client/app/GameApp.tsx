@@ -183,6 +183,7 @@ import {
 } from './guess-result';
 import {
   applyRevealedTiles,
+  buildCompletionQuote,
   countRemainingLetters,
   hasAvailableLetters,
 } from './puzzle-view';
@@ -2830,21 +2831,7 @@ export const GameApp = () => {
     heartPurchaseBusy,
     heartsNotFull,
   });
-  const completionQuote = (() => {
-    const solvedLetters = puzzle.words.join('');
-    let letterCursor = 0;
-    const rebuilt = puzzle.tiles
-      .map((tile) => {
-        if (!tile.isLetter) {
-          return tile.displayChar;
-        }
-        const nextLetter = solvedLetters.charAt(letterCursor);
-        letterCursor += 1;
-        return nextLetter || tile.displayChar;
-      })
-      .join('');
-    return rebuilt.trim().length > 0 ? rebuilt : puzzle.words.join(' ');
-  })();
+  const completionQuote = buildCompletionQuote(puzzle);
   const outcomeTitle = isComplete ? 'Challenge Completed' : 'Challenge Failed';
   const outcomeSubtitle = isComplete
     ? completionResult?.rewardNotice ?? ''
