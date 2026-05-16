@@ -1944,8 +1944,9 @@ export const GameApp = () => {
         revealedTiles.length > 0
           ? revealedTiles.map((tile) => tile.index)
           : result.revealedIndices;
-      setCorrectGuessTileIndices((previous) => {
-        const next = new Set(previous);
+      setPuzzle(nextPuzzle);
+      updateGameState((previous) => {
+        const next = new Set<number>(previous.correctGuessIndices);
         for (const index of revealedIndicesForAnimation) {
           next.add(index);
         }
@@ -1953,18 +1954,17 @@ export const GameApp = () => {
         if (storageUserId) {
           persistCorrectGuessIndices(storageUserId, levelId, next);
         }
-        return next;
+        const nextSelectedTile =
+          previous.selectedTileIndex === null ||
+          isGuessableTileAtIndex(nextPuzzle, previous.selectedTileIndex)
+            ? previous.selectedTileIndex
+            : findNextGuessableTileIndex(nextPuzzle, previous.selectedTileIndex);
+        return previous.update({
+          puzzle: nextPuzzle,
+          correctGuessIndices: next,
+          selectedTileIndex: nextSelectedTile,
+        });
       });
-      setSelectedTile((previous) => {
-        if (previous === null) {
-          return previous;
-        }
-        if (isGuessableTileAtIndex(nextPuzzle, previous)) {
-          return previous;
-        }
-        return findNextGuessableTileIndex(nextPuzzle, previous);
-      });
-      setPuzzleView(nextPuzzle);
     } else if (result.errorCode !== 'TILE_LOCKED') {
       playSfx('wrong');
       flashWrongTile(tileIndex);
@@ -2267,18 +2267,20 @@ export const GameApp = () => {
 	      const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
 	      setProfile(used.profile);
 	      setInventory(used.inventory);
-	      setPuzzleView(nextPuzzle);
+	      setPuzzle(nextPuzzle);
 	      setChallengeStartTs(
 	        hasChallengeActivity(used.session) ? used.session.startTimestamp : null
 	      );
-	      setSelectedTile((previous) => {
-	        if (previous === null) {
-	          return previous;
-        }
-        if (isGuessableTileAtIndex(nextPuzzle, previous)) {
-          return previous;
-        }
-        return findNextGuessableTileIndex(nextPuzzle, previous);
+      updateGameState((previous) => {
+        const nextSelectedTile =
+          previous.selectedTileIndex === null ||
+          isGuessableTileAtIndex(nextPuzzle, previous.selectedTileIndex)
+            ? previous.selectedTileIndex
+            : findNextGuessableTileIndex(nextPuzzle, previous.selectedTileIndex);
+        return previous.update({
+          puzzle: nextPuzzle,
+          selectedTileIndex: nextSelectedTile,
+        });
       });
       setIsShieldActive(used.session.shieldIsActive);
       if (item === 'shield') {
