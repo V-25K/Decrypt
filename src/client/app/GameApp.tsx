@@ -184,6 +184,10 @@ import {
   pickPromotedOffer,
   toPurchaseErrorMessage,
 } from './purchase-flow';
+import {
+  buildRetryDialogState,
+  getRetryAction,
+} from './retry-flow';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
 
@@ -388,11 +392,6 @@ const defaultChallengeMetrics: ChallengeMetrics = {
   plays: 0,
   wins: 0,
   winRatePct: 0,
-};
-
-const formatRetryPenaltyLabel = (factor: number): string => {
-  const penaltyPct = Math.max(0, Math.round((1 - factor) * 100));
-  return penaltyPct <= 0 ? 'No penalty' : `-${penaltyPct}% score`;
 };
 
 const escapeSvgText = (value: string): string =>
@@ -2218,23 +2217,19 @@ export const GameApp = () => {
     if (!profile) {
       return;
     }
-    if (nextDailyRetryCost < 1) {
+    const nextDialog = buildRetryDialogState({
+      coins: profile.coins,
+      nextDailyRetryCost,
+      nextDailyRetryScoreFactor,
+      dailyRetryCount,
+      puzzleDifficulty: puzzle?.difficulty,
+      difficultyLabel: formatDifficultyLabel(puzzle?.difficulty),
+    });
+    if (!nextDialog) {
       showToast('Retry is unavailable right now.');
       return;
     }
-    const followUpRetryQuote = getDailyRetryQuote({
-      retryCount: dailyRetryCount + 1,
-      difficulty: puzzle?.difficulty,
-    });
-    setRetryDialog({
-      cost: nextDailyRetryCost,
-      penaltyLabel: formatRetryPenaltyLabel(nextDailyRetryScoreFactor),
-      nextPenaltyLabel: formatRetryPenaltyLabel(followUpRetryQuote.nextRetryScoreFactor),
-      nextCost: followUpRetryQuote.nextRetryCost,
-      coins: profile.coins,
-      difficulty: puzzle?.difficulty || 5,
-      difficultyLabel: formatDifficultyLabel(puzzle?.difficulty),
-    });
+    setRetryDialog(nextDialog);
   };
 
   const handleProductPurchase = async (sku: string) => {
@@ -2595,19 +2590,23 @@ export const GameApp = () => {
   };
 
   const retry = async () => {
-    if (!levelId) {
+    const action = getRetryAction({
+      levelId,
+      mode,
+      isGameOver,
+      requiresPaidRetry,
+      hasInfiniteHearts,
+      currentLives,
+    });
+    if (action === 'none') {
       return;
     }
-    if (mode === 'daily' && isGameOver && requiresPaidRetry) {
-      if (!hasInfiniteHearts && currentLives <= 0) {
-        setHeartPurchaseDialogOpen(true);
-      } else {
-        openRetryDialog();
-      }
-      return;
-    }
-    if (!hasInfiniteHearts && currentLives <= 0) {
+    if (action === 'open-heart-purchase') {
       setHeartPurchaseDialogOpen(true);
+      return;
+    }
+    if (action === 'open-paid-daily-retry') {
+      openRetryDialog();
       return;
     }
     setBusy(true);
