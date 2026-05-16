@@ -161,6 +161,14 @@ import {
   type GuessQueueEntry,
 } from './guess-queue';
 import {
+  buildGuessSessionPatch,
+  getRevealedIndicesForAnimation,
+  getRevealedTilesFromGuessResult,
+  isLockedGuessResult,
+  removePendingGuessEntries,
+  shouldRefreshPuzzleViewAfterGuess,
+} from './guess-result';
+import {
   applyRevealedTiles,
   countRemainingLetters,
   hasAvailableLetters,
@@ -1774,33 +1782,21 @@ export const GameApp = () => {
         ? result.sessionStartTimestamp
         : null
     );
-    setPendingGuessByTile((previous) => {
-      if (previous.size === 0) {
-        return previous;
-      }
-      const next = new Map(previous);
-      next.delete(tileIndex);
-      if (Array.isArray(result.revealedTiles)) {
-        for (const tile of result.revealedTiles) {
-          next.delete(tile.index);
-        }
-      }
-      return next;
-    });
-    if (result.errorCode === 'TILE_LOCKED') {
+    const revealedTiles = getRevealedTilesFromGuessResult(result);
+    setPendingGuessByTile((previous) =>
+      removePendingGuessEntries(previous, tileIndex, revealedTiles)
+    );
+    if (isLockedGuessResult(result)) {
       showToast('This tile is still locked.');
     }
     let nextPuzzle = puzzleSnapshot;
     if (result.isCorrect) {
       playSfx('correct');
-      const revealedTiles = Array.isArray(result.revealedTiles)
-        ? result.revealedTiles
-        : [];
       nextPuzzle = applyRevealedTiles(nextPuzzle, revealedTiles);
-      const revealedIndicesForAnimation =
-        revealedTiles.length > 0
-          ? revealedTiles.map((tile) => tile.index)
-          : result.revealedIndices;
+      const revealedIndicesForAnimation = getRevealedIndicesForAnimation(
+        result,
+        revealedTiles
+      );
       puzzleRef.current = nextPuzzle;
       updateGameState((previous) => {
         const next = new Set<number>(previous.correctGuessIndices);
@@ -1817,22 +1813,12 @@ export const GameApp = () => {
           selectedTileIndex: retainOrAdvanceSelectedTileIndex(previous, nextPuzzle),
         });
       });
-    } else if (result.errorCode !== 'TILE_LOCKED') {
+    } else if (!isLockedGuessResult(result)) {
       playSfx('wrong');
       flashWrongTile(tileIndex);
     }
-    const guessSessionChanges: Partial<ChallengeSessionState> = {
-      heartsRemaining: result.heartsRemaining,
-    };
-    if (result.shieldConsumed) {
-      guessSessionChanges.isShieldActive = false;
-    }
-    if (!result.isLevelComplete && result.isGameOver) {
-      guessSessionChanges.isGameOver = true;
-    }
-    patchChallengeSession(guessSessionChanges);
-    const shouldRefresh =
-      result.newlyUnlockedChainIds.length > 0 || result.lockProgressChanged;
+    patchChallengeSession(buildGuessSessionPatch(result));
+    const shouldRefresh = shouldRefreshPuzzleViewAfterGuess(result);
     const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
     if (result.newlyUnlockedChainIds.length > 0) {
       showToast('Locks unlocked.');
@@ -2120,7 +2106,7 @@ export const GameApp = () => {
         showToast(used.reason ?? 'Powerup failed.');
         return;
       }
-      const revealedTiles = Array.isArray(used.revealedTiles) ? used.revealedTiles : [];
+      const revealedTiles = getRevealedTilesFromGuessResult(used);
       const nextPuzzle = applyRevealedTiles(puzzle, revealedTiles);
       setProfile(used.profile);
       setInventory(used.inventory);
@@ -2138,8 +2124,7 @@ export const GameApp = () => {
       if (item === 'shield') {
         showToast('Shield active for next mistake.');
       }
-      const shouldRefresh =
-        used.newlyUnlockedChainIds.length > 0 || used.lockProgressChanged;
+      const shouldRefresh = shouldRefreshPuzzleViewAfterGuess(used);
       const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
       if (viewPromise) {
         const view = await viewPromise;
