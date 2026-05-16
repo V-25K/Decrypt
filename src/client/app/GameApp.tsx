@@ -14,7 +14,6 @@ import {
 } from 'react';
 import {
   getWebViewMode,
-  OrderResultStatus,
   purchase,
   requestExpandedMode,
   showToast,
@@ -31,7 +30,6 @@ import {
 } from '../utils';
 import {
   getOfferPromotionLabel,
-  promotedOfferPrioritySkus,
 } from '../../shared/store';
 import {
   getChallengeBackgroundAsset,
@@ -174,6 +172,11 @@ import {
   hasAvailableLetters,
 } from './puzzle-view';
 import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
+import {
+  isSuccessfulOrderStatus,
+  pickPromotedOffer,
+  toPurchaseErrorMessage,
+} from './purchase-flow';
 import { trpc } from '../trpc';
 import { ImmutableGameState } from './ImmutableGameState';
 
@@ -239,28 +242,8 @@ const LazyLeaderboardScreen = lazy(() =>
   }))
 );
 
-const pickPromotedOffer = (products: StoreProduct[]): StoreProduct | null => {
-  for (const sku of promotedOfferPrioritySkus) {
-    const match = products.find((entry) => entry.sku === sku);
-    if (match) {
-      return match;
-    }
-  }
-  return null;
-};
-
-const isSuccessfulOrderStatus = (status: unknown): boolean =>
-  status === OrderResultStatus.STATUS_SUCCESS;
-
 const canUseCanvasConfetti = (): boolean =>
   typeof navigator === 'undefined' || !/jsdom/i.test(navigator.userAgent);
-
-const toPurchaseErrorMessage = (errorMessage: string | null | undefined): string => {
-  if (typeof errorMessage === 'string' && /order not placed/i.test(errorMessage)) {
-    return 'Unable to place your order right now. Please try again.';
-  }
-  return errorMessage ?? 'Purchase canceled.';
-};
 
 const scheduleNonCriticalWarmup = (
   task: () => void,
