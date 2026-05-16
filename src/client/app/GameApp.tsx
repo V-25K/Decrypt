@@ -38,6 +38,11 @@ import {
   getStableChallengeBackgroundIndex,
 } from './challenge-backgrounds';
 import {
+  challengeSessionReducer,
+  initialChallengeSessionState,
+  type ChallengeSessionState,
+} from './challenge-session-state';
+import {
   getQuestProgressValue,
 } from '../../shared/quests';
 import {
@@ -144,50 +149,6 @@ import { ImmutableGameState } from './ImmutableGameState';
 
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
-type ChallengeMode = 'daily' | 'endless';
-type ChallengeSessionState = {
-  levelId: string;
-  mode: ChallengeMode;
-  heartsRemaining: number;
-  isShieldActive: boolean;
-  isGameOver: boolean;
-  isComplete: boolean;
-};
-type ChallengeSessionAction = { type: 'patch'; changes: Partial<ChallengeSessionState> };
-
-const initialChallengeSessionState: ChallengeSessionState = {
-  levelId: '',
-  mode: 'daily',
-  heartsRemaining: 3,
-  isShieldActive: false,
-  isGameOver: false,
-  isComplete: false,
-};
-
-const normalizeChallengeSessionState = (
-  state: ChallengeSessionState
-): ChallengeSessionState =>
-  state.isComplete && state.isGameOver ? { ...state, isGameOver: false } : state;
-
-const areChallengeSessionStatesEqual = (
-  a: ChallengeSessionState,
-  b: ChallengeSessionState
-): boolean =>
-  a.levelId === b.levelId &&
-  a.mode === b.mode &&
-  a.heartsRemaining === b.heartsRemaining &&
-  a.isShieldActive === b.isShieldActive &&
-  a.isGameOver === b.isGameOver &&
-  a.isComplete === b.isComplete;
-
-const challengeSessionReducer = (
-  state: ChallengeSessionState,
-  action: ChallengeSessionAction
-): ChallengeSessionState => {
-  const next = normalizeChallengeSessionState({ ...state, ...action.changes });
-  return areChallengeSessionStatesEqual(state, next) ? state : next;
-};
-
 const criticalUiImageAssets = [
   getChallengeBackgroundAsset(0),
   '/backgrounds/home.webp',
