@@ -1,5 +1,3 @@
-// Removed unused import - defaultPerforma./performanceis file
-
 export interface RetryCostConfig {
   maxRetryCoins: number; // 4 puzzles worth (140 coins)
   scalingType: 'linear' | 'exponential';
@@ -33,15 +31,18 @@ export class RetryCostCalculator {
    * Uses linear scaling with difficulty adjustments
    */
   calculateRetryCost(retryCount: number, difficulty: number = 5): number {
-    if (retryCount < 0) {
-      throw new Error('Retry count cannot be negative');
-    }
+    const safeRetryCount = Number.isFinite(retryCount)
+      ? Math.max(0, Math.floor(retryCount))
+      : 0;
+    const safeDifficulty = Number.isFinite(difficulty)
+      ? Math.max(1, Math.min(10, Math.round(difficulty)))
+      : 5;
 
     const baseCost = 35; // One puzzle worth
-    const linearCost = baseCost * (retryCount + 1);
+    const linearCost = baseCost * (safeRetryCount + 1);
     
     // Apply difficulty multiplier (normalized around difficulty 5)
-    const difficultyAdjustment = Math.pow(this.config.difficultyMultiplier, (difficulty - 5) / 5);
+    const difficultyAdjustment = Math.pow(this.config.difficultyMultiplier, (safeDifficulty - 5) / 5);
     const adjustedCost = linearCost * difficultyAdjustment;
     
     // Cap at maximum retry cost

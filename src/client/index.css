@@ -916,6 +916,11 @@ body,
   animation: quest-blink 1.25s ease-in-out infinite;
 }
 
+.quest-claimable:focus-visible {
+  outline: 2px solid var(--color-orange);
+  outline-offset: 2px;
+}
+
 .quest-complete,
 .hub-live .hub-card.quest-complete {
   color: #ffffff;
@@ -1083,6 +1088,11 @@ body,
 .quest-book-tag:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.quest-book-tag:hover:not(:disabled) {
+  transform: translateX(4px);
+  box-shadow: 0 6px 16px rgba(251, 191, 36, 0.5), 0 0 24px rgba(251, 191, 36, 0.4) !important;
 }
 
 .quest-book-tag:not(:disabled):active {

@@ -102,7 +102,10 @@ export const LeaderboardScreen = ({
   );
 
   // Fetch leaderboard data based on current tab and page
-  const fetchLeaderboardData = useCallback(async (page: number = 1) => {
+  const goToPage = useCallback(async (page: number) => {
+    if (page < 1) {
+      return;
+    }
     await runLeaderboardRequest({
       load: async () =>
         leaderboardTab === 'daily'
@@ -113,11 +116,15 @@ export const LeaderboardScreen = ({
           return;
         }
         setLeaderboardData(data);
-        setCurrentPage(page);
+        setCurrentPage(data.pageInfo.currentPage);
       },
       errorMessage: 'Failed to load leaderboard data',
     });
   }, [leaderboardTab, runLeaderboardRequest]);
+
+  const fetchLeaderboardData = useCallback(async (page: number = 1) => {
+    await goToPage(page);
+  }, [goToPage]);
 
   // Load data when tab changes or component mounts
   useEffect(() => {
@@ -126,73 +133,25 @@ export const LeaderboardScreen = ({
   }, [fetchLeaderboardData]);
 
   // Navigation handlers
-  const handleNextPage = useCallback(async () => {
+  const handleNextPage = useCallback(() => {
     if (!leaderboardData?.hasNextPage || isLoading) return;
-    await runLeaderboardRequest({
-      load: async () =>
-        leaderboardTab === 'daily'
-          ? await trpc.leaderboard.navigateDailyNext.query({ page: currentPage, pageSize: 50 })
-          : await trpc.leaderboard.navigateAllTimeLevelsNext.query({ page: currentPage, pageSize: 50 }),
-      apply: (nextPageData) => {
-        if (nextPageData) {
-          setLeaderboardData(nextPageData);
-          setCurrentPage(nextPageData.pageInfo.currentPage);
-        }
-      },
-      errorMessage: 'Failed to load next page',
-    });
-  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage, isLoading, runLeaderboardRequest]);
+    void goToPage(currentPage + 1);
+  }, [currentPage, goToPage, leaderboardData?.hasNextPage, isLoading]);
 
-  const handlePreviousPage = useCallback(async () => {
+  const handlePreviousPage = useCallback(() => {
     if (!leaderboardData?.hasPreviousPage || isLoading) return;
-    await runLeaderboardRequest({
-      load: async () =>
-        leaderboardTab === 'daily'
-          ? await trpc.leaderboard.navigateDailyPrevious.query({ page: currentPage, pageSize: 50 })
-          : await trpc.leaderboard.navigateAllTimeLevelsPrevious.query({ page: currentPage, pageSize: 50 }),
-      apply: (prevPageData) => {
-        if (prevPageData) {
-          setLeaderboardData(prevPageData);
-          setCurrentPage(prevPageData.pageInfo.currentPage);
-        }
-      },
-      errorMessage: 'Failed to load previous page',
-    });
-  }, [leaderboardTab, currentPage, leaderboardData?.hasPreviousPage, isLoading, runLeaderboardRequest]);
+    void goToPage(currentPage - 1);
+  }, [currentPage, goToPage, leaderboardData?.hasPreviousPage, isLoading]);
 
-  const handleFirstPage = useCallback(async () => {
+  const handleFirstPage = useCallback(() => {
     if (currentPage === 1 || isLoading) return;
-    await runLeaderboardRequest({
-      load: async () =>
-        leaderboardTab === 'daily'
-          ? await trpc.leaderboard.navigateDailyFirst.query({ page: currentPage, pageSize: 50 })
-          : await trpc.leaderboard.navigateAllTimeLevelsFirst.query({ page: currentPage, pageSize: 50 }),
-      apply: (firstPageData) => {
-        if (firstPageData) {
-          setLeaderboardData(firstPageData);
-          setCurrentPage(firstPageData.pageInfo.currentPage);
-        }
-      },
-      errorMessage: 'Failed to load first page',
-    });
-  }, [leaderboardTab, currentPage, isLoading, runLeaderboardRequest]);
+    void goToPage(1);
+  }, [currentPage, goToPage, isLoading]);
 
-  const handleLastPage = useCallback(async () => {
-    if (!leaderboardData?.hasNextPage || isLoading) return;
-    await runLeaderboardRequest({
-      load: async () =>
-        leaderboardTab === 'daily'
-          ? await trpc.leaderboard.navigateDailyLast.query({ page: currentPage, pageSize: 50 })
-          : await trpc.leaderboard.navigateAllTimeLevelsLast.query({ page: currentPage, pageSize: 50 }),
-      apply: (lastPageData) => {
-        if (lastPageData) {
-          setLeaderboardData(lastPageData);
-          setCurrentPage(lastPageData.pageInfo.currentPage);
-        }
-      },
-      errorMessage: 'Failed to load last page',
-    });
-  }, [leaderboardTab, currentPage, leaderboardData?.hasNextPage, isLoading, runLeaderboardRequest]);
+  const handleLastPage = useCallback(() => {
+    if (!leaderboardData || currentPage >= leaderboardData.pageInfo.totalPages || isLoading) return;
+    void goToPage(leaderboardData.pageInfo.totalPages);
+  }, [currentPage, goToPage, leaderboardData, isLoading]);
 
   const handleRefresh = useCallback(() => {
     void fetchLeaderboardData(currentPage);
@@ -278,28 +237,26 @@ export const LeaderboardScreen = ({
           {/* Leaderboard Entries */}
           {!isLoading && !error && leaderboardData && leaderboardData.entries.length > 0 && (
             <div className="space-y-1.5">
-              {leaderboardData.entries.map((entry, index) => {
-                const globalRank = (leaderboardData.pageInfo.currentPage - 1) * leaderboardData.pageInfo.pageSize + index + 1;
-                const detail =
-                  leaderboardTab === 'daily'
-                    ? formatStatDuration(isDailyEntry(entry) ? (entry.solveSeconds ?? null) : null)
+	              {leaderboardData.entries.map((entry, index) => {
+	                const globalRank = (leaderboardData.pageInfo.currentPage - 1) * leaderboardData.pageInfo.pageSize + index + 1;
+	                const displayName = formatLeaderboardName({
+	                  userId: entry.userId,
+	                  username: entry.username ?? null
+	                });
+	                const detail =
+	                  leaderboardTab === 'daily'
+	                    ? formatStatDuration(isDailyEntry(entry) ? (entry.solveSeconds ?? null) : null)
                     : String(isAllTimeEntry(entry) ? (entry.levelsCompleted ?? '--') : '--');
                 return (
                   <article
                     key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
                     className="hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
-                  >
-                    <span className="app-text text-[11px] font-black">#{globalRank}</span>
-                    <LeaderboardAvatar entry={entry} displayName={formatLeaderboardName({
-                      userId: entry.userId,
-                      username: entry.username ?? null
-                    })} eager={index < 4} />
-                    <div className="app-text truncate text-[11px] font-bold">
-                      {formatLeaderboardName({
-                        userId: entry.userId,
-                        username: entry.username ?? null
-                      })}
-                    </div>
+	                  >
+	                    <span className="app-text text-[11px] font-black">#{globalRank}</span>
+	                    <LeaderboardAvatar entry={entry} displayName={displayName} eager={index < 4} />
+	                    <div className="app-text truncate text-[11px] font-bold">
+	                      {displayName}
+	                    </div>
                     <div className="app-text text-right text-[11px] font-black">
                       {Math.round(entry.score)}
                     </div>
@@ -345,11 +302,11 @@ export const LeaderboardScreen = ({
                   >
                     Next
                   </button>
-                  <button
-                    className="btn-3d btn-neutral rounded-md px-2 py-1 text-[9px] font-black uppercase disabled:opacity-50"
-                    onClick={handleLastPage}
-                    disabled={isLoading || !leaderboardData.hasNextPage}
-                  >
+	                  <button
+	                    className="btn-3d btn-neutral rounded-md px-2 py-1 text-[9px] font-black uppercase disabled:opacity-50"
+	                    onClick={handleLastPage}
+	                    disabled={isLoading || currentPage >= leaderboardData.pageInfo.totalPages}
+	                  >
                     Last
                   </button>
                 </div>

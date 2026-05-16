@@ -22,7 +22,6 @@ import type {
   ConfettiLauncher,
   Options as CanvasConfettiOptions,
 } from 'canvas-confetti';
-import { loadConfettiModule } from '../../shared/bundle-analysis';
 import {
   chunkPuzzleTokensByWordLimit,
   cn,
@@ -214,10 +213,10 @@ const pickPromotedOffer = (products: StoreProduct[]): StoreProduct | null => {
 };
 
 const isSuccessfulOrderStatus = (status: unknown): boolean =>
-  status === OrderResultStatus.STATUS_SUCCESS ||
-  status === 1 ||
-  status === 'STATUS_SUCCESS' ||
-  status === 'Success';
+  status === OrderResultStatus.STATUS_SUCCESS;
+
+const canUseCanvasConfetti = (): boolean =>
+  typeof navigator === 'undefined' || !/jsdom/i.test(navigator.userAgent);
 
 const toPurchaseErrorMessage = (errorMessage: string | null | undefined): string => {
   if (typeof errorMessage === 'string' && /order not placed/i.test(errorMessage)) {
@@ -461,7 +460,6 @@ export const GameApp = () => {
   const [challengeMetrics, setChallengeMetrics] = useState<ChallengeMetrics>(defaultChallengeMetrics);
   const [dailyRetryCount, setDailyRetryCount] = useState(0);
   const [nextDailyRetryCost, setNextDailyRetryCost] = useState(0);
-  const [, setDailyRetryScoreFactor] = useState(1);
   const [nextDailyRetryScoreFactor, setNextDailyRetryScoreFactor] = useState(1);
   const [requiresPaidRetry, setRequiresPaidRetry] = useState(false);
   const [heartPurchaseBusy, setHeartPurchaseBusy] = useState(false);
@@ -492,8 +490,6 @@ export const GameApp = () => {
   }, [questStatus]);
   const [claimingQuestId, setClaimingQuestId] = useState<string | null>(null);
   const [joiningCommunity, setJoiningCommunity] = useState(false);
-  const [, setDailyLeaderboardEntries] = useState<RouterOutputs['leaderboard']['getDaily']['entries']>([]);
-  const [, setEndlessLeaderboardEntries] = useState<RouterOutputs['leaderboard']['getAllTime']['levels']>([]);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>('daily');
   const [statsTab, setStatsTab] = useState<StatsTab>('daily');
   const [homeTab, setHomeTab] = useState<HomeTab>('daily');
@@ -597,7 +593,7 @@ export const GameApp = () => {
       }
       void (async () => {
         try {
-          const module = await loadConfettiModule();
+          const module = await import('canvas-confetti');
 	          if (confettiCanvasRef.current !== node) {
 	            return;
 	          }
@@ -611,7 +607,7 @@ export const GameApp = () => {
 	          });
         } catch (_error) {
           try {
-            const module = await loadConfettiModule();
+            const module = await import('canvas-confetti');
 	            if (confettiCanvasRef.current !== node) {
 	              return;
 	            }
@@ -645,9 +641,12 @@ export const GameApp = () => {
     };
     const launcher = confettiLauncherRef.current;
     if (!launcher) {
+      if (!canUseCanvasConfetti()) {
+        return;
+      }
       void (async () => {
         try {
-          const module = await loadConfettiModule();
+          const module = await import('canvas-confetti');
           await module.default(sharedOptions);
         } catch (_error) {
           // Best effort only.
@@ -753,19 +752,17 @@ export const GameApp = () => {
 
   const applyDailyRetryState = useCallback(
     (state: Pick<
-      RouterOutputs['game']['loadLevel'],
-      | 'retryCount'
-      | 'nextRetryCost'
-      | 'retryScoreFactor'
-      | 'nextRetryScoreFactor'
-      | 'requiresPaidRetry'
-    >) => {
-      setDailyRetryCount(state.retryCount);
-      setNextDailyRetryCost(state.nextRetryCost);
-      setDailyRetryScoreFactor(state.retryScoreFactor);
-      setNextDailyRetryScoreFactor(state.nextRetryScoreFactor);
-      setRequiresPaidRetry(state.requiresPaidRetry);
-    },
+	      RouterOutputs['game']['loadLevel'],
+	      | 'retryCount'
+	      | 'nextRetryCost'
+	      | 'nextRetryScoreFactor'
+	      | 'requiresPaidRetry'
+	    >) => {
+	      setDailyRetryCount(state.retryCount);
+	      setNextDailyRetryCost(state.nextRetryCost);
+	      setNextDailyRetryScoreFactor(state.nextRetryScoreFactor);
+	      setRequiresPaidRetry(state.requiresPaidRetry);
+	    },
     []
   );
 
@@ -773,10 +770,10 @@ export const GameApp = () => {
     levelIdToLookup: string
   ): Promise<number | null> => {
     try {
-      const receipt = await trpc.game.getCompletionReceipt.query({
+      const outcome = await trpc.game.getCompletedOutcome.query({
         levelId: levelIdToLookup,
       });
-      return typeof receipt.solveSeconds === 'number' ? receipt.solveSeconds : null;
+      return typeof outcome?.solveSeconds === 'number' ? outcome.solveSeconds : null;
     } catch (_error) {
       return null;
     }
@@ -825,12 +822,8 @@ export const GameApp = () => {
       warmImagePreloads(leaderboardAvatarUrls, {
         fetchPriority: 'high',
       });
-      setDailyLeaderboardEntries(daily.entries);
-      setEndlessLeaderboardEntries(allTime.levels);
       setRankSummary(summary);
     } catch (_error) {
-      setDailyLeaderboardEntries([]);
-      setEndlessLeaderboardEntries([]);
       setRankSummary(null);
     }
   }, []);
@@ -1265,7 +1258,6 @@ export const GameApp = () => {
       setProfile(result.profile);
       setInventory(result.inventory);
       setDailyRetryCount(result.retryCount);
-      setDailyRetryScoreFactor(result.retryScoreFactor);
       setNextDailyRetryCost(retryQuote.nextRetryCost);
       setNextDailyRetryScoreFactor(retryQuote.nextRetryScoreFactor);
       setRequiresPaidRetry(false);
@@ -1569,7 +1561,7 @@ export const GameApp = () => {
       void import('../screens/QuestScreen');
       void import('../screens/StatsScreen');
       void import('../screens/LeaderboardScreen');
-      void loadConfettiModule();
+      void import('canvas-confetti');
     });
     return () => {
       cancelWarmup();
@@ -2633,7 +2625,6 @@ export const GameApp = () => {
       setHeartsRemaining(result.heartsRemaining);
       setDailyRetryCount(result.retryCount);
       setNextDailyRetryCost(result.nextRetryCost);
-      setDailyRetryScoreFactor(result.retryScoreFactor);
       setNextDailyRetryScoreFactor(result.nextRetryScoreFactor);
       setRequiresPaidRetry(result.requiresPaidRetry);
       const storageUserId = currentUserIdRef.current;

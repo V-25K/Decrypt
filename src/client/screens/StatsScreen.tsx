@@ -90,7 +90,7 @@ export const StatsScreen = ({
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
-              className={tabButtonClass(profile.activeFlair.length === 0)}
+              className={tabButtonClass(!profile.activeFlair)}
               onClick={() => onSetActiveFlair('')}
               disabled={flairSaveBusy}
               data-testid="flair-option-none"

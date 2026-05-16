@@ -5,6 +5,7 @@ const loadLevelQuery = vi.fn();
 const startSessionMutation = vi.fn();
 const heartbeatMutation = vi.fn().mockResolvedValue({ ok: true });
 const getCurrentViewQuery = vi.fn();
+const getCompletedOutcomeQuery = vi.fn();
 const submitGuessMutation = vi.fn();
 const submitGuessesMutation = vi.fn();
 const completeSessionMutation = vi.fn();
@@ -25,11 +26,7 @@ const addWebViewModeListenerMock = vi.fn();
 const removeWebViewModeListenerMock = vi.fn();
 const confettiBurstMock = vi.fn().mockResolvedValue(undefined);
 const confettiCreateMock = vi.fn(() => vi.fn().mockResolvedValue(undefined));
-const loadConfettiModuleMock = vi.fn(async () => ({
-  default: Object.assign(confettiBurstMock, {
-    create: confettiCreateMock,
-  }),
-}));
+let mountedGameModule: typeof import('./game') | null = null;
 
 vi.mock('./trpc', () => ({
   trpc: {
@@ -39,6 +36,7 @@ vi.mock('./trpc', () => ({
       startSession: { mutate: startSessionMutation },
       heartbeat: { mutate: heartbeatMutation },
       getCurrentView: { query: getCurrentViewQuery },
+      getCompletedOutcome: { query: getCompletedOutcomeQuery },
       submitGuess: { mutate: submitGuessMutation },
       submitGuesses: { mutate: submitGuessesMutation },
       completeSession: { mutate: completeSessionMutation },
@@ -82,8 +80,10 @@ vi.mock('@devvit/web/client', () => ({
   },
 }));
 
-vi.mock('../shared/bundle-analysis', () => ({
-  loadConfettiModule: loadConfettiModuleMock,
+vi.mock('canvas-confetti', () => ({
+  default: Object.assign(confettiBurstMock, {
+    create: confettiCreateMock,
+  }),
 }));
 
 const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
@@ -253,6 +253,7 @@ const primeBaseMocks = (params?: {
     heartsRemaining: 3,
   });
   getCurrentViewQuery.mockResolvedValue(puzzle);
+  getCompletedOutcomeQuery.mockResolvedValue(null);
   storeProductsQuery.mockResolvedValue({
     products: params?.storeProducts ?? [
       {
@@ -322,6 +323,7 @@ const primeBaseMocks = (params?: {
 const renderGame = async (rootMarkup = '<div id="root"></div>'): Promise<void> => {
   document.body.innerHTML = rootMarkup;
   const gameModule = await import('./game');
+  mountedGameModule = gameModule;
   gameModule.mountGame();
 };
 
@@ -383,6 +385,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  mountedGameModule?.unmountGame();
+  mountedGameModule = null;
   vi.restoreAllMocks();
   bootstrapQuery.mockReset();
   loadLevelQuery.mockReset();
@@ -390,6 +394,7 @@ afterEach(() => {
   heartbeatMutation.mockReset();
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();
+  getCompletedOutcomeQuery.mockReset();
   submitGuessMutation.mockReset();
   submitGuessesMutation.mockReset();
   completeSessionMutation.mockReset();
@@ -410,7 +415,6 @@ afterEach(() => {
   removeWebViewModeListenerMock.mockReset();
   confettiBurstMock.mockClear();
   confettiCreateMock.mockClear();
-  loadConfettiModuleMock.mockClear();
   setViewportWidth(1024);
   window.localStorage.clear();
   window.sessionStorage.clear();

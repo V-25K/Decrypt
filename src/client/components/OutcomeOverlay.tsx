@@ -34,35 +34,35 @@ type OutcomeOverlayProps = {
   openQuest: (event?: MouseEvent<HTMLButtonElement>) => void;
 };
 
-export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
-  const {
-    showSuccessOverlay,
-    setConfettiCanvasNode,
-    completionCrowdAvatarUrls,
-    completionCrowdReady,
-    outcomeCrowdBubbles,
-    handleOutcomeCrowdRef,
-    setOutcomeCrowdBubbleNode,
-    criticalOutcomeAvatarCount,
-    busy,
-    share,
-    isDailyComplete,
-    retry,
-    openHome,
-    subredditName,
-    joiningCommunity,
-    communityJoinRecorded,
-    communityJoinLabel,
-    handleJoinCommunity,
-    outcomeTitle,
-    outcomeSubtitle,
-    completionSolveLabel,
-    completionQuote,
-    puzzleAuthor,
-    hasClaimableQuest,
-    openQuest,
-  } = _props;
-
+export const OutcomeOverlay = memo(({
+  showSuccessOverlay,
+  setConfettiCanvasNode,
+  completionCrowdAvatarUrls,
+  completionCrowdReady,
+  outcomeCrowdBubbles,
+  handleOutcomeCrowdRef,
+  setOutcomeCrowdBubbleNode,
+  criticalOutcomeAvatarCount,
+  busy,
+  share,
+  isDailyComplete,
+  retry,
+  openHome,
+  showPaidDailyRetryCta,
+  nextDailyRetryCost,
+  subredditName,
+  joiningCommunity,
+  communityJoinRecorded,
+  communityJoinLabel,
+  handleJoinCommunity,
+  outcomeTitle,
+  outcomeSubtitle,
+  completionSolveLabel,
+  completionQuote,
+  puzzleAuthor,
+  hasClaimableQuest,
+  openQuest,
+}: OutcomeOverlayProps) => {
   return (
     <section
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -251,23 +251,15 @@ export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
                 disabled={busy}
                 aria-label="View unclaimed quests"
                 title="You have unclaimed quest rewards!"
-                style={{
-                  background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-                  clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 100%)',
-                  borderTopRightRadius: '12px',
-                  borderBottomRightRadius: '12px',
-                  boxShadow: '0 4px 12px rgba(251, 191, 36, 0.4), 0 0 20px rgba(251, 191, 36, 0.3)',
-                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateX(4px)';
-                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(251, 191, 36, 0.5), 0 0 24px rgba(251, 191, 36, 0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateX(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(251, 191, 36, 0.4), 0 0 20px rgba(251, 191, 36, 0.3)';
-                }}
-              >
+	                style={{
+	                  background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+	                  clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 100%)',
+	                  borderTopRightRadius: '12px',
+	                  borderBottomRightRadius: '12px',
+	                  boxShadow: '0 4px 12px rgba(251, 191, 36, 0.4), 0 0 20px rgba(251, 191, 36, 0.3)',
+	                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+	                }}
+	              >
                 {/* Integrated notification ping - part of button */}
                 <span className="relative flex h-2 w-2 shrink-0">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
@@ -294,6 +286,22 @@ export const OutcomeOverlay = memo((_props: OutcomeOverlayProps) => {
                 </p>
               )}
             </header>
+
+            {showPaidDailyRetryCta && !isDailyComplete && (
+              <button
+                type="button"
+                data-testid="overlay-paid-daily-retry"
+                className="btn-3d btn-primary mt-6 rounded-xl px-5 py-2 text-sm font-black uppercase tracking-[0.04em]"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void retry();
+                }}
+                disabled={busy}
+              >
+                Retry for {nextDailyRetryCost} coins
+              </button>
+            )}
 
             {showSuccessOverlay && (
               <div className="relative mt-10 w-full max-w-[500px] shrink-0 sm:mt-12">

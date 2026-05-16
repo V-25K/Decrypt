@@ -1,7 +1,7 @@
 import { z } from 'zod';
+import { endlessCatalogStatusSchema } from './endless';
 
 const maxHearts = 3;
-import { endlessCatalogStatusSchema } from './endless.ts';
 
 export const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -388,6 +388,15 @@ export const gameCompleteSessionResponseSchema = z.object({
   isRecoveryRun: z.boolean(),
   isCurrentDaily: z.boolean(),
   rewardNotice: z.string().nullable(),
+  profile: userProfileSchema,
+  inventory: inventorySchema,
+});
+
+export const gameCompletedOutcomeSchema = z.object({
+  levelId: z.string().min(1),
+  solveSeconds: z.number().int().nonnegative().nullable(),
+  score: z.number().int().nonnegative().nullable(),
+  completedAtTs: z.number().int().nonnegative().nullable(),
   profile: userProfileSchema,
   inventory: inventorySchema,
 });

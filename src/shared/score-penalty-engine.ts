@@ -31,15 +31,15 @@ export class ScorePenaltyEngine {
    * Returns a multiplier (0.75-1.0) to apply to the original score
    */
   calculatePenaltyFactor(retryCount: number): number {
-    if (retryCount < 0) {
-      throw new Error('Retry count cannot be negative');
-    }
+    const safeRetryCount = Number.isFinite(retryCount)
+      ? Math.max(0, Math.floor(retryCount))
+      : 0;
 
-    if (retryCount === 0 || (retryCount === 1 && this.config.firstRetryFree)) {
+    if (safeRetryCount === 0 || (safeRetryCount === 1 && this.config.firstRetryFree)) {
       return 1.0; // No penalty
     }
 
-    const effectiveRetries = this.config.firstRetryFree ? retryCount - 1 : retryCount;
+    const effectiveRetries = this.config.firstRetryFree ? safeRetryCount - 1 : safeRetryCount;
 
     if (this.config.penaltyType === 'logarithmic') {
       // Logarithmic penalty curve: penalty = maxPenalty * log(retries + 1) / log(5)
@@ -59,15 +59,15 @@ export class ScorePenaltyEngine {
    * Apply penalty to a score based on retry count
    */
   applyPenalty(originalScore: number, retryCount: number): number {
-    if (originalScore < 0) {
-      throw new Error('Original score cannot be negative');
-    }
+    const safeOriginalScore = Number.isFinite(originalScore)
+      ? Math.max(0, Math.round(originalScore))
+      : 0;
 
     const factor = this.calculatePenaltyFactor(retryCount);
-    const penalizedScore = Math.round(originalScore * factor);
+    const penalizedScore = Math.round(safeOriginalScore * factor);
     
     // Ensure we never exceed the maximum penalty due to rounding
-    const minAllowedScore = Math.ceil(originalScore * (1 - this.config.maxPenalty));
+    const minAllowedScore = Math.ceil(safeOriginalScore * (1 - this.config.maxPenalty));
     return Math.max(penalizedScore, minAllowedScore);
   }
 

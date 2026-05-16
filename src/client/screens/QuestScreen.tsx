@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent } from 'react';
+import { memo, type CSSProperties, type KeyboardEvent } from 'react';
 import type { QuestDefinition, QuestReward } from '../../shared/quests';
 import type { QuestRewardDisplayItem } from '../app/game-formatters';
 import { tabButtonClass } from '../app/ui';
@@ -34,6 +34,91 @@ type QuestScreenProps = {
     claimedSet: Set<string>
   ) => boolean;
 };
+
+type QuestCardProps = {
+  quest: QuestDefinition;
+  progress: QuestProgress;
+  claimedQuestIdSet: Set<string>;
+  claimingQuestId: string | null;
+  onClaimQuest: (questId: string) => void;
+  formatQuestReward: (reward: QuestReward) => {
+    items: QuestRewardDisplayItem[];
+    flair: string | null;
+  };
+  flairTagStyle: (flair: string) => CSSProperties | undefined;
+  getQuestProgressValue: (quest: QuestDefinition, progress: QuestProgress) => number;
+};
+
+const QuestCard = memo(({
+  quest,
+  progress,
+  claimedQuestIdSet,
+  claimingQuestId,
+  onClaimQuest,
+  formatQuestReward,
+  flairTagStyle,
+  getQuestProgressValue,
+}: QuestCardProps) => {
+  const current = getQuestProgressValue(quest, progress);
+  const completed = current >= quest.target;
+  const claimed = claimedQuestIdSet.has(quest.id);
+  const isClaiming = claimingQuestId === quest.id;
+  const claimable = completed && !claimed && !isClaiming;
+  const rewardParts = formatQuestReward(quest.reward);
+  const handleKeyDown = claimable
+    ? (event: KeyboardEvent<HTMLElement>) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClaimQuest(quest.id);
+        }
+      }
+    : undefined;
+
+  return (
+    <article
+      onClick={claimable ? () => onClaimQuest(quest.id) : undefined}
+      role={claimable ? 'button' : 'article'}
+      tabIndex={claimable ? 0 : -1}
+      aria-disabled={!claimable}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'hub-card w-full max-w-full rounded-xl border app-border px-3 py-3',
+        completed ? 'quest-complete' : '',
+        claimable ? 'quest-claimable cursor-pointer' : 'cursor-default',
+        isClaiming ? 'opacity-60' : ''
+      )}
+    >
+      <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.3fr)] items-center gap-3">
+        <div className="min-w-0">
+          <h4 className="app-text text-sm font-black">{quest.title}</h4>
+          <p className="app-text-muted text-[11px] font-semibold break-words">
+            {quest.description}
+          </p>
+        </div>
+        <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
+            {rewardParts.items.map((item) => renderRewardItem(item))}
+          </div>
+          {rewardParts.flair && (
+            <span
+              className="quest-flair inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
+              style={flairTagStyle(rewardParts.flair)}
+            >
+              {rewardParts.flair}
+            </span>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-col items-end gap-1.5">
+          <span className="app-text text-[11px] font-black uppercase">
+            {Math.min(current, quest.target)}/{quest.target}
+          </span>
+        </div>
+      </div>
+    </article>
+  );
+});
+
+QuestCard.displayName = 'QuestCard';
 
 export const QuestScreen = ({
   questTab,
@@ -94,62 +179,19 @@ export const QuestScreen = ({
                     </p>
                   </div>
                 )}
-                {visibleDailyQuests.map((quest) => {
-                  const current = getQuestProgressValue(quest, questStatus.progress);
-                  const completed = current >= quest.target;
-                  const claimed = claimedQuestIdSet.has(quest.id);
-                  const isClaiming = claimingQuestId === quest.id;
-                  const claimable = completed && !claimed && !isClaiming;
-                  const rewardParts = formatQuestReward(quest.reward);
-                  return (
-                    <article
-                      key={quest.id}
-                      onClick={claimable ? () => onClaimQuest(quest.id) : undefined}
-                      role={claimable ? 'button' : 'article'}
-                      tabIndex={claimable ? 0 : -1}
-                      aria-disabled={!claimable}
-                      onKeyDown={claimable ? (event: KeyboardEvent<HTMLElement>) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          onClaimQuest(quest.id);
-                        }
-                      } : undefined}
-                      className={cn(
-                        'hub-card w-full max-w-full rounded-xl border app-border px-3 py-3',
-                        completed ? 'quest-complete' : '',
-                        claimable ? 'quest-claimable cursor-pointer' : 'cursor-default',
-                        isClaiming ? 'opacity-60' : ''
-                      )}
-                    >
-                      <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.3fr)] items-center gap-3">
-                        <div className="min-w-0">
-                          <h4 className="app-text text-sm font-black">{quest.title}</h4>
-                          <p className="app-text-muted text-[11px] font-semibold break-words">
-                            {quest.description}
-                          </p>
-                        </div>
-                        <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
-                          <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
-                            {rewardParts.items.map((item) => renderRewardItem(item))}
-                          </div>
-                          {rewardParts.flair && (
-                            <span
-                              className="quest-flair inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
-                              style={flairTagStyle(rewardParts.flair)}
-                            >
-                              {rewardParts.flair}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex min-w-0 flex-col items-end gap-1.5">
-                          <span className="app-text text-[11px] font-black uppercase">
-                            {Math.min(current, quest.target)}/{quest.target}
-                          </span>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
+                {visibleDailyQuests.map((quest) => (
+                  <QuestCard
+                    key={quest.id}
+                    quest={quest}
+                    progress={questStatus.progress}
+                    claimedQuestIdSet={claimedQuestIdSet}
+                    claimingQuestId={claimingQuestId}
+                    onClaimQuest={onClaimQuest}
+                    formatQuestReward={formatQuestReward}
+                    flairTagStyle={flairTagStyle}
+                    getQuestProgressValue={getQuestProgressValue}
+                  />
+                ))}
               </section>
             )}
             {questTab === 'milestone' && (
@@ -161,62 +203,19 @@ export const QuestScreen = ({
                       !isQuestHidden(quest, questStatus.progress, claimedQuestIdSet) &&
                       (!groupedQuestIds.has(quest.id) || visibleMilestoneIds.has(quest.id))
                   )
-                  .map((quest) => {
-                    const current = getQuestProgressValue(quest, questStatus.progress);
-                    const completed = current >= quest.target;
-                    const claimed = claimedQuestIdSet.has(quest.id);
-                    const isClaiming = claimingQuestId === quest.id;
-                    const claimable = completed && !claimed && !isClaiming;
-                    const rewardParts = formatQuestReward(quest.reward);
-                    return (
-                      <article
-                        key={quest.id}
-                        onClick={claimable ? () => onClaimQuest(quest.id) : undefined}
-                        role={claimable ? 'button' : 'article'}
-                        tabIndex={claimable ? 0 : -1}
-                        aria-disabled={!claimable}
-                        onKeyDown={claimable ? (event: KeyboardEvent<HTMLElement>) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            onClaimQuest(quest.id);
-                          }
-                        } : undefined}
-                        className={cn(
-                          'hub-card w-full max-w-full rounded-xl border app-border px-3 py-3',
-                          completed ? 'quest-complete' : '',
-                          claimable ? 'quest-claimable cursor-pointer' : 'cursor-default',
-                          isClaiming ? 'opacity-60' : ''
-                        )}
-                      >
-                        <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.3fr)] items-center gap-3">
-                          <div className="min-w-0">
-                            <h4 className="app-text text-sm font-black">{quest.title}</h4>
-                            <p className="app-text-muted text-[11px] font-semibold break-words">
-                              {quest.description}
-                            </p>
-                          </div>
-                          <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
-                            <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
-                              {rewardParts.items.map((item) => renderRewardItem(item))}
-                            </div>
-                            {rewardParts.flair && (
-                              <span
-                                className="quest-flair inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
-                                style={flairTagStyle(rewardParts.flair)}
-                              >
-                                {rewardParts.flair}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex min-w-0 flex-col items-end gap-1.5">
-                            <span className="app-text text-[11px] font-black uppercase">
-                              {Math.min(current, quest.target)}/{quest.target}
-                            </span>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
+                  .map((quest) => (
+                    <QuestCard
+                      key={quest.id}
+                      quest={quest}
+                      progress={questStatus.progress}
+                      claimedQuestIdSet={claimedQuestIdSet}
+                      claimingQuestId={claimingQuestId}
+                      onClaimQuest={onClaimQuest}
+                      formatQuestReward={formatQuestReward}
+                      flairTagStyle={flairTagStyle}
+                      getQuestProgressValue={getQuestProgressValue}
+                    />
+                  ))}
               </section>
             )}
           </>

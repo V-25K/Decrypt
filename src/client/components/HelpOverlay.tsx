@@ -1,4 +1,4 @@
-import { useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { DeviceTier } from '../app/types';
 import { helpSlides } from '../app/constants';
 import { PowerupSprite } from './PowerupSprite';
@@ -160,9 +160,49 @@ export const HelpOverlay = ({
   onClose,
 }: HelpOverlayProps) => {
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const isMobile = deviceTier === 'mobile';
   const canGoBackward = activeSlideIndex > 0;
   const canGoForward = activeSlideIndex < helpSlides.length - 1;
+
+  useEffect(() => {
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusSelector =
+      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+    helpCardRef.current?.querySelector<HTMLElement>(focusSelector)?.focus();
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') {
+        return;
+      }
+      const currentCard = helpCardRef.current;
+      if (!currentCard) {
+        return;
+      }
+      const focusableElements = Array.from(
+        currentCard.querySelectorAll<HTMLElement>(focusSelector)
+      );
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      if (!firstElement || !lastElement) {
+        return;
+      }
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.addEventListener('keydown', trapFocus);
+    return () => {
+      document.removeEventListener('keydown', trapFocus);
+      previousFocusRef.current?.focus();
+    };
+  }, [helpCardRef]);
 
   return (
     <div

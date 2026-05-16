@@ -35,12 +35,12 @@ export class PowerupPricingEngine {
    * Calculate powerup cost based on difficulty and remaining letters
    */
   calculatePowerupCost(powerupType: PowerupType, difficulty: number = 5, remainingLetters: number = 10): number {
-    if (difficulty < 1 || difficulty > 10) {
-      throw new Error('Difficulty must be between 1 and 10');
-    }
-    if (remainingLetters < 0) {
-      throw new Error('Remaining letters cannot be negative');
-    }
+    const safeDifficulty = Number.isFinite(difficulty)
+      ? Math.max(1, Math.min(10, Math.round(difficulty)))
+      : 5;
+    const safeRemainingLetters = Number.isFinite(remainingLetters)
+      ? Math.max(0, Math.round(remainingLetters))
+      : 10;
 
     const baseCosts = {
       hammer: 60,
@@ -50,8 +50,8 @@ export class PowerupPricingEngine {
     };
     
     const baseCost = baseCosts[powerupType];
-    const difficultyMultiplier = 1 + (difficulty - 5) * 0.1;
-    const scarcityMultiplier = remainingLetters < 5 ? 1.2 : 1.0;
+    const difficultyMultiplier = 1 + (safeDifficulty - 5) * 0.1;
+    const scarcityMultiplier = safeRemainingLetters < 5 ? 1.2 : 1.0;
     const rawCost = baseCost * difficultyMultiplier * scarcityMultiplier;
 
     return this.roundDisplayedCost(rawCost);

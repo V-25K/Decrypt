@@ -162,12 +162,12 @@ describe('ScorePenaltyEngine - Property Tests', () => {
             // Zero score should remain zero
             expect(engine.applyPenalty(0, 5)).toBe(0);
             
-            // Negative retry count should throw
-            expect(() => engine.calculatePenaltyFactor(-1)).toThrow();
-            expect(() => engine.applyPenalty(originalScore, -1)).toThrow();
-            
-            // Negative original score should throw
-            expect(() => engine.applyPenalty(-1, 3)).toThrow();
+            // Negative retry count should clamp to no penalty
+            expect(engine.calculatePenaltyFactor(-1)).toBe(1);
+            expect(engine.applyPenalty(originalScore, -1)).toBe(originalScore);
+	            
+            // Negative original score should clamp to zero
+            expect(engine.applyPenalty(-1, 3)).toBe(0);
             
             // Very high retry counts should still respect max penalty
             const highRetryFactor = engine.calculatePenaltyFactor(1000);

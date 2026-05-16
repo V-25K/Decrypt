@@ -1,3 +1,4 @@
+import React from 'react';
 import type { Puzzle, PuzzlePublicTile } from './types';
 
 /**
@@ -327,5 +328,3 @@ export function useImmutableGameState(initialState?: ImmutableGameState) {
   return [state, updateState] as const;
 }
 
-// Import React for the hook
-import React from 'react';

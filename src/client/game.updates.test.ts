@@ -22,12 +22,8 @@ const leaderboardLevelQuery = vi.fn();
 const leaderboardAllTimeQuery = vi.fn();
 const leaderboardDailyPageQuery = vi.fn();
 const leaderboardAllTimeLevelsPageQuery = vi.fn();
-const leaderboardNavigateDailyNextQuery = vi.fn();
-const leaderboardNavigateDailyPreviousQuery = vi.fn();
-const leaderboardNavigateAllTimeLevelsNextQuery = vi.fn();
-const leaderboardNavigateAllTimeLevelsPreviousQuery = vi.fn();
 const leaderboardRankSummaryQuery = vi.fn();
-const getCompletionReceiptQuery = vi.fn();
+const getCompletedOutcomeQuery = vi.fn();
 const shareResultMutation = vi.fn();
 const purchaseMock = vi.fn();
 const navigateToMock = vi.fn();
@@ -35,6 +31,7 @@ const showToastMock = vi.fn();
 const getWebViewModeMock = vi.fn(() => 'expanded');
 const sfxEnabledStorageKey = 'decrypt-sfx-enabled-v1';
 const localStorageState = new Map<string, string>();
+let mountedGameModule: typeof import('./game') | null = null;
 
 const ensureLocalStorageMock = () => {
   Object.defineProperty(window, 'localStorage', {
@@ -70,7 +67,7 @@ vi.mock('./trpc', () => ({
       submitGuesses: { mutate: submitGuessesMutation },
       completeSession: { mutate: completeSessionMutation },
       purchaseDailyRetry: { mutate: purchaseDailyRetryMutation },
-      getCompletionReceipt: { query: getCompletionReceiptQuery },
+      getCompletedOutcome: { query: getCompletedOutcomeQuery },
     },
     powerup: {
       purchase: { mutate: powerupPurchaseMutation },
@@ -82,10 +79,6 @@ vi.mock('./trpc', () => ({
       getAllTime: { query: leaderboardAllTimeQuery },
       getDailyPage: { query: leaderboardDailyPageQuery },
       getAllTimeLevelsPage: { query: leaderboardAllTimeLevelsPageQuery },
-      navigateDailyNext: { query: leaderboardNavigateDailyNextQuery },
-      navigateDailyPrevious: { query: leaderboardNavigateDailyPreviousQuery },
-      navigateAllTimeLevelsNext: { query: leaderboardNavigateAllTimeLevelsNextQuery },
-      navigateAllTimeLevelsPrevious: { query: leaderboardNavigateAllTimeLevelsPreviousQuery },
       getRankSummary: { query: leaderboardRankSummaryQuery },
     },
     social: {
@@ -192,7 +185,7 @@ const puzzleFixture = () => ({
 });
 
 const primeMocks = () => {
-  getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+  getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
     userId: 't2_test',
     username: 'tester',
     subredditName: 'decrypttest_dev',
@@ -415,10 +408,6 @@ const primeMocks = () => {
       totalPages: 1,
     },
   });
-  leaderboardNavigateDailyNextQuery.mockResolvedValue(null);
-  leaderboardNavigateDailyPreviousQuery.mockResolvedValue(null);
-  leaderboardNavigateAllTimeLevelsNextQuery.mockResolvedValue(null);
-  leaderboardNavigateAllTimeLevelsPreviousQuery.mockResolvedValue(null);
   leaderboardRankSummaryQuery.mockResolvedValue({
     dailyRank: 3,
     endlessRank: 2,
@@ -454,16 +443,20 @@ const renderGame = async (
   ensureLocalStorageMock();
   document.body.innerHTML = rootMarkup;
   const gameModule = await import('./game');
+  mountedGameModule = gameModule;
   gameModule.mountGame();
 };
 
 afterEach(() => {
+  mountedGameModule?.unmountGame();
+  mountedGameModule = null;
   bootstrapQuery.mockReset();
   loadLevelQuery.mockReset();
   startSessionMutation.mockReset();
   heartbeatMutation.mockReset();
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();
+  getCompletedOutcomeQuery.mockReset();
   submitGuessMutation.mockReset();
   submitGuessesMutation.mockReset();
   completeSessionMutation.mockReset();
@@ -480,10 +473,6 @@ afterEach(() => {
   leaderboardAllTimeQuery.mockReset();
   leaderboardDailyPageQuery.mockReset();
   leaderboardAllTimeLevelsPageQuery.mockReset();
-  leaderboardNavigateDailyNextQuery.mockReset();
-  leaderboardNavigateDailyPreviousQuery.mockReset();
-  leaderboardNavigateAllTimeLevelsNextQuery.mockReset();
-  leaderboardNavigateAllTimeLevelsPreviousQuery.mockReset();
   leaderboardRankSummaryQuery.mockReset();
   shareResultMutation.mockReset();
   purchaseMock.mockReset();
@@ -557,7 +546,7 @@ describe('Game updates', { timeout: 15000 }, () => {
 
   it('renders endless as playable when a catalog is active', async () => {
     primeMocks();
-    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+    getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
       subredditName: 'decrypttest_dev',
@@ -789,7 +778,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('opens the heart purchase dialog when retrying without hearts', async () => {
     primeMocks();
     getWebViewModeMock.mockReturnValue('inline');
-    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+    getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
       subredditName: 'decrypttest_dev',
@@ -976,7 +965,7 @@ describe('Game updates', { timeout: 15000 }, () => {
   it('shows a community join button on the result screen and saves the joined state', async () => {
     primeMocks();
     getWebViewModeMock.mockReturnValue('inline');
-    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+    getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
       subredditName: 'decrypttest_dev',
@@ -1090,7 +1079,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     primeMocks();
     shareResultMutation.mockRejectedValueOnce(new Error('request aborted'));
     getWebViewModeMock.mockReturnValue('inline');
-    getCompletionReceiptQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
+    getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({
       userId: 't2_test',
       username: 'tester',
       subredditName: 'decrypttest_dev',

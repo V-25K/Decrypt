@@ -407,7 +407,7 @@ export const getCommunityFlairStyle = (
     return null;
   }
   const groupKey = flairGroupByName[normalizedFlair];
-  return groupKey ? communityFlairStyleByGroup[groupKey] : communityFlairStyleByGroup.wordsmith;
+  return groupKey ? communityFlairStyleByGroup[groupKey] : null;
 };
 
 export const getQuestProgressValue = (

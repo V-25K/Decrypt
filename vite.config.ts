@@ -22,7 +22,6 @@ const manualChunks = (id: string): string | undefined => {
   if (
     normalizedId.includes('/node_modules/@devvit/') ||
     normalizedId.includes('/node_modules/@trpc/') ||
-    normalizedId.includes('/node_modules/superjson/') ||
     normalizedId.includes('/node_modules/zod/')
   ) {
     return 'devvit-vendor';

@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import {
   hudSpriteAssetPath,
   hudSpriteLabel,
   type HudSpriteType,
 } from '../app/constants';
-import { cn } from '../utils';
+import { SpriteImage } from './SpriteImage';
 
 type HudSpriteProps = {
   icon: HudSpriteType;
@@ -21,36 +20,15 @@ export const HudSprite = ({
   decorative = false,
   testId,
 }: HudSpriteProps) => {
-  const [loadError, setLoadError] = useState(false);
   const label = alt ?? hudSpriteLabel[icon];
-
-  if (loadError) {
-    return (
-      <span
-        data-testid={testId}
-        role={decorative ? undefined : 'img'}
-        aria-label={decorative ? undefined : label}
-        aria-hidden={decorative ? 'true' : undefined}
-        className={cn(
-          'hud-sprite inline-flex items-center justify-center rounded bg-gray-300 text-xs font-black text-gray-700',
-          className
-        )}
-      >
-        ?
-      </span>
-    );
-  }
-
   return (
-    <img
-      data-testid={testId}
+    <SpriteImage
       src={hudSpriteAssetPath[icon]}
-      alt={decorative ? '' : label}
-      aria-hidden={decorative ? 'true' : undefined}
-      loading="eager"
-      decoding="async"
-      className={cn('hud-sprite object-contain', className)}
-      onError={() => setLoadError(true)}
+      label={label}
+      spriteClassName="hud-sprite"
+      className={className}
+      decorative={decorative}
+      testId={testId}
     />
   );
 };

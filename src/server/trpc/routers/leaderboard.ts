@@ -3,8 +3,8 @@ import {
   leaderboardGetInputSchema,
   leaderboardGetLevelInputSchema,
   leaderboardRankSummarySchema,
-  dailyLeaderboardPageInputSchema,
   levelLeaderboardPageInputSchema,
+  dailyLeaderboardPageInputSchema,
   leaderboardPageInputSchema,
   leaderboardPageSchema,
 } from '../../../shared/game';
@@ -15,19 +15,11 @@ import {
   getLevelTop,
   getUserRankSummary,
 } from '../../core/leaderboard';
-import { createLeaderboardNavigation } from '../../core/leaderboard-navigation';
 import { paginatedLeaderboardService } from '../../core/paginated-leaderboard-service';
 import { getUserProfile } from '../../core/state';
 import { formatDateKey } from '../../core/serde';
 import { router } from '../base';
 import { authedProcedure, publicProcedure } from '../procedures';
-
-const normalizeDailyPageInput = (
-  input: z.infer<typeof dailyLeaderboardPageInputSchema>
-) => ({
-  ...input,
-  dateKey: input.dateKey ?? undefined,
-});
 
 export const leaderboardRouter = router({
   getDaily: publicProcedure.input(leaderboardGetInputSchema).query(async ({ input }) => {
@@ -105,166 +97,5 @@ export const leaderboardRouter = router({
             ? Math.floor(bestOverallRank)
             : null,
       });
-    }),
-
-  // Navigation endpoints
-  navigateDailyToPage: publicProcedure
-    .input(dailyLeaderboardPageInputSchema.extend({ targetPage: z.number().int().positive() }))
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('daily', normalizeDailyPageInput(input));
-      return await navigation.goToPage(input.targetPage);
-    }),
-
-  navigateDailyNext: publicProcedure
-    .input(dailyLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('daily', normalizeDailyPageInput(input));
-      return await navigation.nextPage();
-    }),
-
-  navigateDailyPrevious: publicProcedure
-    .input(dailyLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('daily', normalizeDailyPageInput(input));
-      return await navigation.previousPage();
-    }),
-
-  navigateDailyFirst: publicProcedure
-    .input(dailyLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('daily', normalizeDailyPageInput(input));
-      return await navigation.goToFirstPage();
-    }),
-
-  navigateDailyLast: publicProcedure
-    .input(dailyLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('daily', normalizeDailyPageInput(input));
-      return await navigation.goToLastPage();
-    }),
-
-  navigateLevelToPage: publicProcedure
-    .input(levelLeaderboardPageInputSchema.extend({ targetPage: z.number().int().positive() }))
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('level', input);
-      return await navigation.goToPage(input.targetPage);
-    }),
-
-  navigateLevelNext: publicProcedure
-    .input(levelLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('level', input);
-      return await navigation.nextPage();
-    }),
-
-  navigateLevelPrevious: publicProcedure
-    .input(levelLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('level', input);
-      return await navigation.previousPage();
-    }),
-
-  navigateLevelFirst: publicProcedure
-    .input(levelLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('level', input);
-      return await navigation.goToFirstPage();
-    }),
-
-  navigateLevelLast: publicProcedure
-    .input(levelLeaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('level', input);
-      return await navigation.goToLastPage();
-    }),
-
-  navigateAllTimeLevelsToPage: publicProcedure
-    .input(leaderboardPageInputSchema.extend({ targetPage: z.number().int().positive() }))
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLevels', input);
-      return await navigation.goToPage(input.targetPage);
-    }),
-
-  navigateAllTimeLevelsNext: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLevels', input);
-      return await navigation.nextPage();
-    }),
-
-  navigateAllTimeLevelsPrevious: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLevels', input);
-      return await navigation.previousPage();
-    }),
-
-  navigateAllTimeLevelsFirst: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLevels', input);
-      return await navigation.goToFirstPage();
-    }),
-
-  navigateAllTimeLevelsLast: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLevels', input);
-      return await navigation.goToLastPage();
-    }),
-
-  navigateAllTimeLogicToPage: publicProcedure
-    .input(leaderboardPageInputSchema.extend({ targetPage: z.number().int().positive() }))
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLogic', input);
-      return await navigation.goToPage(input.targetPage);
-    }),
-
-  navigateAllTimeLogicNext: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLogic', input);
-      return await navigation.nextPage();
-    }),
-
-  navigateAllTimeLogicPrevious: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema.nullable())
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLogic', input);
-      return await navigation.previousPage();
-    }),
-
-  navigateAllTimeLogicFirst: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLogic', input);
-      return await navigation.goToFirstPage();
-    }),
-
-  navigateAllTimeLogicLast: publicProcedure
-    .input(leaderboardPageInputSchema)
-    .output(leaderboardPageSchema)
-    .query(async ({ input }) => {
-      const navigation = createLeaderboardNavigation('allTimeLogic', input);
-      return await navigation.goToLastPage();
     }),
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   gameBootstrapResponseSchema,
+  gameCompletedOutcomeSchema,
   gameCompleteSessionInputSchema,
   gameCompleteSessionResponseSchema,
   gameHeartbeatInputSchema,
@@ -28,6 +29,7 @@ import {
   submitGuessForSession,
 } from '../../core/game-service';
 import { getShareCompletionReceipt } from '../../core/share-receipts';
+import { getCompletedLevels, getInventory, getUserProfile } from '../../core/state';
 import { router } from '../base';
 import { authedProcedure, publicProcedure } from '../procedures';
 
@@ -107,6 +109,27 @@ export const gameRouter = router({
       return {
         solveSeconds: receipt?.solveSeconds ?? null,
       };
+    }),
+  getCompletedOutcome: authedProcedure
+    .input(z.object({ levelId: z.string().min(1) }))
+    .query(async ({ input, ctx }) => {
+      const completedLevels = await getCompletedLevels(ctx.userId);
+      if (!completedLevels.has(input.levelId)) {
+        return null;
+      }
+      const [receipt, profile, inventory] = await Promise.all([
+        getShareCompletionReceipt(ctx.userId, input.levelId),
+        getUserProfile(ctx.userId),
+        getInventory(ctx.userId),
+      ]);
+      return gameCompletedOutcomeSchema.parse({
+        levelId: input.levelId,
+        solveSeconds: receipt?.solveSeconds ?? null,
+        score: receipt?.score ?? null,
+        completedAtTs: receipt?.completedAtTs ?? null,
+        profile,
+        inventory,
+      });
     }),
   getCurrentView: publicProcedure
     .input(z.object({ levelId: z.string().min(1) }))

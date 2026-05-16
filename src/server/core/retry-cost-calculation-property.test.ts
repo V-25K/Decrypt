@@ -339,12 +339,8 @@ describe('Property 5: Retry Cost Calculation Correctness', () => {
             if (typeof canAfford !== 'boolean') return false;
             
             return true;
-          } catch (error) {
-            // Only acceptable error is negative retry count
-            if (extremeRetry < 0 && error instanceof Error && error.message.includes('negative')) {
-              return true;
-            }
-            return false; // Unexpected error
+          } catch (_error) {
+            return false;
           }
         }
       ),

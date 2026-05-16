@@ -43,7 +43,9 @@ const readStoredSfxEnabled = (): boolean => {
     return true;
   }
   try {
-    const raw = window.localStorage.getItem(sfxEnabledStorageKey);
+    const raw =
+      window.localStorage.getItem(sfxEnabledStorageKey) ??
+      window.sessionStorage.getItem(sfxEnabledStorageKey);
     if (raw === '0' || raw === 'false') {
       return false;
     }
@@ -159,6 +161,11 @@ const persistSfxEnabled = (enabled: boolean): void => {
   }
   try {
     window.localStorage.setItem(sfxEnabledStorageKey, enabled ? '1' : '0');
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+  try {
+    window.sessionStorage.setItem(sfxEnabledStorageKey, enabled ? '1' : '0');
   } catch (_error) {
     // Ignore storage failures.
   }

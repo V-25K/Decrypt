@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import {
   uiSpriteAssetPath,
   uiSpriteLabel,
   type UiSpriteType,
 } from '../app/constants';
-import { cn } from '../utils';
+import { SpriteImage } from './SpriteImage';
 
 type UiSpriteProps = {
   icon: UiSpriteType;
@@ -21,36 +20,15 @@ export const UiSprite = ({
   decorative = false,
   testId,
 }: UiSpriteProps) => {
-  const [loadError, setLoadError] = useState(false);
   const label = alt ?? uiSpriteLabel[icon];
-
-  if (loadError) {
-    return (
-      <span
-        data-testid={testId}
-        role={decorative ? undefined : 'img'}
-        aria-label={decorative ? undefined : label}
-        aria-hidden={decorative ? 'true' : undefined}
-        className={cn(
-          'ui-sprite inline-flex items-center justify-center rounded bg-gray-300 text-xs font-black text-gray-700',
-          className
-        )}
-      >
-        ?
-      </span>
-    );
-  }
-
   return (
-    <img
-      data-testid={testId}
+    <SpriteImage
       src={uiSpriteAssetPath[icon]}
-      alt={decorative ? '' : label}
-      aria-hidden={decorative ? 'true' : undefined}
-      loading="eager"
-      decoding="async"
-      className={cn('ui-sprite object-contain', className)}
-      onError={() => setLoadError(true)}
+      label={label}
+      spriteClassName="ui-sprite"
+      className={className}
+      decorative={decorative}
+      testId={testId}
     />
   );
 };

@@ -65,8 +65,8 @@ describe('RetryCostCalculator', () => {
       // Zero retries should still cost something (first retry)
       expect(calculator.calculateRetryCost(0, 5)).toBe(35);
       
-      // Should throw error for negative retry count
-      expect(() => calculator.calculateRetryCost(-1, 5)).toThrow('Retry count cannot be negative');
+      // Negative retry counts clamp to the first retry.
+      expect(calculator.calculateRetryCost(-1, 5)).toBe(35);
     });
 
     it('should handle extreme difficulty values', () => {
