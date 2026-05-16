@@ -29,9 +29,6 @@ import {
   tokenizePuzzleTiles,
 } from '../utils';
 import {
-  getOfferPromotionLabel,
-} from '../../shared/store';
-import {
   getChallengeBackgroundAsset,
   getStableChallengeBackgroundIndex,
 } from './challenge-backgrounds';
@@ -152,6 +149,7 @@ import {
   isQuestHidden,
   questCards,
 } from './game-formatters';
+import { getFeaturedOfferView } from './featured-offer-view';
 import {
   canBuyCoinHeartsFromState,
   getHeartState,
@@ -375,11 +373,6 @@ const buyChips = (maxQuantity: number) => [
 ];
 
 const powerupTypes: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
-
-type FeaturedPerk =
-  | { key: 'coins'; sprite: 'coin'; value: number }
-  | { key: 'hearts'; sprite: 'heart'; value: number }
-  | { key: PowerupType; powerup: PowerupType; value: number };
 
 type PowerupValidity = {
   valid: boolean;
@@ -2782,17 +2775,7 @@ export const GameApp = () => {
     ? 'w-[clamp(14px,4.2vw,20px)]'
     : 'w-[clamp(18px,5vw,24px)]';
   const punctuationTileMinWidthClass = isInlineMode ? 'min-w-[2px]' : 'min-w-[4px]';
-  const offerPromotionLabel = featuredOffer ? getOfferPromotionLabel(featuredOffer.sku) : '';
-  const featuredPerks = featuredOffer
-    ? ([
-      { key: 'coins', sprite: 'coin', value: featuredOffer.perks.coins },
-      { key: 'hearts', sprite: 'heart', value: featuredOffer.perks.hearts },
-      { key: 'hammer', powerup: 'hammer', value: featuredOffer.perks.hammer },
-      { key: 'wand', powerup: 'wand', value: featuredOffer.perks.wand },
-      { key: 'shield', powerup: 'shield', value: featuredOffer.perks.shield },
-      { key: 'rocket', powerup: 'rocket', value: featuredOffer.perks.rocket },
-    ] satisfies FeaturedPerk[]).filter((entry) => entry.value > 0)
-    : [];
+  const featuredOfferView = getFeaturedOfferView(featuredOffer);
   const layoutTestId = isInlineMode ? 'layout-inline' : 'layout-expanded-stacked';
   const isHomeScreen = activeScreen === 'home';
   const isShopScreen = activeScreen === 'shop';
@@ -3387,44 +3370,44 @@ export const GameApp = () => {
                         }}
                         disabled={offerBusy}
                         aria-label={`Buy ${featuredOffer.displayName}`}
-	                        title={`${offerPromotionLabel}: ${coinEmoji} x${featuredOffer.perks.coins}, ${powerupLabel.hammer} x${featuredOffer.perks.hammer}, ${powerupLabel.shield} x${featuredOffer.perks.shield}`}
-	                      >
-	                        <div className="flex h-full w-full flex-col justify-center">
-	                          <div className="mb-1 flex shrink-0 flex-col">
-	                            <span
-	                              data-testid="bundle-badge"
-	                              className={`pointer-events-none font-black uppercase leading-none tracking-[0.02em] ${inlineTight ? 'text-[9px]' : deviceTier === 'desktop' ? 'text-[13px]' : deviceTier === 'tablet' ? 'text-[12px]' : 'text-[11px]'}`}
-	                            >
-	                              {offerPromotionLabel}
-	                            </span>
-	                            <span
-	                              className={`${inlineTight ? 'text-[7px]' : deviceTier === 'desktop' ? 'text-[9px]' : 'text-[8px]'} mt-0.5 font-semibold leading-none opacity-70`}
-	                            >
-	                              {featuredOffer.displayName}
-	                            </span>
-	                          </div>
-	                          <div className={`app-text flex min-h-0 flex-1 flex-col justify-center space-y-0.5 overflow-hidden ${bundleRewardRowTextClass}`}>
-		                            {featuredPerks.slice(0, 3).map((perk) => (
-		                              <div key={perk.key} className="flex items-center font-black leading-none">
-		                                {'powerup' in perk ? (
-	                                      <PowerupSprite
-	                                        powerup={perk.powerup}
-	                                        decorative
-	                                        className="h-[16px] w-[16px]"
-	                                      />
-	                                    ) : (
-	                                      <HudSprite
-                                          icon={perk.sprite}
-                                          decorative
-                                          className="h-[16px] w-[16px]"
-                                        />
-	                                    )}
-		                                <span className={`ml-1 ${bundleRewardValueTextClass}`}>x{perk.value}</span>
-		                              </div>
-	                            ))}
-	                          </div>
-	                        </div>
-	                      </button>
+                        title={featuredOfferView.title}
+                      >
+                        <div className="flex h-full w-full flex-col justify-center">
+                          <div className="mb-1 flex shrink-0 flex-col">
+                            <span
+                              data-testid="bundle-badge"
+                              className={`pointer-events-none font-black uppercase leading-none tracking-[0.02em] ${inlineTight ? 'text-[9px]' : deviceTier === 'desktop' ? 'text-[13px]' : deviceTier === 'tablet' ? 'text-[12px]' : 'text-[11px]'}`}
+                            >
+                              {featuredOfferView.promotionLabel}
+                            </span>
+                            <span
+                              className={`${inlineTight ? 'text-[7px]' : deviceTier === 'desktop' ? 'text-[9px]' : 'text-[8px]'} mt-0.5 font-semibold leading-none opacity-70`}
+                            >
+                              {featuredOffer.displayName}
+                            </span>
+                          </div>
+                          <div className={`app-text flex min-h-0 flex-1 flex-col justify-center space-y-0.5 overflow-hidden ${bundleRewardRowTextClass}`}>
+                            {featuredOfferView.perks.slice(0, 3).map((perk) => (
+                              <div key={perk.key} className="flex items-center font-black leading-none">
+                                {'powerup' in perk ? (
+                                  <PowerupSprite
+                                    powerup={perk.powerup}
+                                    decorative
+                                    className="h-[16px] w-[16px]"
+                                  />
+                                ) : (
+                                  <HudSprite
+                                    icon={perk.sprite}
+                                    decorative
+                                    className="h-[16px] w-[16px]"
+                                  />
+                                )}
+                                <span className={`ml-1 ${bundleRewardValueTextClass}`}>x{perk.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </button>
 	                    </section>
 	                  )}
                 </div>
