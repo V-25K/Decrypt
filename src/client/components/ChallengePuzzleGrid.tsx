@@ -12,6 +12,7 @@ import { maxWordTileColumns, wordContinuationGlyph } from '../app/constants';
 import { getPuzzleNavigableTileRows, type PuzzleRenderToken } from '../utils';
 import type { PuzzlePublicTile } from '../app/types';
 import { UiSprite } from './UiSprite';
+import type { ImmutableGameState } from '../app/ImmutableGameState';
 
 type ChallengePuzzleGridProps = {
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -20,13 +21,11 @@ type ChallengePuzzleGridProps = {
   puzzleScale: number;
   puzzleTokenLines: PuzzleRenderToken<PuzzlePublicTile>[][];
   isInlineMode: boolean;
-  selectedTile: number | null;
+  gameState: ImmutableGameState;
   busy: boolean;
   isComplete: boolean;
   isGameOver: boolean;
   pendingGuessByTile: Map<number, string>;
-  correctGuessTileIndices: Set<number>;
-  wrongGuessTileIndices: Set<number>;
   puzzleMarkClass: string;
   puzzleTileUnderlineWidthClass: string;
   puzzleCipherClass: string;
@@ -70,13 +69,11 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
     puzzleScale,
     puzzleTokenLines,
     isInlineMode,
-    selectedTile,
+    gameState,
     busy,
     isComplete,
     isGameOver,
     pendingGuessByTile,
-    correctGuessTileIndices,
-    wrongGuessTileIndices,
     puzzleMarkClass,
     puzzleTileUnderlineWidthClass,
     puzzleCipherClass,
@@ -86,6 +83,9 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
     getLetterTileState,
     getLetterTileClass,
   } = _props;
+  const selectedTile = gameState.selectedTileIndex;
+  const correctGuessTileIndices = gameState.correctGuessIndices;
+  const wrongGuessTileIndices = gameState.wrongGuessIndices;
   const tileButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const navigableTileRows = useMemo(
     () => getPuzzleNavigableTileRows(puzzleTokenLines, maxWordTileColumns),
@@ -351,13 +351,11 @@ export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
   prev.puzzleScale === next.puzzleScale &&
   prev.puzzleTokenLines === next.puzzleTokenLines &&
   prev.isInlineMode === next.isInlineMode &&
-  prev.selectedTile === next.selectedTile &&
+  !next.gameState.hasChanged(prev.gameState) &&
   prev.busy === next.busy &&
   prev.isComplete === next.isComplete &&
   prev.isGameOver === next.isGameOver &&
   prev.pendingGuessByTile === next.pendingGuessByTile &&
-  prev.correctGuessTileIndices === next.correctGuessTileIndices &&
-  prev.wrongGuessTileIndices === next.wrongGuessTileIndices &&
   prev.puzzleMarkClass === next.puzzleMarkClass &&
   prev.puzzleTileUnderlineWidthClass === next.puzzleTileUnderlineWidthClass &&
   prev.puzzleCipherClass === next.puzzleCipherClass &&

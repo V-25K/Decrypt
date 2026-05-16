@@ -10,6 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
 } from 'react';
 import {
   getWebViewMode,
@@ -139,6 +140,7 @@ import {
   questCards,
 } from './game-formatters';
 import { trpc } from '../trpc';
+import { ImmutableGameState } from './ImmutableGameState';
 
 type GuessResult = RouterOutputs['game']['submitGuesses']['results'][number];
 type TileVisualState = 'default' | 'selected' | 'correct' | 'wrong' | 'locked';
@@ -408,7 +410,8 @@ export const GameApp = () => {
   const [mode, setMode] = useState<'daily' | 'endless'>('daily');
   const [heartsRemaining, setHeartsRemaining] = useState(3);
   const [isShieldActive, setIsShieldActive] = useState(false);
-  const [selectedTile, setSelectedTile] = useState<number | null>(null);
+  const [gameState, setGameState] = useState(() => ImmutableGameState.empty());
+  const selectedTile = gameState.selectedTileIndex;
   const [isGameOver, _setIsGameOver] = useState(false);
   const [isComplete, _setIsComplete] = useState(false);
 
@@ -453,8 +456,6 @@ export const GameApp = () => {
   );
   const [buyDialog, setBuyDialog] = useState<BuyDialogState | null>(null);
   const [retryDialog, setRetryDialog] = useState<RetryDialogState | null>(null);
-  const [correctGuessTileIndices, setCorrectGuessTileIndices] = useState<Set<number>>(() => new Set());
-  const [wrongGuessTileIndices, setWrongGuessTileIndices] = useState<Set<number>>(() => new Set());
   const [puzzleScale, setPuzzleScale] = useState(1);
   const [isPuzzleVerticallyCentered, setIsPuzzleVerticallyCentered] = useState(true);
   const [challengeMetrics, setChallengeMetrics] = useState<ChallengeMetrics>(defaultChallengeMetrics);
@@ -478,6 +479,51 @@ export const GameApp = () => {
   const [questError, setQuestError] = useState<string | null>(null);
   const [questTab, setQuestTab] = useState<'daily' | 'milestone'>('daily');
   const [flairSaveBusy, setFlairSaveBusy] = useState(false);
+  const updateGameState = useCallback(
+    (updater: (previous: ImmutableGameState) => ImmutableGameState) => {
+      setGameState((previous) => {
+        const next = updater(previous);
+        return next.hasChanged(previous) ? next : previous;
+      });
+    },
+    []
+  );
+  const setSelectedTile = useCallback(
+    (value: SetStateAction<number | null>) => {
+      updateGameState((previous) =>
+        previous.setSelectedTileIndex(
+          typeof value === 'function' ? value(previous.selectedTileIndex) : value
+        )
+      );
+    },
+    [updateGameState]
+  );
+  const setCorrectGuessTileIndices = useCallback(
+    (value: SetStateAction<ReadonlySet<number>>) => {
+      updateGameState((previous) =>
+        previous.setCorrectGuessIndices(
+          new Set(
+            typeof value === 'function'
+              ? value(previous.correctGuessIndices)
+              : value
+          )
+        )
+      );
+    },
+    [updateGameState]
+  );
+  const setWrongGuessTileIndices = useCallback(
+    (value: SetStateAction<ReadonlySet<number>>) => {
+      updateGameState((previous) =>
+        previous.setWrongGuessIndices(
+          new Set(
+            typeof value === 'function' ? value(previous.wrongGuessIndices) : value
+          )
+        )
+      );
+    },
+    [updateGameState]
+  );
   const hasClaimableQuest = useMemo(() => {
     if (!questStatus) {
       return false;
@@ -875,7 +921,7 @@ export const GameApp = () => {
       setCorrectGuessTileIndices(restored);
       persistCorrectGuessIndices(storageUserId, activeLevelId, restored);
     },
-    []
+    [setCorrectGuessTileIndices]
   );
 
   const refreshCurrentView = async (activeLevelId: string): Promise<Puzzle> => {
@@ -1079,9 +1125,13 @@ export const GameApp = () => {
       window.clearTimeout(timeoutId);
     });
     wrongGuessTimeoutsRef.current.clear();
-    setCorrectGuessTileIndices(new Set());
-    setWrongGuessTileIndices(new Set());
-  }, []);
+    updateGameState((previous) =>
+      previous.update({
+        correctGuessIndices: new Set(),
+        wrongGuessIndices: new Set(),
+      })
+    );
+  }, [updateGameState]);
 
   const flashWrongTile = (tileIndex: number) => {
     setWrongGuessTileIndices((previous) => {
@@ -3442,13 +3492,11 @@ export const GameApp = () => {
               puzzleScale={puzzleScale}
               puzzleTokenLines={puzzleTokenLines}
               isInlineMode={isInlineMode}
-              selectedTile={selectedTile}
+              gameState={gameState}
               busy={busy}
               isComplete={isComplete}
               isGameOver={isGameOver}
               pendingGuessByTile={pendingGuessByTile}
-              correctGuessTileIndices={correctGuessTileIndices}
-              wrongGuessTileIndices={wrongGuessTileIndices}
               puzzleMarkClass={puzzleMarkClass}
               puzzleTileUnderlineWidthClass={puzzleTileUnderlineWidthClass}
               puzzleCipherClass={puzzleCipherClass}
