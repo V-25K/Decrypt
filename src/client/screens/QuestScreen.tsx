@@ -16,9 +16,7 @@ type QuestScreenProps = {
   questError: string | null;
   onRetry: () => void;
   visibleDailyQuests: QuestDefinition[];
-  questCards: QuestDefinition[];
-  visibleMilestoneIds: Set<string>;
-  groupedQuestIds: Set<string>;
+  visibleMilestoneQuests: QuestDefinition[];
   claimedQuestIdSet: Set<string>;
   claimingQuestId: string | null;
   onClaimQuest: (questId: string) => void;
@@ -28,11 +26,6 @@ type QuestScreenProps = {
   };
   flairTagStyle: (flair: string) => CSSProperties | undefined;
   getQuestProgressValue: (quest: QuestDefinition, progress: QuestProgress) => number;
-  isQuestHidden: (
-    quest: QuestDefinition,
-    progress: QuestProgress,
-    claimedSet: Set<string>
-  ) => boolean;
 };
 
 type QuestCardProps = {
@@ -128,16 +121,13 @@ export const QuestScreen = ({
   questError,
   onRetry,
   visibleDailyQuests,
-  questCards,
-  visibleMilestoneIds,
-  groupedQuestIds,
+  visibleMilestoneQuests,
   claimedQuestIdSet,
   claimingQuestId,
   onClaimQuest,
   formatQuestReward,
   flairTagStyle,
   getQuestProgressValue,
-  isQuestHidden,
 }: QuestScreenProps) => (
   <section className="hub-screen app-surface flex min-h-0 flex-1 flex-col" data-testid="quest-screen">
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
@@ -196,26 +186,19 @@ export const QuestScreen = ({
             )}
             {questTab === 'milestone' && (
               <section className="space-y-2">
-                {questCards
-                  .filter(
-                    (quest) =>
-                      quest.category === 'milestone' &&
-                      !isQuestHidden(quest, questStatus.progress, claimedQuestIdSet) &&
-                      (!groupedQuestIds.has(quest.id) || visibleMilestoneIds.has(quest.id))
-                  )
-                  .map((quest) => (
-                    <QuestCard
-                      key={quest.id}
-                      quest={quest}
-                      progress={questStatus.progress}
-                      claimedQuestIdSet={claimedQuestIdSet}
-                      claimingQuestId={claimingQuestId}
-                      onClaimQuest={onClaimQuest}
-                      formatQuestReward={formatQuestReward}
-                      flairTagStyle={flairTagStyle}
-                      getQuestProgressValue={getQuestProgressValue}
-                    />
-                  ))}
+                {visibleMilestoneQuests.map((quest) => (
+                  <QuestCard
+                    key={quest.id}
+                    quest={quest}
+                    progress={questStatus.progress}
+                    claimedQuestIdSet={claimedQuestIdSet}
+                    claimingQuestId={claimingQuestId}
+                    onClaimQuest={onClaimQuest}
+                    formatQuestReward={formatQuestReward}
+                    flairTagStyle={flairTagStyle}
+                    getQuestProgressValue={getQuestProgressValue}
+                  />
+                ))}
               </section>
             )}
           </>

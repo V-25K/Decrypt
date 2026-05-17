@@ -145,9 +145,6 @@ import {
   formatQuestReward,
   formatRankLabel,
   formatStatDuration,
-  getVisibleMilestoneIds,
-  groupedQuestIds,
-  isQuestHidden,
   questCards,
 } from './game-formatters';
 import { getFeaturedOfferView } from './featured-offer-view';
@@ -155,6 +152,7 @@ import {
   canBuyCoinHeartsFromState,
   getHeartState,
 } from './heart-state';
+import { getQuestVisibilityView } from './quest-view';
 import {
   addWrongGuessTileInGameState,
   applyServerPuzzleViewToGameState,
@@ -2832,19 +2830,12 @@ export const GameApp = () => {
   const homePanelClass = deviceTier === 'mobile'
     ? 'mx-auto mt-3 w-full max-w-[340px] space-y-3'
     : 'mx-auto mt-4 w-full max-w-[520px] space-y-4';
-  const claimedQuestIdSet = new Set(questStatus?.claimedQuestIds ?? []);
-  const visibleDailyQuests =
-    questStatus?.progress == null
-      ? []
-      : questCards.filter(
-          (quest) =>
-            quest.category === 'daily' &&
-            !isQuestHidden(quest, questStatus.progress, claimedQuestIdSet)
-        );
-  const visibleMilestoneIds =
-    questStatus && questStatus.progress
-      ? getVisibleMilestoneIds(questStatus.progress, claimedQuestIdSet)
-      : new Set<string>();
+  const questVisibilityView = getQuestVisibilityView(questStatus);
+  const {
+    claimedQuestIdSet,
+    visibleDailyQuests,
+    visibleMilestoneQuests,
+  } = questVisibilityView;
   const inlinePromoClusterClass = inlineTight
     ? '-ml-[28px] h-[104px] w-[168px]'
     : deviceTier === 'desktop'
@@ -3516,16 +3507,13 @@ export const GameApp = () => {
                 questError={questError}
                 onRetry={() => void loadQuestStatus()}
                 visibleDailyQuests={visibleDailyQuests}
-                questCards={questCards}
-                visibleMilestoneIds={visibleMilestoneIds}
-                groupedQuestIds={groupedQuestIds}
+                visibleMilestoneQuests={visibleMilestoneQuests}
                 claimedQuestIdSet={claimedQuestIdSet}
                 claimingQuestId={claimingQuestId}
                 onClaimQuest={(questId) => void handleQuestClaim(questId)}
                 formatQuestReward={formatQuestReward}
                 flairTagStyle={flairTagStyle}
                 getQuestProgressValue={getQuestProgressValue}
-                isQuestHidden={isQuestHidden}
               />
             </Suspense>
           )}
