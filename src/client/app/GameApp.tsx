@@ -137,12 +137,12 @@ import {
   flairChipStyle,
   flairTagStyle,
   formatChallengeType,
-  formatCountdown,
   formatDifficultyLabel,
   formatLeaderboardName,
   formatQuestReward,
   formatStatDuration,
 } from './game-formatters';
+import { getBonusTimerView } from './bonus-timer-view';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
   canBuyCoinHeartsFromState,
@@ -2693,26 +2693,19 @@ export const GameApp = () => {
     : { valid: true, reason: null };
   const hasQueuedGuesses = queuedGuessCount > 0;
   const guessBusy = guessInFlight || hasQueuedGuesses;
-  const fastSolveThresholdSeconds =
-    typeof puzzle.targetTimeSeconds === 'number' && puzzle.targetTimeSeconds > 0
-      ? Math.round(puzzle.targetTimeSeconds)
-      : null;
-  const bonusTimerRemainingMs =
-    fastSolveThresholdSeconds !== null && challengeStartTs !== null
-      ? Math.max(
-          0,
-          challengeStartTs + fastSolveThresholdSeconds * 1000 - headerNowTs
-        )
-      : 0;
-  const bonusTimerSecondsLeft = Math.ceil(bonusTimerRemainingMs / 1000);
-  const showBonusTimer =
-    fastSolveThresholdSeconds !== null &&
-    challengeStartTs !== null &&
-    bonusTimerRemainingMs > 0 &&
-    isChallengeScreen &&
-    !isComplete &&
-    !isGameOver;
-  const bonusTimerCountdownLabel = formatCountdown(bonusTimerRemainingMs);
+  const bonusTimerView = getBonusTimerView({
+    challengeStartTs,
+    isChallengeScreen,
+    isComplete,
+    isGameOver,
+    nowTs: headerNowTs,
+    targetTimeSeconds: puzzle.targetTimeSeconds,
+  });
+  const {
+    countdownLabel: bonusTimerCountdownLabel,
+    secondsLeft: bonusTimerSecondsLeft,
+    showTimer: showBonusTimer,
+  } = bonusTimerView;
   const responsiveLayoutState = getResponsiveLayoutState(viewportWidth, isInlineMode);
   const {
     deviceTier,
