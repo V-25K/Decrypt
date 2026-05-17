@@ -1,12 +1,8 @@
 import type { CSSProperties } from 'react';
+import type { StatsCard } from '../app/stats-view';
 import { tabButtonClass } from '../app/ui';
 import type { Profile, StatsTab } from '../app/types';
 import { cn } from '../utils';
-
-type StatsCard = {
-  label: string;
-  value: string;
-};
 
 type StatsScreenProps = {
   statsTab: StatsTab;

@@ -134,7 +134,6 @@ import {
   type OutcomeCrowdViewport,
 } from './outcome-crowd';
 import {
-  computeAverageSolveSeconds,
   flairChipStyle,
   flairTagStyle,
   formatChallengeType,
@@ -142,7 +141,6 @@ import {
   formatDifficultyLabel,
   formatLeaderboardName,
   formatQuestReward,
-  formatRankLabel,
   formatStatDuration,
 } from './game-formatters';
 import { getFeaturedOfferView } from './featured-offer-view';
@@ -152,6 +150,7 @@ import {
 } from './heart-state';
 import { getQuestVisibilityView } from './quest-view';
 import { getResponsiveLayoutState } from './responsive-layout';
+import { getStatsView } from './stats-view';
 import {
   addWrongGuessTileInGameState,
   applyServerPuzzleViewToGameState,
@@ -2808,53 +2807,18 @@ export const GameApp = () => {
     maxWordTileColumns
   );
   const puzzleNavigableTileIndices = puzzleNavigableTileRows.flatMap((row) => row);
-	  const activeLeaderboardRank =
-    leaderboardTab === 'daily'
-      ? rankSummary?.dailyRank ?? null
-      : rankSummary?.endlessRank ?? null;
-  const dailyAvgSolveSeconds = computeAverageSolveSeconds(
-    profile.dailySolveTimeTotalSec,
-    profile.dailyModeClears
-  );
-  const endlessAvgSolveSeconds = computeAverageSolveSeconds(
-    profile.endlessSolveTimeTotalSec,
-    profile.endlessModeClears
-  );
-  const dailyStatCards = [
-    { label: 'Levels Cleared', value: profile.dailyModeClears.toLocaleString() },
-    { label: 'Avg Solve Time', value: formatStatDuration(dailyAvgSolveSeconds) },
-    { label: 'Current Streak', value: profile.dailyCurrentStreak.toLocaleString() },
-    { label: 'Flawless Wins', value: profile.dailyFlawlessWins.toLocaleString() },
-    { label: 'Speed Wins', value: profile.dailySpeedWins.toLocaleString() },
-    { label: 'Challenges Played', value: profile.dailyChallengesPlayed.toLocaleString() },
-    { label: 'First Try Wins', value: profile.dailyFirstTryWins.toLocaleString() },
-  ];
-  const endlessStatCards = [
-    { label: 'Levels Cleared', value: profile.endlessModeClears.toLocaleString() },
-    { label: 'Avg Solve Time', value: formatStatDuration(endlessAvgSolveSeconds) },
-    { label: 'Current Streak', value: profile.endlessCurrentStreak.toLocaleString() },
-    { label: 'Flawless Wins', value: profile.endlessFlawlessWins.toLocaleString() },
-    { label: 'Speed Wins', value: profile.endlessSpeedWins.toLocaleString() },
-    { label: 'Challenges Played', value: profile.endlessChallengesPlayed.toLocaleString() },
-    { label: 'First Try Wins', value: profile.endlessFirstTryWins.toLocaleString() },
-  ];
-  const activeStatsCards =
-    statsTab === 'daily' ? dailyStatCards : endlessStatCards;
+  const statsView = getStatsView({
+    leaderboardTab,
+    profile,
+    rankSummary,
+    statsTab,
+  });
+  const {
+    activeLeaderboardRank,
+    visibleStatsCards,
+  } = statsView;
   const unlockedFlairs = profile.unlockedFlairs;
   const equippedFlairStyle = flairChipStyle(profile.activeFlair, true);
-  const activeStatsRank =
-    statsTab === 'daily'
-      ? rankSummary?.dailyRank ?? null
-      : rankSummary?.endlessRank ?? null;
-  const globalStatsCards = [
-    { label: 'Quest Completed', value: profile.questsCompleted.toLocaleString() },
-    { label: 'Current Rank', value: formatRankLabel(activeStatsRank) },
-    {
-      label: 'All-Time Best Ranking',
-      value: formatRankLabel(rankSummary?.bestOverallRank ?? profile.bestOverallRank),
-    },
-  ];
-  const visibleStatsCards = [...activeStatsCards, ...globalStatsCards];
 
   const focusInlineInputProxy = () => {
     const input = inlineInputRef.current;
