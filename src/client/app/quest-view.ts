@@ -1,4 +1,7 @@
-import type { QuestDefinition } from '../../shared/quests';
+import {
+  getQuestProgressValue,
+  type QuestDefinition,
+} from '../../shared/quests';
 import {
   getVisibleMilestoneIds,
   groupedQuestIds,
@@ -9,6 +12,7 @@ import type { QuestStatus } from './types';
 
 export type QuestVisibilityView = {
   claimedQuestIdSet: Set<string>;
+  hasClaimableQuest: boolean;
   visibleDailyQuests: QuestDefinition[];
   visibleMilestoneIds: Set<string>;
   visibleMilestoneQuests: QuestDefinition[];
@@ -22,6 +26,7 @@ export const getQuestVisibilityView = (
   if (questStatus?.progress == null) {
     return {
       claimedQuestIdSet,
+      hasClaimableQuest: false,
       visibleDailyQuests: [],
       visibleMilestoneIds: new Set<string>(),
       visibleMilestoneQuests: [],
@@ -43,9 +48,14 @@ export const getQuestVisibilityView = (
       !isQuestHidden(quest, questStatus.progress, claimedQuestIdSet) &&
       (!groupedQuestIds.has(quest.id) || visibleMilestoneIds.has(quest.id))
   );
+  const hasClaimableQuest = allQuestCards.some((quest) => {
+    const current = getQuestProgressValue(quest, questStatus.progress);
+    return current >= quest.target && !claimedQuestIdSet.has(quest.id);
+  });
 
   return {
     claimedQuestIdSet,
+    hasClaimableQuest,
     visibleDailyQuests,
     visibleMilestoneIds,
     visibleMilestoneQuests,

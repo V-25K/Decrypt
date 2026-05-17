@@ -145,7 +145,6 @@ import {
   formatQuestReward,
   formatRankLabel,
   formatStatDuration,
-  questCards,
 } from './game-formatters';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
@@ -535,16 +534,11 @@ export const GameApp = () => {
     },
     [updateGameState]
   );
-  const hasClaimableQuest = useMemo(() => {
-    if (!questStatus) {
-      return false;
-    }
-    const claimedSet = new Set(questStatus.claimedQuestIds ?? []);
-    return questCards.some((quest) => {
-      const current = getQuestProgressValue(quest, questStatus.progress);
-      return current >= quest.target && !claimedSet.has(quest.id);
-    });
-  }, [questStatus]);
+  const questVisibilityView = useMemo(
+    () => getQuestVisibilityView(questStatus),
+    [questStatus]
+  );
+  const { hasClaimableQuest } = questVisibilityView;
   const [claimingQuestId, setClaimingQuestId] = useState<string | null>(null);
   const [joiningCommunity, setJoiningCommunity] = useState(false);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>('daily');
@@ -2830,7 +2824,6 @@ export const GameApp = () => {
   const homePanelClass = deviceTier === 'mobile'
     ? 'mx-auto mt-3 w-full max-w-[340px] space-y-3'
     : 'mx-auto mt-4 w-full max-w-[520px] space-y-4';
-  const questVisibilityView = getQuestVisibilityView(questStatus);
   const {
     claimedQuestIdSet,
     visibleDailyQuests,

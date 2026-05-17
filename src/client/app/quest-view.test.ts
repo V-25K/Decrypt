@@ -37,6 +37,7 @@ describe('getQuestVisibilityView', () => {
     const view = getQuestVisibilityView(null);
 
     expect(view.claimedQuestIdSet.size).toBe(0);
+    expect(view.hasClaimableQuest).toBe(false);
     expect(view.visibleDailyQuests).toEqual([]);
     expect(view.visibleMilestoneIds.size).toBe(0);
     expect(view.visibleMilestoneQuests).toEqual([]);
@@ -48,8 +49,15 @@ describe('getQuestVisibilityView', () => {
     );
 
     expect(view.claimedQuestIdSet.has('daily_play_1')).toBe(true);
+    expect(view.hasClaimableQuest).toBe(false);
     expect(view.visibleDailyQuests.map((quest) => quest.id)).not.toContain('daily_play_1');
     expect(view.visibleDailyQuests.map((quest) => quest.id)).toContain('daily_play_2');
+  });
+
+  it('marks the quest badge when any visible quest can be claimed', () => {
+    const view = getQuestVisibilityView(status({}, { dailyPlayCount: 1 }));
+
+    expect(view.hasClaimableQuest).toBe(true);
   });
 
   it('shows only the next visible quest from grouped milestone progressions', () => {
