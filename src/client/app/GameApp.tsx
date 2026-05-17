@@ -145,6 +145,10 @@ import {
 import { getBonusTimerView } from './bonus-timer-view';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
+  getPowerupValidityForPuzzle,
+  type PowerupValidity,
+} from './powerup-validity';
+import {
   canBuyCoinHeartsFromState,
   getHeartState,
 } from './heart-state';
@@ -370,11 +374,6 @@ const buyChips = (maxQuantity: number) => [
 ];
 
 const powerupTypes: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
-
-type PowerupValidity = {
-  valid: boolean;
-  reason: string | null;
-};
 
 type HeartPurchaseLimitStatus = {
   purchasesToday: number;
@@ -945,42 +944,12 @@ export const GameApp = () => {
 
   const getPowerupValidity = useCallback(
     (item: PowerupType): PowerupValidity => {
-      if (!puzzle) {
-        return { valid: false, reason: 'Level data is unavailable.' };
-      }
-      const unrevealedUnlockedTiles = puzzle.tiles.filter(
-        (tile) => tile.isLetter && tile.displayChar === '_' && !tile.isLocked
-      );
-      const unlockedIncompleteWords = tokens.filter(
-        (token) =>
-          token.type === 'word' &&
-          token.tiles.some(
-            (tile) =>
-              tile.isLetter &&
-              tile.displayChar === '_' &&
-              !tile.isLocked &&
-              !tile.isBlind
-          )
-      );
-
-      switch (item) {
-        case 'hammer':
-          return unrevealedUnlockedTiles.length === 0
-            ? { valid: false, reason: 'No unlocked tiles left to reveal.' }
-            : { valid: true, reason: null };
-        case 'wand':
-          return unlockedIncompleteWords.length === 0
-            ? { valid: false, reason: 'No unlocked words available.' }
-            : { valid: true, reason: null };
-        case 'rocket':
-          return unrevealedUnlockedTiles.length < 3
-            ? { valid: false, reason: 'Not enough unlocked tiles for Rocket.' }
-            : { valid: true, reason: null };
-        case 'shield':
-          return isShieldActive
-            ? { valid: false, reason: 'Shield is already active.' }
-            : { valid: true, reason: null };
-      }
+      return getPowerupValidityForPuzzle({
+        isShieldActive,
+        item,
+        puzzle,
+        tokens,
+      });
     },
     [isShieldActive, puzzle, tokens]
   );
