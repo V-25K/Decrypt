@@ -1,4 +1,3 @@
-import React from 'react';
 import type { Puzzle, PuzzlePublicTile } from './types';
 
 /**
@@ -310,21 +309,5 @@ export class ImmutableGameState {
     }
     return true;
   }
-}
-
-/**
- * React hook for using ImmutableGameState with automatic change detection
- */
-export function useImmutableGameState(initialState?: ImmutableGameState) {
-  const [state, setState] = React.useState(initialState || ImmutableGameState.empty());
-  
-  const updateState = React.useCallback((updater: (prev: ImmutableGameState) => ImmutableGameState) => {
-    setState(prev => {
-      const next = updater(prev);
-      return next.hasChanged(prev) ? next : prev;
-    });
-  }, []);
-
-  return [state, updateState] as const;
 }
 

@@ -27,6 +27,10 @@ import {
 import { getChallengeBackgroundAsset } from './challenge-backgrounds';
 import { getAppViewState } from './app-view-state';
 import {
+  appRuntimeReducer,
+  initialAppRuntimeState,
+} from './app-runtime-state';
+import {
   buildActiveChallengeSessionPatch,
   buildCompleteChallengeSessionPatch,
   buildGameOverChallengeSessionPatch,
@@ -177,13 +181,20 @@ import {
   type GuessQueueEntry,
 } from './guess-queue';
 import {
+  guessWorkReducer,
+  initialGuessWorkState,
+} from './guess-work-state';
+import {
   buildGuessSessionPatch,
   getRevealedIndicesForAnimation,
   getRevealedTilesFromGuessResult,
   isLockedGuessResult,
-  removePendingGuessEntries,
   shouldRefreshPuzzleViewAfterGuess,
 } from './guess-result';
+import {
+  createInitialLayoutTimingState,
+  layoutTimingReducer,
+} from './layout-timing-state';
 import {
   applyRevealedTiles,
   buildCompletionQuote,
@@ -351,13 +362,16 @@ const defaultChallengeMetrics: ChallengeMetrics = {
 };
 
 export const GameApp = () => {
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [guessInFlight, setGuessInFlight] = useState(false);
-  const [queuedGuessCount, setQueuedGuessCount] = useState(0);
-  const [pendingGuessByTile, setPendingGuessByTile] = useState<Map<number, string>>(
-    () => new Map()
+  const [appRuntimeState, dispatchAppRuntime] = useReducer(
+    appRuntimeReducer,
+    initialAppRuntimeState
   );
+  const { bootstrapAttempt, bootstrapError, busy, loading } = appRuntimeState;
+  const [guessWorkState, dispatchGuessWork] = useReducer(
+    guessWorkReducer,
+    initialGuessWorkState
+  );
+  const { guessInFlight, pendingGuessByTile, queuedGuessCount } = guessWorkState;
   const [profile, setProfile] = useState<Profile | null>(null);
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [subredditName, setSubredditName] = useState<string | null>(null);
@@ -411,8 +425,21 @@ export const GameApp = () => {
     isSettingsOpen,
     retryDialog,
   } = uiOverlayState;
-  const [puzzleScale, setPuzzleScale] = useState(1);
-  const [isPuzzleVerticallyCentered, setIsPuzzleVerticallyCentered] = useState(true);
+  const [layoutTimingState, dispatchLayoutTiming] = useReducer(
+    layoutTimingReducer,
+    undefined,
+    () =>
+      createInitialLayoutTimingState({
+        headerNowTs: Date.now(),
+        viewportWidth: window.innerWidth,
+      })
+  );
+  const {
+    headerNowTs,
+    isPuzzleVerticallyCentered,
+    puzzleScale,
+    viewportWidth,
+  } = layoutTimingState;
   const [challengeMetrics, setChallengeMetrics] = useState<ChallengeMetrics>(defaultChallengeMetrics);
   const [dailyRetryCount, setDailyRetryCount] = useState(0);
   const [nextDailyRetryCost, setNextDailyRetryCost] = useState(0);
@@ -422,8 +449,6 @@ export const GameApp = () => {
   const [coinHeartLimitReached, setCoinHeartLimitReached] = useState(false);
   const [heartPurchaseLimitStatus, setHeartPurchaseLimitStatus] =
     useState<HeartPurchaseLimitStatus | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  const [headerNowTs, setHeaderNowTs] = useState(() => Date.now());
   const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => isSfxEnabled());
   const [audioPreferenceBusy, setAudioPreferenceBusy] = useState(false);
   const [questStatus, setQuestStatus] = useState<QuestStatus | null>(null);
@@ -483,8 +508,6 @@ export const GameApp = () => {
     rankSummary,
     statsTab,
   } = leaderboardStatsUiState;
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
-  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const {
@@ -663,9 +686,7 @@ export const GameApp = () => {
   useEffect(() => {
     guessQueueRef.current = [];
     processingGuessRef.current = false;
-    setGuessInFlight(false);
-    setQueuedGuessCount(0);
-    setPendingGuessByTile(new Map());
+    dispatchGuessWork({ type: 'reset' });
   }, [levelId, isGameOver, isComplete]);
 
   const refreshBootstrapState = useCallback(async () => {
@@ -948,7 +969,7 @@ export const GameApp = () => {
       isGameOver: false,
       isShieldActive: false,
     });
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       const loaded = await trpc.game.loadLevel.query({
         mode: nextMode,
@@ -1003,7 +1024,7 @@ export const GameApp = () => {
       }
       await refreshCurrentView(loaded.levelId);
     } finally {
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -1014,7 +1035,7 @@ export const GameApp = () => {
     completionInProgressRef.current = true;
     const activeLevelId = levelId;
     const activeMode = mode;
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     const fallbackSolveSeconds =
       challengeStartTs !== null
         ? Math.max(0, Math.round((Date.now() - challengeStartTs) / 1000))
@@ -1067,7 +1088,7 @@ export const GameApp = () => {
       }
     } finally {
       completionInProgressRef.current = false;
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -1088,9 +1109,9 @@ export const GameApp = () => {
     let cancelDeferredNonCritical: () => void = () => undefined;
     const run = async () => {
       if (isComplete) return;
-      setLoading(true);
-      setBusy(true);
-      setBootstrapError(null);
+      dispatchAppRuntime({ type: 'setLoading', update: true });
+      dispatchAppRuntime({ type: 'setBusy', update: true });
+      dispatchAppRuntime({ type: 'setBootstrapError', update: null });
       try {
         const [loaded, bootstrap] = await Promise.all([
           trpc.game.loadLevel.query({ mode: 'daily' }),
@@ -1174,16 +1195,18 @@ export const GameApp = () => {
         applyServerPuzzleView(loaded.levelId, view, { resetSelection: true });
       } catch (error) {
         if (!cancelled) {
-          setBootstrapError(
-            error instanceof Error && error.message.trim().length > 0
-              ? `Unable to start Decrypt: ${error.message}`
-              : 'Unable to start Decrypt right now.'
-          );
+          dispatchAppRuntime({
+            type: 'setBootstrapError',
+            update:
+              error instanceof Error && error.message.trim().length > 0
+                ? `Unable to start Decrypt: ${error.message}`
+                : 'Unable to start Decrypt right now.',
+          });
         }
       } finally {
         if (!cancelled) {
-          setBusy(false);
-          setLoading(false);
+          dispatchAppRuntime({ type: 'setBusy', update: false });
+          dispatchAppRuntime({ type: 'setLoading', update: false });
         }
       }
     };
@@ -1216,9 +1239,9 @@ export const GameApp = () => {
     if (activeScreen !== 'challenge' || isComplete || isGameOver) {
       return;
     }
-    setHeaderNowTs(Date.now());
+    dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs: Date.now() });
     const intervalId = window.setInterval(() => {
-      setHeaderNowTs(Date.now());
+      dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs: Date.now() });
     }, 1000);
     return () => window.clearInterval(intervalId);
   }, [activeScreen, isComplete, isGameOver]);
@@ -1350,7 +1373,11 @@ export const GameApp = () => {
   }, []);
 
   useEffect(() => {
-    const syncViewportWidth = () => setViewportWidth(window.innerWidth);
+    const syncViewportWidth = () =>
+      dispatchLayoutTiming({
+        type: 'setViewportWidth',
+        viewportWidth: window.innerWidth,
+      });
     window.addEventListener('resize', syncViewportWidth);
     return () => window.removeEventListener('resize', syncViewportWidth);
   }, []);
@@ -1429,9 +1456,13 @@ export const GameApp = () => {
       const widthRatio = viewport.clientWidth / content.scrollWidth;
       const heightRatio = viewport.clientHeight / content.scrollHeight;
       const nextScale = Math.min(1, widthRatio, heightRatio);
-      setPuzzleScale(nextScale);
       const scaledContentHeight = content.scrollHeight * nextScale;
-      setIsPuzzleVerticallyCentered(scaledContentHeight <= viewport.clientHeight - 6);
+      dispatchLayoutTiming({
+        type: 'setPuzzleFit',
+        isPuzzleVerticallyCentered:
+          scaledContentHeight <= viewport.clientHeight - 6,
+        puzzleScale: nextScale,
+      });
     };
     const frameId = window.requestAnimationFrame(fitPuzzle);
     window.addEventListener('resize', fitPuzzle);
@@ -1479,9 +1510,11 @@ export const GameApp = () => {
         : null
     );
     const revealedTiles = getRevealedTilesFromGuessResult(result);
-    setPendingGuessByTile((previous) =>
-      removePendingGuessEntries(previous, tileIndex, revealedTiles)
-    );
+    dispatchGuessWork({
+      type: 'clearPendingGuessEntries',
+      revealedTiles,
+      tileIndex,
+    });
     if (isLockedGuessResult(result)) {
       showToast('This tile is still locked.');
     }
@@ -1603,12 +1636,15 @@ export const GameApp = () => {
       return;
     }
     processingGuessRef.current = true;
-    setGuessInFlight(true);
+    dispatchGuessWork({ type: 'setGuessInFlight', update: true });
     try {
       let stopProcessing = false;
       while (guessQueueRef.current.length > 0) {
         const batch = guessQueueRef.current.splice(0, guessQueueRef.current.length);
-        setQueuedGuessCount(guessQueueRef.current.length);
+        dispatchGuessWork({
+          type: 'syncQueuedGuessCount',
+          queuedGuessCount: guessQueueRef.current.length,
+        });
         if (batch.length === 0) {
           continue;
         }
@@ -1631,7 +1667,10 @@ export const GameApp = () => {
               singleResult?.isLevelComplete === true
             ) {
               guessQueueRef.current = [];
-              setQueuedGuessCount(0);
+              dispatchGuessWork({
+                type: 'syncQueuedGuessCount',
+                queuedGuessCount: 0,
+              });
               stopProcessing = true;
             }
           }
@@ -1660,7 +1699,10 @@ export const GameApp = () => {
                 singleResult?.isLevelComplete === true
               ) {
                 guessQueueRef.current = [];
-                setQueuedGuessCount(0);
+                dispatchGuessWork({
+                  type: 'syncQueuedGuessCount',
+                  queuedGuessCount: 0,
+                });
                 stopProcessing = true;
               }
             }
@@ -1691,7 +1733,10 @@ export const GameApp = () => {
               puzzleRef.current = optimisticPuzzle;
               if (guessResult.isGameOver || guessResult.isLevelComplete) {
                 guessQueueRef.current = [];
-                setQueuedGuessCount(0);
+                dispatchGuessWork({
+                  type: 'syncQueuedGuessCount',
+                  queuedGuessCount: 0,
+                });
                 stopProcessing = true;
                 break;
               }
@@ -1712,7 +1757,10 @@ export const GameApp = () => {
                 singleResult?.isLevelComplete === true
               ) {
                 guessQueueRef.current = [];
-                setQueuedGuessCount(0);
+                dispatchGuessWork({
+                  type: 'syncQueuedGuessCount',
+                  queuedGuessCount: 0,
+                });
                 stopProcessing = true;
                 break;
               }
@@ -1728,19 +1776,21 @@ export const GameApp = () => {
       }
     } finally {
       processingGuessRef.current = false;
-      setGuessInFlight(false);
-      setQueuedGuessCount(guessQueueRef.current.length);
+      dispatchGuessWork({ type: 'setGuessInFlight', update: false });
+      dispatchGuessWork({
+        type: 'syncQueuedGuessCount',
+        queuedGuessCount: guessQueueRef.current.length,
+      });
     }
   };
 
 	  const enqueueGuess = (letter: string, tileIndex: number) => {
-		    setPendingGuessByTile((previous) => {
-		      const next = new Map(previous);
-		      next.set(tileIndex, letter);
-      return next;
-    });
+    dispatchGuessWork({ type: 'markPendingGuess', letter, tileIndex });
     guessQueueRef.current.push({ levelId, tileIndex, letter });
-	    setQueuedGuessCount(guessQueueRef.current.length);
+    dispatchGuessWork({
+      type: 'syncQueuedGuessCount',
+      queuedGuessCount: guessQueueRef.current.length,
+    });
 	    void processGuessQueue();
 	  };
 
@@ -1782,7 +1832,7 @@ export const GameApp = () => {
         }
       }
     }
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       const used = await trpc.powerup.use.mutate({
         levelId,
@@ -1822,7 +1872,7 @@ export const GameApp = () => {
         await finishLevel();
       }
     } finally {
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -1894,7 +1944,7 @@ export const GameApp = () => {
       return;
     }
     const quantity = Math.max(1, Math.min(buyDialog.quantity, max));
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       const bought = await trpc.powerup.purchase.mutate({
         levelId,
@@ -1909,7 +1959,7 @@ export const GameApp = () => {
       setInventory(bought.inventory);
       setBuyDialog(null);
     } finally {
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -2177,7 +2227,7 @@ export const GameApp = () => {
     if (!levelId) {
       return;
     }
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       const result = await trpc.game.purchaseDailyRetry.mutate({
         levelId,
@@ -2217,7 +2267,7 @@ export const GameApp = () => {
           : 'Unable to start daily retry.';
       showToast(message);
     } finally {
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -2305,13 +2355,13 @@ export const GameApp = () => {
       openRetryDialog();
       return;
     }
-    setBusy(true);
+    dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       await startLevel(levelId, mode);
       await refreshCurrentView(levelId);
       patchChallengeSession({ isGameOver: false });
     } finally {
-      setBusy(false);
+      dispatchAppRuntime({ type: 'setBusy', update: false });
     }
   };
 
@@ -2357,7 +2407,9 @@ export const GameApp = () => {
             type="button"
             data-testid="bootstrap-retry"
             className="btn-3d btn-primary mt-4 rounded-xl px-4 py-2 text-sm font-black uppercase"
-            onClick={() => setBootstrapAttempt((previous) => previous + 1)}
+            onClick={() =>
+              dispatchAppRuntime({ type: 'incrementBootstrapAttempt' })
+            }
           >
             Retry
           </button>

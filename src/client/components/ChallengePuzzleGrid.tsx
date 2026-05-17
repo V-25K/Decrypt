@@ -61,28 +61,27 @@ const splitWordTiles = (tiles: PuzzlePublicTile[]) => {
   return chunks;
 };
 
-export const ChallengePuzzleGrid = memo((_props: ChallengePuzzleGridProps) => {
-  const {
-    viewportRef,
-    contentRef,
-    isPuzzleVerticallyCentered,
-    puzzleScale,
-    puzzleTokenLines,
-    isInlineMode,
-    gameState,
-    busy,
-    isComplete,
-    isGameOver,
-    pendingGuessByTile,
-    puzzleMarkClass,
-    puzzleTileUnderlineWidthClass,
-    puzzleCipherClass,
-    separatorGlyphClass,
-    handleTileSelection,
-    renderPunctuationTile,
-    getLetterTileState,
-    getLetterTileClass,
-  } = _props;
+export const ChallengePuzzleGrid = memo(({
+  viewportRef,
+  contentRef,
+  isPuzzleVerticallyCentered,
+  puzzleScale,
+  puzzleTokenLines,
+  isInlineMode,
+  gameState,
+  busy,
+  isComplete,
+  isGameOver,
+  pendingGuessByTile,
+  puzzleMarkClass,
+  puzzleTileUnderlineWidthClass,
+  puzzleCipherClass,
+  separatorGlyphClass,
+  handleTileSelection,
+  renderPunctuationTile,
+  getLetterTileState,
+  getLetterTileClass,
+}: ChallengePuzzleGridProps) => {
   const selectedTile = gameState.selectedTileIndex;
   const correctGuessTileIndices = gameState.correctGuessIndices;
   const wrongGuessTileIndices = gameState.wrongGuessIndices;
