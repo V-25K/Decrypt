@@ -28,10 +28,7 @@ import {
   getPuzzleNavigableTileRows,
   tokenizePuzzleTiles,
 } from '../utils';
-import {
-  getChallengeBackgroundAsset,
-  getStableChallengeBackgroundIndex,
-} from './challenge-backgrounds';
+import { getChallengeBackgroundAsset } from './challenge-backgrounds';
 import { getAppViewState } from './app-view-state';
 import {
   buildActiveChallengeSessionPatch,
@@ -133,12 +130,11 @@ import {
 import {
   flairChipStyle,
   flairTagStyle,
-  formatChallengeType,
-  formatDifficultyLabel,
   formatLeaderboardName,
   formatQuestReward,
   formatStatDuration,
 } from './game-formatters';
+import { getChallengeSummaryView } from './challenge-summary-view';
 import { getBonusTimerView } from './bonus-timer-view';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
@@ -358,14 +354,6 @@ const letterTileClass = (
   return `${baseClass} app-text`;
 };
 
-const formatLevelNumber = (rawLevelId: string): string => {
-  const match = rawLevelId.match(/(\d+)$/);
-  if (!match || !match[1]) {
-    return rawLevelId;
-  }
-  return `${Number(match[1])}`;
-};
-
 const powerupTypes: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
 
 type HeartPurchaseLimitStatus = {
@@ -563,36 +551,29 @@ export const GameApp = () => {
       ? 'Joined'
       : 'Subscribe';
   const isChallengeScreen = activeScreen === 'challenge';
-  const challengeBackgroundKey = puzzle?.levelId || levelId;
-  const challengeBackgroundIndex = useMemo(
-    () => getStableChallengeBackgroundIndex(challengeBackgroundKey),
-    [challengeBackgroundKey]
+  const challengeSummaryView = useMemo(
+    () => getChallengeSummaryView({ levelId, puzzle }),
+    [levelId, puzzle]
   );
+  const {
+    backgroundAsset: challengeBackgroundAsset,
+    backgroundClass: challengeBackgroundClass,
+    challengeTypeLabel,
+    difficultyLabel,
+    formattedLevel,
+  } = challengeSummaryView;
 
   useEffect(() => {
     if (!isChallengeScreen) {
       return;
     }
-    warmImagePreloads([getChallengeBackgroundAsset(challengeBackgroundIndex)], {
+    warmImagePreloads([challengeBackgroundAsset], {
       fetchPriority: 'high',
     });
-  }, [challengeBackgroundIndex, isChallengeScreen]);
-  const challengeBackgroundClass = useMemo(
-    () => `challenge-backdrop-img-${challengeBackgroundIndex + 1}`,
-    [challengeBackgroundIndex]
-  );
+  }, [challengeBackgroundAsset, isChallengeScreen]);
 
   const tokens = useMemo(() => (puzzle ? tokenizePuzzleTiles(puzzle.tiles) : []), [puzzle]);
-  const formattedLevel = useMemo(() => formatLevelNumber(levelId), [levelId]);
-  const challengeTypeLabel = useMemo(
-    () => formatChallengeType(puzzle?.challengeType),
-    [puzzle?.challengeType]
-  );
   const endlessCatalogAvailable = endlessCatalogStatus?.available === true;
-  const difficultyLabel = useMemo(
-    () => formatDifficultyLabel(puzzle?.difficulty),
-    [puzzle?.difficulty]
-  );
   const handleOutcomeCrowdRef = useCallback((node: HTMLElement | null) => {
     outcomeCrowdRef.current = node;
     if (!node) {
@@ -2182,7 +2163,7 @@ export const GameApp = () => {
       nextDailyRetryScoreFactor,
       dailyRetryCount,
       puzzleDifficulty: puzzle?.difficulty,
-      difficultyLabel: formatDifficultyLabel(puzzle?.difficulty),
+      difficultyLabel,
     });
     if (!nextDialog) {
       showToast('Retry is unavailable right now.');
@@ -3437,7 +3418,7 @@ export const GameApp = () => {
           busy={busy}
           unitPrice={buyDialogUnitPrice}
           remainingLetters={buyDialogRemainingLetters}
-          difficultyLabel={formatDifficultyLabel(puzzle?.difficulty)}
+          difficultyLabel={difficultyLabel}
           powerupValidity={buyDialogPowerupValidity}
           onSelectQuantity={(quantity) =>
             setBuyDialog((previous) =>
