@@ -12,6 +12,11 @@ export type OfferPurchaseSnapshot = BusyActionSnapshot & {
   offerBusy: boolean;
 };
 
+export type ActionBlockState = {
+  blocked: boolean;
+  guessWorkActive: boolean;
+};
+
 export const hasActiveGuessWork = ({
   processingGuess,
   guessInFlight,
@@ -25,3 +30,23 @@ export const isBusyOrGuessBlocked = (snapshot: BusyActionSnapshot): boolean =>
 export const isOfferPurchaseBlocked = (
   snapshot: OfferPurchaseSnapshot
 ): boolean => snapshot.offerBusy || isBusyOrGuessBlocked(snapshot);
+
+export const getBusyActionBlockState = (
+  snapshot: BusyActionSnapshot
+): ActionBlockState => {
+  const guessWorkActive = hasActiveGuessWork(snapshot);
+  return {
+    blocked: snapshot.busy || guessWorkActive,
+    guessWorkActive,
+  };
+};
+
+export const getOfferPurchaseBlockState = (
+  snapshot: OfferPurchaseSnapshot
+): ActionBlockState => {
+  const busyActionState = getBusyActionBlockState(snapshot);
+  return {
+    blocked: snapshot.offerBusy || busyActionState.blocked,
+    guessWorkActive: busyActionState.guessWorkActive,
+  };
+};

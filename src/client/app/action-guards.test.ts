@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getBusyActionBlockState,
+  getOfferPurchaseBlockState,
   hasActiveGuessWork,
   isBusyOrGuessBlocked,
   isOfferPurchaseBlocked,
@@ -71,5 +73,46 @@ describe('action guard helpers', () => {
         queuedGuessCount: 0,
       })
     ).toBe(true);
+  });
+
+  it('returns named busy action block state', () => {
+    expect(
+      getBusyActionBlockState({
+        busy: true,
+        processingGuess: false,
+        guessInFlight: false,
+        queuedGuessCount: 0,
+      })
+    ).toEqual({
+      blocked: true,
+      guessWorkActive: false,
+    });
+
+    expect(
+      getBusyActionBlockState({
+        busy: false,
+        processingGuess: false,
+        guessInFlight: false,
+        queuedGuessCount: 1,
+      })
+    ).toEqual({
+      blocked: true,
+      guessWorkActive: true,
+    });
+  });
+
+  it('returns named offer purchase block state', () => {
+    expect(
+      getOfferPurchaseBlockState({
+        offerBusy: true,
+        busy: false,
+        processingGuess: false,
+        guessInFlight: false,
+        queuedGuessCount: 0,
+      })
+    ).toEqual({
+      blocked: true,
+      guessWorkActive: false,
+    });
   });
 });
