@@ -1,11 +1,13 @@
 import { powerupLabel } from '../app/constants';
 import { HudSprite } from './HudSprite';
 import type { BuyDialogState, PowerupType } from '../app/types';
+import type { BuyQuantityChip } from '../app/powerup-purchase-view';
 import { cn } from '../utils';
 
 type BuyDialogProps = {
   buyDialog: BuyDialogState;
   buyMax: number;
+  chips: BuyQuantityChip[];
   busy: boolean;
   unitPrice: number;
   remainingLetters: number;
@@ -14,12 +16,6 @@ type BuyDialogProps = {
     valid: boolean;
     reason: string | null;
   };
-  buyChips: (maxQuantity: number) => Array<{
-    id: string;
-    label: string;
-    quantity: number;
-    disabled: boolean;
-  }>;
   onSelectQuantity: (quantity: number) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -41,12 +37,12 @@ const powerupDescription = (powerupType: PowerupType): string => {
 export const BuyDialog = ({
   buyDialog,
   buyMax,
+  chips,
   busy,
   unitPrice,
   remainingLetters,
   difficultyLabel,
   powerupValidity,
-  buyChips,
   onSelectQuantity,
   onCancel,
   onConfirm,
@@ -84,7 +80,7 @@ export const BuyDialog = ({
       </div>
 
       <div className="mb-2 grid grid-cols-2 gap-2">
-        {buyChips(buyMax).map((chip) => (
+        {chips.map((chip) => (
           <button
             key={chip.id}
             data-testid={`buy-quantity-${chip.id}`}

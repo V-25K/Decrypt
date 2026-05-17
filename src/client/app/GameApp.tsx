@@ -71,10 +71,7 @@ import {
   maxOutcomeCrowdAvatars,
   powerupLabel,
 } from './constants';
-import {
-  getDailyRetryQuote,
-  getPowerupPrice,
-} from '../../shared/game-balance';
+import { getDailyRetryQuote } from '../../shared/game-balance';
 import type {
   AppScreen,
   BuyDialogState,
@@ -145,6 +142,10 @@ import {
 import { getBonusTimerView } from './bonus-timer-view';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
+  getBuyDialogView,
+  getMaxPurchasableQuantity,
+} from './powerup-purchase-view';
+import {
   getPowerupValidityForPuzzle,
   type PowerupValidity,
 } from './powerup-validity';
@@ -183,7 +184,6 @@ import {
 import {
   applyRevealedTiles,
   buildCompletionQuote,
-  countRemainingLetters,
   hasAvailableLetters,
 } from './puzzle-view';
 import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
@@ -365,13 +365,6 @@ const formatLevelNumber = (rawLevelId: string): string => {
   }
   return `${Number(match[1])}`;
 };
-
-const buyChips = (maxQuantity: number) => [
-  { id: '1', label: '+1', quantity: 1, disabled: maxQuantity < 1 },
-  { id: '3', label: '+3', quantity: 3, disabled: maxQuantity < 3 },
-  { id: '5', label: '+5', quantity: 5, disabled: maxQuantity < 5 },
-  { id: 'max', label: 'MAX', quantity: maxQuantity, disabled: maxQuantity < 1 },
-];
 
 const powerupTypes: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
 
@@ -930,17 +923,6 @@ export const GameApp = () => {
     applyServerPuzzleView(activeLevelId, view);
     return view;
   };
-
-  const getCurrentPowerupUnitPrice = useCallback(
-    (item: PowerupType, currentPuzzle: Puzzle | null): number => {
-      const pricingContext = {
-        remainingLetters: countRemainingLetters(currentPuzzle),
-        ...(currentPuzzle ? { difficulty: currentPuzzle.difficulty } : {}),
-      };
-      return getPowerupPrice(item, pricingContext);
-    },
-    []
-  );
 
   const getPowerupValidity = useCallback(
     (item: PowerupType): PowerupValidity => {
@@ -2097,14 +2079,11 @@ export const GameApp = () => {
   };
 
   const maxPurchasableQuantity = (item: PowerupType): number => {
-    if (!profile) {
-      return 0;
-    }
-    const unitPrice = getCurrentPowerupUnitPrice(item, puzzle);
-    if (unitPrice <= 0) {
-      return 0;
-    }
-    return Math.floor(profile.coins / unitPrice);
+    return getMaxPurchasableQuantity({
+      coins: profile?.coins ?? null,
+      item,
+      puzzle,
+    });
   };
 
   const openBuyDialog = (item: PowerupType) => {
@@ -2652,14 +2631,20 @@ export const GameApp = () => {
   const protectedMistakeIndex =
     isShieldActive && mistakesMade < puzzle.heartsMax ? mistakesMade : null;
   const isInlineMode = webViewMode === 'inline';
-  const buyMax = buyDialog ? maxPurchasableQuantity(buyDialog.item) : 0;
-  const buyDialogUnitPrice = buyDialog
-    ? getCurrentPowerupUnitPrice(buyDialog.item, puzzle)
-    : 0;
-  const buyDialogRemainingLetters = countRemainingLetters(puzzle);
-  const buyDialogPowerupValidity = buyDialog
-    ? getPowerupValidity(buyDialog.item)
-    : { valid: true, reason: null };
+  const buyDialogView = getBuyDialogView({
+    buyDialog,
+    coins: profile.coins,
+    isShieldActive,
+    puzzle,
+    tokens,
+  });
+  const {
+    buyMax,
+    chips: buyDialogChips,
+    powerupValidity: buyDialogPowerupValidity,
+    remainingLetters: buyDialogRemainingLetters,
+    unitPrice: buyDialogUnitPrice,
+  } = buyDialogView;
   const hasQueuedGuesses = queuedGuessCount > 0;
   const guessBusy = guessInFlight || hasQueuedGuesses;
   const bonusTimerView = getBonusTimerView({
@@ -3448,12 +3433,12 @@ export const GameApp = () => {
         <BuyDialog
           buyDialog={buyDialog}
           buyMax={buyMax}
+          chips={buyDialogChips}
           busy={busy}
           unitPrice={buyDialogUnitPrice}
           remainingLetters={buyDialogRemainingLetters}
           difficultyLabel={formatDifficultyLabel(puzzle?.difficulty)}
           powerupValidity={buyDialogPowerupValidity}
-          buyChips={buyChips}
           onSelectQuantity={(quantity) =>
             setBuyDialog((previous) =>
               previous ? { ...previous, quantity } : previous
