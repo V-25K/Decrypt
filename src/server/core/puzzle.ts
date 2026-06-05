@@ -22,6 +22,7 @@ import {
 import { checkPadlockStatus } from './gameplay.ts';
 import { deriveSeed, mulberry32, shuffleWithRng, type Rng } from './rng.ts';
 import { solverThresholdForDifficulty } from './solver-thresholds.ts';
+import { validatePuzzle } from './validation.ts';
 
 const isLetter = (char: string): boolean => /^[A-Z]$/.test(char);
 
@@ -1503,7 +1504,6 @@ export const adjustPuzzleDifficulty = async (params: {
   rng: Rng;
   traceLabel?: string;
 }): Promise<DifficultyAdjustmentResult> => {
-  const { validatePuzzle } = await import('./validation.ts');
   const tracePrefix = params.traceLabel
     ? `[adjustPuzzleDifficulty] ${params.traceLabel}`
     : '[adjustPuzzleDifficulty]';
@@ -1760,16 +1760,35 @@ const computeAchievableRange = (
   puzzle: PuzzlePrivate,
   budget: ObstructionBudget
 ): DifficultyTier[] => {
-  const currentTier = difficultyToTier(estimateDifficultyFromObstructions(puzzle));
-  const tiers = new Set<DifficultyTier>([currentTier]);
+  const tiers = new Set<DifficultyTier>();
+  const includeIfValid = (candidate: PuzzlePrivate): void => {
+    const estimatedDifficulty = estimateDifficultyFromObstructions(candidate);
+    const syncedCandidate = {
+      ...candidate,
+      difficulty: estimatedDifficulty,
+    };
+    if (!validatePuzzle(syncedCandidate).valid) {
+      return;
+    }
+    if (
+      !passesFinalSolvabilityValidation({
+        puzzle: syncedCandidate,
+        requiredRatio: solveRatioThreshold(estimatedDifficulty),
+      })
+    ) {
+      return;
+    }
+    tiers.add(difficultyToTier(estimatedDifficulty));
+  };
+
+  includeIfValid(puzzle);
   const dryRunRng = mulberry32(deriveSeed(puzzle.levelId, `${puzzle.targetText}:achievable`));
   const candidates = [
     ...getIncreaseAdjustments(puzzle, budget, dryRunRng),
     ...getDecreaseAdjustments(puzzle, budget),
   ];
   for (const adjustment of candidates) {
-    const nextPuzzle = applyAdjustment(puzzle, adjustment);
-    tiers.add(difficultyToTier(estimateDifficultyFromObstructions(nextPuzzle)));
+    includeIfValid(applyAdjustment(puzzle, adjustment));
   }
   const orderedTiers: DifficultyTier[] = ['warmup', 'medium', 'hard', 'expert'];
   return orderedTiers.filter((tier) => tiers.has(tier));

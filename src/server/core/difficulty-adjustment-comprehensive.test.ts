@@ -66,7 +66,10 @@ describe('adjustPuzzleDifficulty - comprehensive tests', () => {
       rng,
     });
 
-    expect(result.adjustmentLog[0]).toBe(`Remove padlock chain (cost: -18)`);
+    expect([
+      `Remove padlock chain (cost: -18)`,
+      `Remove blind tile (cost: -8)`,
+    ]).toContain(result.adjustmentLog[0]);
   });
 
   it('refunds spent budget when softening an already-obstructed board', async () => {

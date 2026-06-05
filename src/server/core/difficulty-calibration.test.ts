@@ -151,13 +151,13 @@ describe('difficulty calibration math', () => {
     expect(tierShift('hard', 'warmup')).toBe(1);
   });
 
-  it('applies one-tier bias while preserving relative tier position', () => {
-    expect(applyBiasToDifficulty(2, 1)).toBe(5);
-    expect(applyBiasToDifficulty(5, 1)).toBe(8);
-    expect(applyBiasToDifficulty(9, 1)).toBe(9);
-    expect(applyBiasToDifficulty(9, -1)).toBe(6);
-    expect(applyBiasToDifficulty(5, -1)).toBe(3);
-    expect(applyBiasToDifficulty(2, -1)).toBe(2);
+  it('caps telemetry bias to one difficulty point', () => {
+    expect(applyBiasToDifficulty(2, 1)).toBe(3);
+    expect(applyBiasToDifficulty(5, 1)).toBe(6);
+    expect(applyBiasToDifficulty(9, 1)).toBe(10);
+    expect(applyBiasToDifficulty(9, -1)).toBe(8);
+    expect(applyBiasToDifficulty(5, -1)).toBe(4);
+    expect(applyBiasToDifficulty(1, -1)).toBe(1);
   });
 });
 
@@ -187,6 +187,33 @@ describe('difficulty calibration aggregation', () => {
 
     expect(bias).toBe(0);
     expect(bounds).toBeDefined();
+    expect(getAllLevelIdsMock).toHaveBeenCalledTimes(1);
+    expect(redisSetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores stale Redis artifacts from older difficulty models', async () => {
+    redisGetMock.mockResolvedValue(
+      JSON.stringify({
+        difficultyModelVersion: 'v1',
+        snapshot: {
+          biasTierShift: 1,
+          eligibleLevels: 999,
+          harderCount: 999,
+          easierCount: 0,
+          neutralCount: 0,
+          averageCryptoHardness: 1,
+          params: {},
+        },
+        hardnessBoundsByTier: getDefaultHardnessBoundsByTier(),
+      })
+    );
+    redisSetMock.mockResolvedValue(true);
+    getAllLevelIdsMock.mockResolvedValue([]);
+
+    const snapshot = await getGlobalDailyCalibrationSnapshot();
+
+    expect(snapshot.biasTierShift).toBe(0);
+    expect(snapshot.eligibleLevels).toBe(0);
     expect(getAllLevelIdsMock).toHaveBeenCalledTimes(1);
     expect(redisSetMock).toHaveBeenCalledTimes(1);
   });

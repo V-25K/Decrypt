@@ -124,32 +124,6 @@ const tierToRank = (tier: DifficultyTier): number => {
   return 3;
 };
 
-const rankToTier = (rank: number): DifficultyTier => {
-  if (rank <= 0) {
-    return 'warmup';
-  }
-  if (rank === 1) {
-    return 'medium';
-  }
-  if (rank === 2) {
-    return 'hard';
-  }
-  return 'expert';
-};
-
-const tierDifficultyBounds = (tier: DifficultyTier): { min: number; max: number } => {
-  if (tier === 'warmup') {
-    return { min: 1, max: 3 };
-  }
-  if (tier === 'medium') {
-    return { min: 4, max: 5 };
-  }
-  if (tier === 'hard') {
-    return { min: 6, max: 8 };
-  }
-  return { min: 9, max: 10 };
-};
-
 const clampShift = (value: number): TierShift => {
   if (value > 0) {
     return 1;
@@ -544,19 +518,7 @@ export const applyBiasToDifficulty = (
   baseDifficulty: number,
   bias: TierShift
 ): number => {
-  const baseTier = tierFromDifficulty(baseDifficulty);
-  const shiftedRank = Math.max(0, Math.min(3, tierToRank(baseTier) + bias));
-  const shiftedTier = rankToTier(shiftedRank);
-  const baseBounds = tierDifficultyBounds(baseTier);
-  const shiftedBounds = tierDifficultyBounds(shiftedTier);
-  const baseClamped = Math.max(baseBounds.min, Math.min(baseBounds.max, baseDifficulty));
-  const baseSpan = baseBounds.max - baseBounds.min;
-  const shiftedSpan = shiftedBounds.max - shiftedBounds.min;
-  const relativePosition =
-    baseSpan > 0 ? (baseClamped - baseBounds.min) / baseSpan : 0;
-  const shiftedValue =
-    shiftedBounds.min + Math.round(relativePosition * shiftedSpan);
-  return Math.max(1, Math.min(10, shiftedValue));
+  return Math.max(1, Math.min(10, baseDifficulty + bias));
 };
 
 export const computeAdaptiveHardnessBounds =
