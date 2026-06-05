@@ -182,6 +182,7 @@ export const buildDifficultyBreakdown = (puzzle: PuzzlePrivate): DifficultyBreak
       shortWordAnchorCount: phraseProfile.shortWordAnchorCount,
       commonPatternCount: phraseProfile.commonPatternCount,
       repeatedPatternScore: Number(phraseProfile.repeatedPatternScore.toFixed(4)),
+      averageWordLength: Number(phraseProfile.averageWordLength.toFixed(4)),
       anchorDensity: Number(phraseProfile.anchorDensity.toFixed(4)),
       uniqueLetterSignal: Number(uniqueLetterSignal.toFixed(4)),
       longWordPressure: Number(longWordPressure.toFixed(4)),

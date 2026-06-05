@@ -101,6 +101,82 @@ describe('difficulty model v2', () => {
     expect(hard.calibratedDifficulty).toBeGreaterThanOrEqual(6);
   });
 
+  it('does not increase difficulty when more starter letters are revealed', () => {
+    const puzzle = buildBase('CLEAR ANCHORS MAKE CRYPTOGRAMS FRIENDLIER', 6);
+    const onePrefill = firstLetterIndices(puzzle, new Set(), 1);
+    const manyPrefills = firstLetterIndices(puzzle, new Set(), 8);
+    const sparse = buildDifficultyBreakdown({
+      ...puzzle,
+      prefilledIndices: onePrefill,
+      revealedIndices: onePrefill,
+      revealed_indices: onePrefill,
+    });
+    const generous = buildDifficultyBreakdown({
+      ...puzzle,
+      prefilledIndices: manyPrefills,
+      revealedIndices: manyPrefills,
+      revealed_indices: manyPrefills,
+    });
+
+    expect(generous.calibratedDifficulty).toBeLessThanOrEqual(
+      sparse.calibratedDifficulty
+    );
+  });
+
+  it('keeps shift cipher no harder than random for the same board', () => {
+    const puzzle = buildBase('PATTERNS REVEAL HIDDEN STRUCTURE OVER TIME', 6);
+    const prefilledIndices = firstLetterIndices(puzzle, new Set(), 4);
+    const shift = buildDifficultyBreakdown({
+      ...puzzle,
+      cipherType: 'shift',
+      prefilledIndices,
+      revealedIndices: prefilledIndices,
+      revealed_indices: prefilledIndices,
+    });
+    const random = buildDifficultyBreakdown({
+      ...puzzle,
+      cipherType: 'random',
+      prefilledIndices,
+      revealedIndices: prefilledIndices,
+      revealed_indices: prefilledIndices,
+    });
+
+    expect(shift.calibratedDifficulty).toBeLessThanOrEqual(
+      random.calibratedDifficulty
+    );
+  });
+
+  it('can still classify a no-reveal high-variety random board as expert', () => {
+    const puzzle = buildBase(
+      'QUARTZ GLYPHS VEX JUMBLED NYMPHS WHILE ZIGZAG FJORDS KNOCK WAXY RHYTHMS',
+      9
+    );
+    const excluded = new Set<number>();
+    const lockIndices = firstLetterIndices(puzzle, excluded, 28);
+    for (const index of lockIndices) {
+      excluded.add(index);
+    }
+    const blindIndices = firstLetterIndices(puzzle, excluded, 10);
+    const expert = buildDifficultyBreakdown({
+      ...puzzle,
+      cipherType: 'random',
+      prefilledIndices: [],
+      revealedIndices: [],
+      revealed_indices: [],
+      lockIndices,
+      blindIndices,
+      padlockChains: [
+        {
+          chainId: 1,
+          keyIndices: [lockIndices[0] ?? 0],
+          lockedIndices: lockIndices.slice(1),
+        },
+      ],
+    });
+
+    expect(expert.calibratedDifficulty).toBeGreaterThanOrEqual(9);
+  });
+
   it('reports solver weakness as confidence pressure instead of the whole score', () => {
     const puzzle = buildBase('PERSISTENCE AND RESILIENCE DEFINE SUCCESS', 7);
     const breakdown = buildDifficultyBreakdown({

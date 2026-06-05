@@ -153,6 +153,7 @@ const difficultyHumanFeaturesSchema = z.object({
   shortWordAnchorCount: z.number().int().nonnegative(),
   commonPatternCount: z.number().int().nonnegative(),
   repeatedPatternScore: z.number().min(0).max(1),
+  averageWordLength: z.number().nonnegative(),
   anchorDensity: z.number().min(0).max(1),
   uniqueLetterSignal: z.number().min(0).max(1),
   longWordPressure: z.number().min(0).max(1),
