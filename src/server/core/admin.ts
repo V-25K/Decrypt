@@ -22,7 +22,7 @@ import {
   PuzzlePublishInProgressError,
   publishAndActivateDailyPost,
 } from './generator';
-import type { ChallengeType, PuzzlePrivate, PuzzlePublic } from '../../shared/game';
+import type { ChallengeType, DifficultyBreakdown, PuzzlePrivate, PuzzlePublic } from '../../shared/game';
 import {
   containsDisallowedContent,
   computePhraseDifficultyProfile,
@@ -45,6 +45,7 @@ import {
   type PuzzleDifficultyContext,
 } from './puzzle';
 import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
+import { buildDifficultyBreakdown } from './difficulty-model';
 import { getDecryptSettings } from './config';
 import { deriveSeed, mulberry32 } from './rng';
 import { formatDateKey } from './serde';
@@ -67,6 +68,7 @@ export type ManualChallengeFeedback = {
   budgetTotal: number;
   adjustmentsMade: string[];
   suggestions?: string[];
+  difficultyExplanation?: DifficultyBreakdown;
 };
 
 export type ManualChallengeResult = {
@@ -86,6 +88,7 @@ export type ManualChallengeValidationResult = {
   achievableTierRange: DifficultyTier[];
   reasons: string[];
   suggestions: string[];
+  difficultyExplanation?: DifficultyBreakdown;
 };
 
 export class ManualPuzzlePublishFailedError extends Error {
@@ -662,15 +665,16 @@ const generateSuggestions = (
   const suggestions: string[] = [];
   const targetTier = difficultyToTier(targetDifficulty);
 
-  if (targetTier === naturalTier) {
-    return suggestions;
-  }
-
   const targetRank = tierOrder.indexOf(targetTier);
   const naturalRank = tierOrder.indexOf(naturalTier);
   const needsEasierText = targetRank < naturalRank;
 
-  if (targetTier === 'warmup' && naturalTier !== 'warmup') {
+  if (
+    targetTier === 'warmup' &&
+    (naturalTier !== 'warmup' ||
+      profile.cryptoHardness > 0.33 ||
+      profile.uniqueLetterCount > 8)
+  ) {
     suggestions.push(
       `Text crypto hardness (${profile.cryptoHardness.toFixed(2)}) is too high for warmup tier.`
     );
@@ -682,7 +686,12 @@ const generateSuggestions = (
     }
   }
 
-  if (targetTier === 'expert' && naturalTier !== 'expert') {
+  if (
+    targetTier === 'expert' &&
+    (naturalTier !== 'expert' ||
+      profile.cryptoHardness < 0.78 ||
+      profile.uniqueLetterCount < 19)
+  ) {
     suggestions.push(
       `Text crypto hardness (${profile.cryptoHardness.toFixed(2)}) is too low for expert tier.`
     );
@@ -700,17 +709,14 @@ const generateSuggestions = (
   }
 
   if (targetTier === 'hard' || targetTier === 'expert') {
-    if (profile.totalLength < 32) {
-      suggestions.push('Use a slightly longer line if you want more room for harder board tuning.');
-    }
-    if (profile.uniqueWordRatio < 0.75) {
+    if (profile.uniqueWordCount < 6 || profile.uniqueWordRatio < 0.75) {
       suggestions.push('Use more unique words if you want the text itself to carry more difficulty.');
     }
   }
 
   if (targetTier === 'warmup' || targetTier === 'medium') {
-    if (profile.totalLength > 38 && profile.cryptoHardness < 0.45) {
-      suggestions.push('Longer repetitive lines can still work here, but the board will need more generous starter clues.');
+    if (profile.repeatedWordRatio > 0.35 && profile.cryptoHardness < 0.45) {
+      suggestions.push('Repetitive lines can still work here, but the board will need more generous starter clues.');
     }
   }
 
@@ -947,7 +953,7 @@ export const preflightManualChallengeForPublish = async (params: {
     heuristicRange,
     selectedTier,
   });
-  const duplicate = await pipeline.duplicate(text, `preflight:${crypto.randomUUID()}`);
+  const duplicate = await pipeline.duplicate(text);
   if (duplicate.duplicate) {
     console.warn(`${tracePrefix} duplicate rejection`, {
       reason: duplicate.reason ?? 'duplicate',
@@ -1075,6 +1081,7 @@ export const preflightManualChallengeForPublish = async (params: {
             ]
           : [],
       suggestions: isAchievable ? [] : generateSuggestions(profile, selectedDifficulty, naturalTier),
+      difficultyExplanation: baseBuilt.puzzlePrivate.difficultyBreakdown,
     };
   } catch (error) {
     console.error(`${tracePrefix} preview build failed`, {
@@ -1279,7 +1286,7 @@ export const injectManualChallengeWithAdjustment = async (params: {
   }
 
   let signatureOwnerToken = `pending:${crypto.randomUUID()}`;
-  const dup = await pipeline.duplicate(text, signatureOwnerToken);
+  const dup = await pipeline.duplicate(text);
 
   if (dup.duplicate) {
     return {
@@ -1375,6 +1382,9 @@ export const injectManualChallengeWithAdjustment = async (params: {
             budgetUsed: 0,
             budgetTotal: 0,
             adjustmentsMade: [],
+            difficultyExplanation:
+              basePuzzle.puzzlePrivate.difficultyBreakdown ??
+              buildDifficultyBreakdown(basePuzzle.puzzlePrivate),
           };
           return {
             puzzlePrivate: basePuzzle.puzzlePrivate,
@@ -1428,6 +1438,9 @@ export const injectManualChallengeWithAdjustment = async (params: {
           budgetUsed: adjusted.budgetUsed,
           budgetTotal: adjusted.budgetTotal,
           adjustmentsMade: adjusted.adjustmentLog,
+          difficultyExplanation: adjusted.puzzle
+            ? buildDifficultyBreakdown(adjusted.puzzle)
+            : undefined,
           suggestions:
             !adjusted.success || !adjusted.puzzle
               ? generateSuggestions(profile, selectedDifficulty, naturalTier)

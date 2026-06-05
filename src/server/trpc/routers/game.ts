@@ -1,13 +1,17 @@
 import { z } from 'zod';
 import {
   gameBootstrapResponseSchema,
+  gameContinueLevelInputSchema,
+  gameContinueLevelResponseSchema,
   gameCompletedOutcomeSchema,
   gameCompleteSessionInputSchema,
   gameCompleteSessionResponseSchema,
+  gameFailedOutcomeSchema,
   gameHeartbeatInputSchema,
   gameHeartbeatResponseSchema,
   gameLoadLevelInputSchema,
   gameLoadLevelResponseSchema,
+  gamePreviewResponseSchema,
   gamePurchaseDailyRetryInputSchema,
   gamePurchaseDailyRetryResponseSchema,
   gameStartSessionInputSchema,
@@ -20,7 +24,9 @@ import {
 import {
   bootstrapGame,
   completeSessionForLevel,
+  continueSessionForLevel,
   getCurrentPuzzleView,
+  getDailyPreview,
   heartbeatSessionForLevel,
   loadLevelForUser,
   purchaseDailyRetryForLevel,
@@ -28,8 +34,9 @@ import {
   submitGuessesForSession,
   submitGuessForSession,
 } from '../../core/game-service';
+import { getRatingOutcomeReceipt } from '../../core/leaderboard';
 import { getShareCompletionReceipt } from '../../core/share-receipts';
-import { getCompletedLevels, getInventory, getUserProfile } from '../../core/state';
+import { getCompletedLevels, getInventory, getUserProfile, hasFailedLevel } from '../../core/state';
 import { router } from '../base';
 import { authedProcedure, publicProcedure } from '../procedures';
 
@@ -38,11 +45,19 @@ export const gameRouter = router({
     const data = await bootstrapGame();
     return gameBootstrapResponseSchema.parse(data);
   }),
+  preview: publicProcedure.query(async () => {
+    return gamePreviewResponseSchema.parse(await getDailyPreview());
+  }),
   loadLevel: authedProcedure.input(gameLoadLevelInputSchema).query(async ({ input }) => {
     return gameLoadLevelResponseSchema.parse(
       await loadLevelForUser({
         mode: input.mode,
         requestedLevelId: input.requestedLevelId ?? null,
+        dailyArchive: input.dailyArchive,
+        excludeLevelId: input.excludeLevelId ?? null,
+        ignorePostLevel: input.ignorePostLevel,
+        categoryFilter: input.categoryFilter ?? null,
+        endlessSort: input.endlessSort,
       })
     );
   }),
@@ -58,6 +73,16 @@ export const gameRouter = router({
     .mutation(async ({ input }) => {
       return gamePurchaseDailyRetryResponseSchema.parse(
         await purchaseDailyRetryForLevel({
+          levelId: input.levelId,
+          mode: input.mode,
+        })
+      );
+	    }),
+  continueLevel: authedProcedure
+    .input(gameContinueLevelInputSchema)
+    .mutation(async ({ input }) => {
+      return gameContinueLevelResponseSchema.parse(
+        await continueSessionForLevel({
           levelId: input.levelId,
           mode: input.mode,
         })
@@ -126,9 +151,30 @@ export const gameRouter = router({
         levelId: input.levelId,
         solveSeconds: receipt?.solveSeconds ?? null,
         score: receipt?.score ?? null,
+        ratingDelta: receipt?.ratingDelta ?? null,
+        ratingAfter: receipt?.ratingAfter ?? null,
+        globalScoreAfter: receipt?.globalScoreAfter ?? null,
         completedAtTs: receipt?.completedAtTs ?? null,
         profile,
         inventory,
+      });
+    }),
+  getFailedOutcome: authedProcedure
+    .input(z.object({ levelId: z.string().min(1) }))
+    .query(async ({ input, ctx }) => {
+      const failed = await hasFailedLevel(ctx.userId, input.levelId);
+      if (!failed) {
+        return null;
+      }
+      const receipt = await getRatingOutcomeReceipt(
+        ctx.userId,
+        `loss:${input.levelId}`
+      );
+      return gameFailedOutcomeSchema.parse({
+        levelId: input.levelId,
+        ratingDelta: receipt?.ratingDelta ?? null,
+        ratingAfter: receipt?.ratingAfter ?? null,
+        pointsGained: 0,
       });
     }),
   getCurrentView: publicProcedure

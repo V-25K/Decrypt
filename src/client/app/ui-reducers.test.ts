@@ -186,13 +186,13 @@ describe('leaderboardStatsUiReducer', () => {
     const withLeaderboard = leaderboardStatsUiReducer(
       initialLeaderboardStatsUiState,
       {
-        type: 'setLeaderboardTab',
-        update: 'endless',
+	        type: 'setLeaderboardTab',
+	        update: 'global',
       }
     );
     const withStats = leaderboardStatsUiReducer(withLeaderboard, {
-      type: 'setStatsTab',
-      update: 'endless',
+	      type: 'setStatsTab',
+	      update: 'global',
     });
     const withHome = leaderboardStatsUiReducer(withStats, {
       type: 'setHomeTab',
@@ -200,9 +200,9 @@ describe('leaderboardStatsUiReducer', () => {
     });
 
     expect(withHome).toMatchObject({
-      homeTab: 'endless',
-      leaderboardTab: 'endless',
-      statsTab: 'endless',
+	      homeTab: 'endless',
+	      leaderboardTab: 'global',
+	      statsTab: 'global',
     });
   });
 });

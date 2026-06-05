@@ -2,7 +2,9 @@ import type { PowerupType } from './types';
 
 export type HudSpriteType = 'coin' | 'heart';
 export type UiSpriteType =
+  | 'create'
   | 'home'
+  | 'key'
   | 'lock'
   | 'question'
   | 'shop'
@@ -50,7 +52,9 @@ export const hudSpriteAssetPath: Record<HudSpriteType, string> = {
 };
 
 export const uiSpriteLabel: Record<UiSpriteType, string> = {
+  create: 'Create',
   home: 'Home',
+  key: 'Key',
   lock: 'Lock',
   question: 'Question mark',
   shop: 'Shop',
@@ -62,7 +66,9 @@ export const uiSpriteLabel: Record<UiSpriteType, string> = {
 };
 
 export const uiSpriteAssetPath: Record<UiSpriteType, string> = {
+  create: '/ui_create.png',
   home: '/ui_home.png',
+  key: '/ui_key.png',
   lock: '/ui_lock.png',
   question: '/ui_question.png',
   shop: '/ui_shop.png',

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
   contextMock,
-  clearSubredditGameDataMock,
   createPostMock,
   formatModeratorRerollErrorMock,
   hasAdminAccessMock,
@@ -13,7 +12,6 @@ const {
     subredditName: 'decrypttest',
     username: 'mod_user',
   },
-  clearSubredditGameDataMock: vi.fn(),
   createPostMock: vi.fn(),
   formatModeratorRerollErrorMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
@@ -27,10 +25,6 @@ vi.mock('@devvit/web/server', () => ({
 
 vi.mock('../core/post', () => ({
   createPost: createPostMock,
-}));
-
-vi.mock('../core/playtest-reset', () => ({
-  clearSubredditGameData: clearSubredditGameDataMock,
 }));
 
 vi.mock('../core/admin', () => ({
@@ -48,7 +42,6 @@ import { menu } from './menu';
 afterEach(() => {
   contextMock.subredditName = 'decrypttest';
   contextMock.username = 'mod_user';
-  clearSubredditGameDataMock.mockReset();
   createPostMock.mockReset();
   formatModeratorRerollErrorMock.mockReset();
   hasAdminAccessMock.mockReset();
@@ -146,22 +139,22 @@ describe('menu routes', () => {
     });
   });
 
-  it('clears subreddit game data from the moderator menu', async () => {
+  it('opens a confirmation form before clearing subreddit game data', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    clearSubredditGameDataMock.mockResolvedValue({
-      knownUsers: 2,
-      sessions: 1,
-      deletedKeys: 19,
-    });
 
     const response = await menu.request('http://localhost/mod-clear-subreddit-data', {
       method: 'POST',
     });
 
     expect(response.status).toBe(200);
-    expect(clearSubredditGameDataMock).toHaveBeenCalledTimes(1);
-    await expect(response.json()).resolves.toEqual({
-      showToast: 'Cleared subreddit game data for 2 player(s), 1 session(s), and 19 key(s).',
-    });
+    const body = await response.json();
+    expect(body.showForm.name).toBe('mod_clear_subreddit_data_form');
+    expect(body.showForm.form.description).toContain('permanently clears');
+    expect(body.showForm.form.fields).toContainEqual(
+      expect.objectContaining({
+        name: 'confirmation',
+        placeholder: 'CLEAR',
+      })
+    );
   });
 });

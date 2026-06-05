@@ -15,15 +15,17 @@ vi.mock('@devvit/web/server', () => ({
 vi.mock('./leaderboard', () => ({
   getDailyTop: vi.fn(),
   getLevelTop: vi.fn(),
-  getAllTimeTopLevels: vi.fn(),
-  getAllTimeTopLogic: vi.fn(),
-}));
+	  getAllTimeTopLevels: vi.fn(),
+	  getAllTimeTopLogic: vi.fn(),
+	  getGlobalTop: vi.fn(),
+	}));
 
 vi.mock('./keys', () => ({
   keyDailyLeaderboard: vi.fn(),
-  keyAllTimeLevelsLeaderboard: 'decrypt:leaderboard:alltime:levels',
-  keyAllTimeLogicLeaderboard: 'decrypt:leaderboard:alltime:logic',
-}));
+	  keyAllTimeLevelsLeaderboard: 'decrypt:leaderboard:alltime:levels',
+	  keyAllTimeLogicLeaderboard: 'decrypt:leaderboard:alltime:logic',
+	  keyGlobalRatingLeaderboard: 'decrypt:leaderboard:global:rating',
+	}));
 
 vi.mock('./serde', () => ({
   formatDateKey: vi.fn(() => '2024-01-01'),

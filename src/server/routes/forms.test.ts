@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  clearSubredditGameDataMock,
   hasAdminAccessMock,
   injectAndPublishManualPuzzleMock,
   preflightManualChallengeForPublishMock,
 } = vi.hoisted(() => ({
+  clearSubredditGameDataMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   injectAndPublishManualPuzzleMock: vi.fn(),
   preflightManualChallengeForPublishMock: vi.fn(),
@@ -19,6 +21,10 @@ vi.mock('@devvit/web/server', () => ({
 
 vi.mock('../core/admin-auth', () => ({
   hasAdminAccess: hasAdminAccessMock,
+}));
+
+vi.mock('../core/playtest-reset', () => ({
+  clearSubredditGameData: clearSubredditGameDataMock,
 }));
 
 vi.mock('../core/admin', () => ({
@@ -40,9 +46,49 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clearSubredditGameDataMock.mockReset();
   hasAdminAccessMock.mockReset();
   injectAndPublishManualPuzzleMock.mockReset();
   preflightManualChallengeForPublishMock.mockReset();
+});
+
+describe('mod-clear-subreddit-data-submit', () => {
+  it('requires typed confirmation before clearing subreddit game data', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+
+    const response = await forms.request('http://localhost/mod-clear-subreddit-data-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmation: 'clear' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(clearSubredditGameDataMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Type CLEAR to confirm clearing subreddit game data.',
+    });
+  });
+
+  it('clears subreddit game data after typed confirmation', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    clearSubredditGameDataMock.mockResolvedValue({
+      knownUsers: 2,
+      sessions: 1,
+      deletedKeys: 19,
+    });
+
+    const response = await forms.request('http://localhost/mod-clear-subreddit-data-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmation: 'CLEAR' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(clearSubredditGameDataMock).toHaveBeenCalledTimes(1);
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Cleared subreddit game data for 2 player(s), 1 session(s), and 19 key(s).',
+    });
+  });
 });
 
 describe('mod-inject-submit', () => {
@@ -90,6 +136,7 @@ describe('mod-inject-submit', () => {
       (field: { name: string }) => field.name === 'text'
     );
     expect(textField.disabled).toBe(true);
+    expect(textField.required).toBeUndefined();
     expect(textField.helpText).toContain('go back to step 1');
 
     const difficultyField = body.showForm.form.fields.find(
@@ -100,6 +147,16 @@ describe('mod-inject-submit', () => {
       { label: 'Medium (5/10)', value: 'medium' },
       { label: 'Hard (8/10)', value: 'hard' },
     ]);
+
+    const summaryField = body.showForm.form.fields.find(
+      (field: { name: string }) => field.name === 'summary'
+    );
+    expect(summaryField.defaultValue).toContain('Crypto hardness: 0.63 - balanced letter mix');
+
+    const challengeTypeField = body.showForm.form.fields.find(
+      (field: { name: string }) => field.name === 'challengeType'
+    );
+    expect(challengeTypeField.helpText).toContain('Speech is from public remarks');
   });
 
   it('recommends the closest achievable tier when the natural tier is just outside the valid range', async () => {
@@ -164,7 +221,7 @@ describe('mod-inject-submit', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      showToast: 'Quote looks Medium, but preview build failed. Try again. Ref abc123ef.',
+      showToast: "The game engine couldn't preview this quote. Try again, or use a shorter quote.",
     });
   });
 
@@ -270,7 +327,45 @@ describe('mod-inject-review-submit', () => {
       skipPreflight: true,
     });
     await expect(response.json()).resolves.toEqual({
-      showToast: 'Manual puzzle published as Hard (8/10): lvl_0123',
+      showToast: 'Hard puzzle published - "THE LIGHT WILL FALL PREY TO..."',
+    });
+  });
+
+  it('surfaces tier adjustment in the publish toast', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    preflightManualChallengeForPublishMock.mockResolvedValue({
+      valid: true,
+      textProfile: {
+        cryptoHardness: 0.5,
+        uniqueLetterCount: 12,
+      },
+      naturalDifficulty: 'hard',
+      achievableTierRange: ['medium', 'hard'],
+      reasons: [],
+      suggestions: [],
+    });
+    injectAndPublishManualPuzzleMock.mockResolvedValue({
+      success: true,
+      levelId: 'lvl_0124',
+      dateKey: '2026-03-08',
+      postId: 't3_manual124',
+      difficulty: 5,
+    });
+
+    const response = await forms.request('http://localhost/mod-inject-review-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'The light will fall prey to darkness',
+        author: 'test author',
+        difficulty: 'hard',
+        challengeType: 'quote',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Medium puzzle published (adjusted from Hard) - "THE LIGHT WILL FALL PREY TO..."',
     });
   });
 

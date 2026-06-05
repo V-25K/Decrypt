@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import type { TaskResponse } from '@devvit/web/server';
-import { scheduler } from '@devvit/web/server';
 import {
   generatePuzzleForDate,
   publishAndActivateDailyPost,
@@ -25,8 +24,8 @@ export const schedulerRoutes = new Hono();
 const expectedDailyPosts = 2;
 const allowedScheduledPublishHoursUtc = [0, 12];
 
-const pause = async (ms: number): Promise<void> =>
-  await new Promise((resolve) => setTimeout(resolve, ms));
+const pause = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 type ScheduledPublishWindow = {
   hourUtc: number;
@@ -61,19 +60,19 @@ const countPublishedAutoDailyPuzzlesInWindow = async (
   window: ScheduledPublishWindow
 ): Promise<number> => {
   const levelIds = await getAutoDailyLevelIdsForDate(dateKey);
-  let publishedCount = 0;
-  for (const levelId of levelIds) {
-    const receipt = await getPuzzlePublicationReceipt(levelId);
-    if (
-      receipt &&
+  if (levelIds.length === 0) {
+    return 0;
+  }
+  const receipts = await Promise.all(
+    levelIds.map((levelId) => getPuzzlePublicationReceipt(levelId))
+  );
+  return receipts.filter(
+    (receipt) =>
+      receipt !== null &&
       receipt.dateKey === dateKey &&
       receipt.publishedAt >= window.startMs &&
       receipt.publishedAt < window.endMs
-    ) {
-      publishedCount += 1;
-    }
-  }
-  return publishedCount;
+  ).length;
 };
 
 const canFallbackToCurrentDayGeneration = (error: unknown): boolean =>
@@ -306,16 +305,19 @@ schedulerRoutes.post('/verify-daily', async (c) => {
       dateKey,
     });
 
-    // Attempt self-healing: schedule an immediate one-off publish run.
+    // Attempt self-healing directly. The publish-daily route has a UTC hour
+    // guard, so re-scheduling the named cron job at watchdog time would skip.
     try {
-      await scheduler.runJob({
-        name: 'decrypt-publish-daily-0000',
-        runAt: new Date(),
+      await publishNextDailyChallenge(dateKey, count);
+      console.log('[scheduler] verify-daily: recovery publish succeeded');
+    } catch (publishError) {
+      console.error('[scheduler] verify-daily: recovery publish failed', {
+        error: publishError instanceof Error ? publishError.message : String(publishError),
       });
-      console.log('[scheduler] verify-daily: recovery publish job scheduled');
-    } catch (schedErr) {
-      console.error('[scheduler] verify-daily: failed to schedule recovery job', {
-        error: schedErr instanceof Error ? schedErr.message : String(schedErr),
+      await reportAutomatedGenerationFailure({
+        source: 'scheduler.verify-daily.recovery',
+        dateKey,
+        error: publishError,
       });
     }
 

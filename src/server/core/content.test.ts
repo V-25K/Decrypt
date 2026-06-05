@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computePhraseDifficultyProfile,
+  containsDisallowedContent,
   contentTokenSignature,
   difficultyToTier,
   hasMinUniqueWords,
@@ -10,6 +11,7 @@ import {
   quotePassesTierLength,
   sanitizePhrase,
   quotePassesTierHardness,
+  scorePhraseDifficultyAgainstTier,
   validateQuoteForPhase1,
 } from './content';
 
@@ -28,13 +30,15 @@ describe('content phase1 rules', () => {
 
   it('enforces tier length windows', () => {
     expect(quotePassesTierLength('A'.repeat(15), 'warmup')).toBe(true);
-    expect(quotePassesTierLength('A'.repeat(25), 'warmup')).toBe(true);
-    expect(quotePassesTierLength('A'.repeat(26), 'warmup')).toBe(false);
-    expect(quotePassesTierLength('A'.repeat(40), 'medium')).toBe(true);
-    expect(quotePassesTierLength('A'.repeat(41), 'medium')).toBe(false);
-    expect(quotePassesTierLength('A'.repeat(46), 'hard')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(35), 'warmup')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(36), 'warmup')).toBe(false);
+    expect(quotePassesTierLength('A'.repeat(70), 'medium')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(71), 'medium')).toBe(false);
+    expect(quotePassesTierLength('A'.repeat(105), 'hard')).toBe(true);
     expect(quotePassesTierLength('A'.repeat(40), 'hard')).toBe(false);
-    expect(quotePassesTierLength('A'.repeat(50), 'expert')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(60), 'expert')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(160), 'expert')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(161), 'expert')).toBe(false);
   });
 
   it('detects unique-word minimum and repeated-letter requirement', () => {
@@ -55,6 +59,16 @@ describe('content phase1 rules', () => {
     expect(noRepeatedLetters.valid).toBe(false);
   });
 
+  it('allows ambiguous exact words that are common in idioms', () => {
+    expect(containsDisallowedContent('KILL TWO BIRDS WITH ONE STONE')).toBe(false);
+    expect(containsDisallowedContent('A LOVE-HATE RELATIONSHIP')).toBe(false);
+  });
+
+  it('still rejects explicit exact words and banned substrings', () => {
+    expect(containsDisallowedContent('THIS IS SHIT')).toBe(true);
+    expect(containsDisallowedContent('BRIGHT CUNTFISH COMETS GLOW')).toBe(true);
+  });
+
   it('models cryptogram hardness from unique letters and distribution', () => {
     const highVariety = computePhraseDifficultyProfile('WHY JOT FLUX VEX BRIM');
     const repetitive = computePhraseDifficultyProfile(
@@ -64,6 +78,15 @@ describe('content phase1 rules', () => {
     expect(highVariety.uniqueLetterCount).toBeGreaterThan(repetitive.uniqueLetterCount);
     expect(highVariety.cryptoHardness).toBeGreaterThan(repetitive.cryptoHardness);
     expect(quotePassesTierHardness(highVariety.cryptoHardness, 'hard')).toBe(true);
+  });
+
+  it('does not score difficulty fit from presentation length alone', () => {
+    const compact = computePhraseDifficultyProfile('TO BE OR NOT TO BE');
+    const padded = computePhraseDifficultyProfile('TO BE OR NOT TO BE..............');
+
+    expect(scorePhraseDifficultyAgainstTier(padded, 'medium').score).toBe(
+      scorePhraseDifficultyAgainstTier(compact, 'medium').score
+    );
   });
 
   it('does not inflate entropy for tiny alphabets that are evenly distributed', () => {
@@ -90,6 +113,26 @@ describe('content phase1 rules', () => {
     expect(commonBigrams.cryptoHardness).toBeLessThan(rareBigrams.cryptoHardness);
   });
 
+  it('extracts V2 human cryptogram anchor signals', () => {
+    const common = computePhraseDifficultyProfile(
+      'THE ONLY THING WE HAVE TO FEAR IS FEAR ITSELF'
+    );
+    const rare = computePhraseDifficultyProfile(
+      'MELANCHOLY IS INCOMPATIBLE WITH BICYCLING'
+    );
+
+    expect(common.topCommonWordRatio).toBeGreaterThan(rare.topCommonWordRatio);
+    expect(common.anchorDensity).toBeGreaterThan(0);
+    expect(rare.rareWordRatio).toBeGreaterThan(0);
+  });
+
+  it('normalizes apostrophes for V2 word coverage signals', () => {
+    const profile = computePhraseDifficultyProfile("DON'T STOP BELIEVING");
+
+    expect(profile.lexiconCoverageRatio).toBeGreaterThan(0.3);
+    expect(profile.shortWordAnchorCount).toBeGreaterThanOrEqual(0);
+  });
+
   it('does not treat tiny phrases with all-distinct bigrams as maximal bigram entropy', () => {
     const shortPhrase = computePhraseDifficultyProfile('ABCD');
 
@@ -97,7 +140,7 @@ describe('content phase1 rules', () => {
   });
 
   it('accepts representative warmup, medium, hard, and expert phrases under the tuned bands', () => {
-    expect(validateQuoteForPhase1('TO BE OR NOT TO BE', 2).valid).toBe(true);
+    expect(validateQuoteForPhase1('TO BE OR NOT TO BE AGAIN', 2).valid).toBe(true);
     expect(
       validateQuoteForPhase1('GOOD THINGS TAKE PATIENCE AND CARE', 5).valid
     ).toBe(true);
@@ -105,7 +148,10 @@ describe('content phase1 rules', () => {
       validateQuoteForPhase1('BOLD THINKERS NAVIGATE UNCERTAIN WORLDS WITH GRIT', 8).valid
     ).toBe(true);
     expect(
-      validateQuoteForPhase1('JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS', 9).valid
+      validateQuoteForPhase1(
+        'JUMPING ZEBRAS VEX QUICK WALTZ DRUM RHYTHMS UNDER BRIGHT MOONLIGHT',
+        9
+      ).valid
     ).toBe(true);
   });
 

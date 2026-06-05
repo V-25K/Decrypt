@@ -13,19 +13,23 @@ const {
   getSessionStateMock,
   clearSessionStateMock,
   heartsRemainingMock,
-  getPuzzlePrivateMock,
-  getUserProfileMock,
+	  getPuzzlePrivateMock,
+	  getDailyPointerMock,
+	  getUserProfileMock,
   getInventoryMock,
   getDailyRetryCountMock,
+  hasContinuedLevelMock,
   hasFailedLevelMock,
   markLevelCompletedMock,
   saveInventoryMock,
   saveUserProfileMock,
   puzzleIsCompleteMock,
   computeScoreMock,
-  getUserRankSummaryMock,
-  incrementAllTimeLogicMock,
-  recordAllTimeLevelScoreMock,
+	  getUserRankSummaryMock,
+	  incrementAllTimeLogicMock,
+	  recordGlobalLossMock,
+	  recordGlobalWinMock,
+	  recordAllTimeLevelScoreMock,
   recordDailyScoreMock,
   recordLevelWinMock,
   recordQualifiedLevelWinMock,
@@ -49,19 +53,23 @@ const {
   getSessionStateMock: vi.fn(),
   clearSessionStateMock: vi.fn(),
   heartsRemainingMock: vi.fn(),
-  getPuzzlePrivateMock: vi.fn(),
-  getUserProfileMock: vi.fn(),
+	  getPuzzlePrivateMock: vi.fn(),
+	  getDailyPointerMock: vi.fn(),
+	  getUserProfileMock: vi.fn(),
   getInventoryMock: vi.fn(),
-  getDailyRetryCountMock: vi.fn(),
-  hasFailedLevelMock: vi.fn(),
+	  getDailyRetryCountMock: vi.fn(),
+	  hasContinuedLevelMock: vi.fn(),
+	  hasFailedLevelMock: vi.fn(),
   markLevelCompletedMock: vi.fn(),
   saveInventoryMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
   puzzleIsCompleteMock: vi.fn(),
   computeScoreMock: vi.fn(),
-  getUserRankSummaryMock: vi.fn(),
-  incrementAllTimeLogicMock: vi.fn(),
-  recordAllTimeLevelScoreMock: vi.fn(),
+	  getUserRankSummaryMock: vi.fn(),
+	  incrementAllTimeLogicMock: vi.fn(),
+	  recordGlobalLossMock: vi.fn(),
+	  recordGlobalWinMock: vi.fn(),
+	  recordAllTimeLevelScoreMock: vi.fn(),
   recordDailyScoreMock: vi.fn(),
   recordLevelWinMock: vi.fn(),
   recordQualifiedLevelWinMock: vi.fn(),
@@ -91,22 +99,25 @@ vi.mock('./session', () => ({
   saveSessionTimingState: vi.fn(),
 }));
 
-vi.mock('./puzzle-store', () => ({
-  getDailyPointer: vi.fn(),
+	vi.mock('./puzzle-store', () => ({
+	  getDailyPointer: getDailyPointerMock,
   getPuzzlePrivate: getPuzzlePrivateMock,
   getPuzzlePublic: vi.fn(),
+  isPuzzleRemovedFromPlay: vi.fn(async () => false),
 }));
 
 vi.mock('./state', () => ({
   getCompletedLevels: vi.fn(),
   getDailyRetryCount: getDailyRetryCountMock,
   getInventory: getInventoryMock,
-  getUserProfile: getUserProfileMock,
-  hasFailedLevel: hasFailedLevelMock,
-  incrementDailyRetryCount: vi.fn(),
-  markLevelCompleted: markLevelCompletedMock,
-  markLevelFailed: vi.fn(),
-  registerKnownUser: vi.fn(),
+	  getUserProfile: getUserProfileMock,
+	  hasContinuedLevel: hasContinuedLevelMock,
+	  hasFailedLevel: hasFailedLevelMock,
+	  incrementDailyRetryCount: vi.fn(),
+	  markLevelCompleted: markLevelCompletedMock,
+	  markLevelFailed: vi.fn(),
+	  unmarkLevelFailed: vi.fn(),
+	  registerKnownUser: vi.fn(),
   saveInventory: saveInventoryMock,
   saveUserProfile: saveUserProfileMock,
 }));
@@ -124,9 +135,11 @@ vi.mock('./gameplay', () => ({
 
 vi.mock('./leaderboard', () => ({
   computeScore: computeScoreMock,
-  getUserRankSummary: getUserRankSummaryMock,
-  incrementAllTimeLogic: incrementAllTimeLogicMock,
-  recordAllTimeLevelScore: recordAllTimeLevelScoreMock,
+	  getUserRankSummary: getUserRankSummaryMock,
+	  incrementAllTimeLogic: incrementAllTimeLogicMock,
+	  recordGlobalLoss: recordGlobalLossMock,
+	  recordGlobalWin: recordGlobalWinMock,
+	  recordAllTimeLevelScore: recordAllTimeLevelScoreMock,
   recordDailyScore: recordDailyScoreMock,
 }));
 
@@ -190,11 +203,18 @@ const profileFixture = (): UserProfile => ({
   dailyFirstTryWins: 0,
   endlessFirstTryWins: 0,
   questsCompleted: 0,
-  dailyModeClears: 0,
-  endlessModeClears: 0,
-  dailySolveTimeTotalSec: 0,
-  endlessSolveTimeTotalSec: 0,
-  bestOverallRank: 0,
+	  dailyModeClears: 0,
+	  endlessModeClears: 0,
+	  dailySolveTimeTotalSec: 0,
+	  endlessSolveTimeTotalSec: 0,
+	  globalRating: 500,
+	  globalScore: 0,
+	  ratingGames: 0,
+	  ratingWins: 0,
+	  ratingLosses: 0,
+	  globalWinStreak: 0,
+	  bestGlobalRank: 0,
+	  bestOverallRank: 0,
   audioEnabled: true,
   communityJoinRecorded: false,
   communityJoinRewardClaimed: false,
@@ -265,19 +285,23 @@ afterEach(() => {
   getSessionStateMock.mockReset();
   clearSessionStateMock.mockReset();
   heartsRemainingMock.mockReset();
-  getPuzzlePrivateMock.mockReset();
+	  getPuzzlePrivateMock.mockReset();
+	  getDailyPointerMock.mockReset();
   getUserProfileMock.mockReset();
-  getInventoryMock.mockReset();
-  getDailyRetryCountMock.mockReset();
-  hasFailedLevelMock.mockReset();
+	  getInventoryMock.mockReset();
+	  getDailyRetryCountMock.mockReset();
+	  hasContinuedLevelMock.mockReset();
+	  hasFailedLevelMock.mockReset();
   markLevelCompletedMock.mockReset();
   saveInventoryMock.mockReset();
   saveUserProfileMock.mockReset();
   puzzleIsCompleteMock.mockReset();
-  computeScoreMock.mockReset();
-  getUserRankSummaryMock.mockReset();
-  incrementAllTimeLogicMock.mockReset();
-  recordAllTimeLevelScoreMock.mockReset();
+	  computeScoreMock.mockReset();
+	  getUserRankSummaryMock.mockReset();
+	  incrementAllTimeLogicMock.mockReset();
+	  recordGlobalLossMock.mockReset();
+	  recordGlobalWinMock.mockReset();
+	  recordAllTimeLevelScoreMock.mockReset();
   recordDailyScoreMock.mockReset();
   recordLevelWinMock.mockReset();
   recordQualifiedLevelWinMock.mockReset();
@@ -287,19 +311,33 @@ afterEach(() => {
 
 const arrangeHappyPath = () => {
   getSessionStateMock.mockResolvedValue(sessionFixture());
-  getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+	  getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+	  getDailyPointerMock.mockResolvedValue('lvl_0001');
   getUserProfileMock.mockResolvedValue(profileFixture());
   getInventoryMock.mockResolvedValue(inventoryFixture());
-  getDailyRetryCountMock.mockResolvedValue(0);
-  puzzleIsCompleteMock.mockReturnValue(true);
-  hasFailedLevelMock.mockResolvedValue(false);
+	  getDailyRetryCountMock.mockResolvedValue(0);
+	  puzzleIsCompleteMock.mockReturnValue(true);
+	  hasContinuedLevelMock.mockResolvedValue(false);
+	  hasFailedLevelMock.mockResolvedValue(false);
   computeScoreMock.mockReturnValue(120);
-  getUserRankSummaryMock.mockResolvedValue({
-    dailyRank: null,
-    endlessRank: null,
-    currentRank: null,
-    bestOverallRank: null,
-  });
+	  getUserRankSummaryMock.mockResolvedValue({
+	    dailyRank: null,
+	    globalRank: null,
+	    endlessRank: null,
+	    currentRank: null,
+	    bestOverallRank: null,
+	  });
+	  recordGlobalWinMock.mockImplementation(async ({ profile }) => ({
+	    profile,
+	    ratingDelta: 0,
+	    ratingAfter: profile.globalRating,
+	    globalScoreDelta: 0,
+	  }));
+	  recordGlobalLossMock.mockImplementation(async ({ profile }) => ({
+	    profile,
+	    ratingDelta: 0,
+	    ratingAfter: profile.globalRating,
+	  }));
   heartsRemainingMock.mockReturnValue(3);
 };
 
@@ -367,11 +405,41 @@ describe('completeSessionForLevel completion lock', () => {
 
     expect(result.accepted).toBe(true);
     expect(markLevelCompletedMock).toHaveBeenCalledTimes(1);
-    expect(saveShareCompletionReceiptMock).toHaveBeenCalledTimes(1);
-    expect(redisDelMock).toHaveBeenCalledTimes(1);
+	  expect(saveShareCompletionReceiptMock).toHaveBeenCalledTimes(1);
+	  expect(redisDelMock).toHaveBeenCalledTimes(1);
+	});
+
+  it('applies the continue score penalty after continuing', async () => {
+    arrangeHappyPath();
+    hasContinuedLevelMock.mockResolvedValue(true);
+    redisSetMock.mockResolvedValue('OK');
+    redisHGetAllMock.mockResolvedValue({});
+    redisHGetMock.mockResolvedValue(undefined);
+    redisHSetMock.mockResolvedValue(undefined);
+    redisExpireMock.mockResolvedValue(undefined);
+    redisGetMock.mockImplementation(async () => {
+      const firstCall = redisSetMock.mock.calls[0];
+      if (!firstCall) {
+        return null;
+      }
+      return firstCall[1];
+    });
+
+    const result = await completeSessionForLevel({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+
+    expect(result.score).toBe(70);
+    expect(recordDailyScoreMock).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 70 })
+    );
+    expect(saveShareCompletionReceiptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 70 })
+    );
   });
 
-  it('releases lock even when completion pipeline throws', async () => {
+	it('releases lock even when completion pipeline throws', async () => {
     arrangeHappyPath();
     redisSetMock.mockResolvedValue('OK');
     redisHGetAllMock.mockResolvedValue({});

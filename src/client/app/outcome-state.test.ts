@@ -27,6 +27,30 @@ describe('outcome state helpers', () => {
       isGameOver: false,
       completion: null,
       solveSeconds: 73,
+      ratingDelta: null,
+      pointsGained: null,
+      savedAt: 123,
+    });
+  });
+
+  it('builds a completed persisted outcome with durable stats', () => {
+    expect(
+      buildPersistedCompleteOutcomeState({
+        levelId: 'daily-1',
+        completion: null,
+        solveSeconds: 73,
+        ratingDelta: 22,
+        pointsGained: 1250,
+        savedAt: 123,
+      })
+    ).toEqual({
+      levelId: 'daily-1',
+      isComplete: true,
+      isGameOver: false,
+      completion: null,
+      solveSeconds: 73,
+      ratingDelta: 22,
+      pointsGained: 1250,
       savedAt: 123,
     });
   });
@@ -38,6 +62,21 @@ describe('outcome state helpers', () => {
       isGameOver: true,
       completion: null,
       solveSeconds: null,
+      ratingDelta: null,
+      pointsGained: null,
+      savedAt: 456,
+    });
+  });
+
+  it('persists a game-over rating delta when available', () => {
+    expect(buildPersistedGameOverOutcomeState('daily-1', 456, -18)).toEqual({
+      levelId: 'daily-1',
+      isComplete: false,
+      isGameOver: true,
+      completion: null,
+      solveSeconds: null,
+      ratingDelta: -18,
+      pointsGained: null,
       savedAt: 456,
     });
   });

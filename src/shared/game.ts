@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { endlessCatalogStatusSchema } from './endless';
+import { startingGlobalRating } from './rating';
 
 const maxHearts = 3;
 
@@ -58,14 +59,122 @@ export const challengeTypeSchema = z.union([
 
 export type ChallengeType = z.infer<typeof challengeTypeSchema>;
 
+export const challengeTypeDisplayOrder = [
+  'QUOTE',
+  'SAYING',
+  'PROVERB',
+  'SPEECH_LINE',
+  'BOOK_LINE',
+  'MOVIE_LINE',
+  'TV_LINE',
+  'ANIME_LINE',
+  'LYRIC_LINE',
+] satisfies ChallengeType[];
+
+export const challengeTypeMetadata = {
+  QUOTE: {
+    label: 'Quote',
+    shortLabel: 'Quote',
+    description: 'Attributed line that does not fit a narrower source type.',
+  },
+  SAYING: {
+    label: 'Saying / Idiom',
+    shortLabel: 'Saying',
+    description: 'Common expression or idiom, often conversational.',
+  },
+  PROVERB: {
+    label: 'Proverb',
+    shortLabel: 'Proverb',
+    description: 'Traditional wisdom phrase with a lesson or moral.',
+  },
+  SPEECH_LINE: {
+    label: 'Speech Line',
+    shortLabel: 'Speech',
+    description: 'Line from a public speech, address, or formal remarks.',
+  },
+  BOOK_LINE: {
+    label: 'Book / Literature',
+    shortLabel: 'Book',
+    description: 'Line from a book, poem, play, or other literary work.',
+  },
+  MOVIE_LINE: {
+    label: 'Movie Line',
+    shortLabel: 'Movie',
+    description: 'Recognizable line from a film.',
+  },
+  TV_LINE: {
+    label: 'TV Line',
+    shortLabel: 'TV',
+    description: 'Recognizable line from a television show.',
+  },
+  ANIME_LINE: {
+    label: 'Anime Line',
+    shortLabel: 'Anime',
+    description: 'Recognizable line from an anime series or film.',
+  },
+  LYRIC_LINE: {
+    label: 'Lyric Line',
+    shortLabel: 'Lyric',
+    description: 'Short lyric excerpt with clear attribution.',
+  },
+} satisfies Record<
+  ChallengeType,
+  { label: string; shortLabel: string; description: string }
+>;
+
+export const challengeTypeSelectionHelpText =
+  'Speech is from public remarks; Saying is a common idiom; Proverb is traditional wisdom; Quote is for lines with no narrower source.';
+
+export const endlessSortSchema = z.union([
+  z.literal('random'),
+  z.literal('latest'),
+  z.literal('oldest'),
+  z.literal('win_rate_desc'),
+  z.literal('win_rate_asc'),
+]);
+
+export type EndlessSort = z.infer<typeof endlessSortSchema>;
+
 export const puzzleSourceSchema = z.union([
   z.literal('AUTO_DAILY'),
   z.literal('AUTO_ENDLESS'),
+  z.literal('COMMUNITY'),
   z.literal('MANUAL_INJECTED'),
   z.literal('UNKNOWN_LEGACY'),
 ]);
 
 export type PuzzleSource = z.infer<typeof puzzleSourceSchema>;
+
+const difficultyHumanFeaturesSchema = z.object({
+  lexiconCoverageRatio: z.number().min(0).max(1),
+  topCommonWordRatio: z.number().min(0).max(1),
+  rareWordRatio: z.number().min(0).max(1),
+  anchorWordCount: z.number().int().nonnegative(),
+  shortWordAnchorCount: z.number().int().nonnegative(),
+  commonPatternCount: z.number().int().nonnegative(),
+  repeatedPatternScore: z.number().min(0).max(1),
+  anchorDensity: z.number().min(0).max(1),
+  uniqueLetterSignal: z.number().min(0).max(1),
+  longWordPressure: z.number().min(0).max(1),
+  revealedAnchorCoverage: z.number().min(0).max(1),
+});
+
+const difficultyFairnessSummarySchema = z.object({
+  solvable: z.boolean(),
+  solvedRatio: z.number().min(0).max(1),
+  blindGuessRequired: z.boolean(),
+});
+
+export const difficultyBreakdownSchema = z.object({
+  difficultyModelVersion: z.literal('v2'),
+  staticDifficulty: z.number().int().min(1).max(10),
+  calibratedDifficulty: z.number().int().min(1).max(10),
+  difficultyConfidence: z.number().min(0).max(1),
+  humanFeatures: difficultyHumanFeaturesSchema,
+  fairnessSummary: difficultyFairnessSummarySchema,
+});
+
+export type DifficultyBreakdown = z.infer<typeof difficultyBreakdownSchema>;
 
 export const puzzlePrivateSchema = z.object({
   levelId: z.string().min(1),
@@ -88,6 +197,8 @@ export const puzzlePrivateSchema = z.object({
   goldIndex: z.number().int().nonnegative().nullable(),
   padlockChains: z.array(padlockChainSchema),
   difficulty: z.number().int().min(1).max(10),
+  difficultyModelVersion: z.literal('v2').optional(),
+  difficultyBreakdown: difficultyBreakdownSchema.optional(),
   cryptoHardness: z.number().min(0).max(1).optional(),
   targetTimeSeconds: z.number().nonnegative().optional(),
   starThresholds: z
@@ -176,6 +287,13 @@ export const userProfileSchema = z.object({
   endlessModeClears: z.number().int().nonnegative(),
   dailySolveTimeTotalSec: z.number().int().nonnegative(),
   endlessSolveTimeTotalSec: z.number().int().nonnegative(),
+  globalRating: z.number().int().nonnegative().default(startingGlobalRating),
+  globalScore: z.number().int().nonnegative().default(0),
+  ratingGames: z.number().int().nonnegative().default(0),
+  ratingWins: z.number().int().nonnegative().default(0),
+  ratingLosses: z.number().int().nonnegative().default(0),
+  globalWinStreak: z.number().int().nonnegative().default(0),
+  bestGlobalRank: z.number().int().nonnegative().default(0),
   bestOverallRank: z.number().int().nonnegative(),
   audioEnabled: z.boolean().default(true),
   // Tracks whether the player has ever successfully completed the "join community" user action.
@@ -213,6 +331,10 @@ export const leaderboardEntrySchema = z.object({
   mistakes: z.number().int().nonnegative().nullable().optional(),
   usedPowerups: z.number().int().nonnegative().nullable().optional(),
   levelsCompleted: z.number().int().nonnegative().optional(),
+  rating: z.number().int().nonnegative().optional(),
+  ratingDelta: z.number().int().optional(),
+  globalScore: z.number().int().nonnegative().optional(),
+  challengesCompleted: z.number().int().nonnegative().optional(),
 });
 
 export type LeaderboardEntry = z.infer<typeof leaderboardEntrySchema>;
@@ -268,11 +390,28 @@ export const gameBootstrapResponseSchema = z.object({
   profile: userProfileSchema,
   inventory: inventorySchema,
   endlessCatalog: endlessCatalogStatusSchema,
+  isModerator: z.boolean().default(false),
+  communityNotifications: z
+    .object({
+      creatorChangesRequestedCount: z.number().int().nonnegative(),
+      moderatorPendingReviewCount: z.number().int().nonnegative(),
+      moderatorRevisionReviewCount: z.number().int().nonnegative(),
+    })
+    .default({
+      creatorChangesRequestedCount: 0,
+      moderatorPendingReviewCount: 0,
+      moderatorRevisionReviewCount: 0,
+    }),
 });
 
 export const gameLoadLevelInputSchema = z.object({
   mode: z.union([z.literal('daily'), z.literal('endless')]),
   requestedLevelId: z.string().nullable().optional(),
+  dailyArchive: z.boolean().optional().default(false),
+  excludeLevelId: z.string().nullable().optional(),
+  ignorePostLevel: z.boolean().optional().default(false),
+  categoryFilter: challengeTypeSchema.nullable().optional(),
+  endlessSort: endlessSortSchema.optional().default('random'),
 });
 
 export const gameLoadLevelResponseSchema = z.object({
@@ -291,6 +430,33 @@ export const gameLoadLevelResponseSchema = z.object({
     winRatePct: z.number().int().min(0).max(100),
   }),
 });
+
+export const gamePreviewResponseSchema = z.object({
+  mode: z.literal('daily'),
+  levelId: z.string().min(1),
+  previewTitle: z.string().min(1).max(80),
+  puzzle: puzzlePublicSchema,
+  challengeMetrics: z.object({
+    plays: z.number().int().nonnegative(),
+    wins: z.number().int().nonnegative(),
+    winRatePct: z.number().int().min(0).max(100),
+  }),
+  creator: z.object({
+    username: z.string().min(1).nullable(),
+    avatarUrl: z.string().min(1).nullable(),
+  }),
+});
+
+export type GamePreviewResponse = z.infer<typeof gamePreviewResponseSchema>;
+
+export const gameInlineStatusResponseSchema = z.object({
+  levelId: z.string().min(1).nullable(),
+  completed: z.boolean(),
+  failed: z.boolean().optional().default(false),
+  removed: z.boolean().optional().default(false),
+});
+
+export type GameInlineStatusResponse = z.infer<typeof gameInlineStatusResponseSchema>;
 
 export const gameStartSessionInputSchema = z.object({
   levelId: z.string().min(1),
@@ -330,6 +496,19 @@ export const gamePurchaseDailyRetryResponseSchema = z.object({
   requiresPaidRetry: z.boolean(),
 });
 
+export const gameContinueLevelInputSchema = z.object({
+  levelId: z.string().min(1),
+  mode: z.union([z.literal('daily'), z.literal('endless')]),
+});
+
+export const gameContinueLevelResponseSchema = z.object({
+  ok: z.boolean(),
+  session: sessionSchema,
+  heartsRemaining: z.number().int().nonnegative(),
+  profile: userProfileSchema,
+  inventory: inventorySchema,
+});
+
 export const gameSubmitGuessInputSchema = z.object({
   levelId: z.string().min(1),
   tileIndex: z.number().int().nonnegative(),
@@ -350,6 +529,8 @@ export const gameSubmitGuessResponseSchema = z.object({
   shieldConsumed: z.boolean(),
   isLevelComplete: z.boolean(),
   isGameOver: z.boolean(),
+  ratingDelta: z.number().int().nullable().default(null),
+  ratingAfter: z.number().int().nonnegative().nullable().default(null),
 });
 
 export const gameSubmitGuessesInputSchema = z.object({
@@ -388,6 +569,9 @@ export const gameCompleteSessionResponseSchema = z.object({
   isRecoveryRun: z.boolean(),
   isCurrentDaily: z.boolean(),
   rewardNotice: z.string().nullable(),
+  ratingDelta: z.number().int().nullable().default(null),
+  ratingAfter: z.number().int().nonnegative().nullable().default(null),
+  globalScoreAfter: z.number().int().nonnegative().nullable().default(null),
   profile: userProfileSchema,
   inventory: inventorySchema,
 });
@@ -396,9 +580,19 @@ export const gameCompletedOutcomeSchema = z.object({
   levelId: z.string().min(1),
   solveSeconds: z.number().int().nonnegative().nullable(),
   score: z.number().int().nonnegative().nullable(),
+  ratingDelta: z.number().int().nullable().default(null),
+  ratingAfter: z.number().int().nonnegative().nullable().default(null),
+  globalScoreAfter: z.number().int().nonnegative().nullable().default(null),
   completedAtTs: z.number().int().nonnegative().nullable(),
   profile: userProfileSchema,
   inventory: inventorySchema,
+});
+
+export const gameFailedOutcomeSchema = z.object({
+  levelId: z.string().min(1),
+  ratingDelta: z.number().int().nullable().default(null),
+  ratingAfter: z.number().int().nonnegative().nullable().default(null),
+  pointsGained: z.number().int().nonnegative().default(0),
 });
 
 export const powerupPurchaseInputSchema = z.object({
@@ -450,7 +644,8 @@ export const leaderboardGetResponseSchema = z.object({
 
 export const leaderboardRankSummarySchema = z.object({
   dailyRank: z.number().int().positive().nullable(),
-  endlessRank: z.number().int().positive().nullable(),
+  globalRank: z.number().int().positive().nullable(),
+  endlessRank: z.number().int().positive().nullable().optional(),
   currentRank: z.number().int().positive().nullable(),
   bestOverallRank: z.number().int().positive().nullable(),
 });
@@ -583,11 +778,16 @@ export const adminValidateManualChallengeResponseSchema = z.object({
     uniqueLetterCount: z.number().int(),
     oneLetterWordCount: z.number().int(),
     commonSuffixCount: z.number().int(),
+    lexiconCoverageRatio: z.number().min(0).max(1).optional(),
+    topCommonWordRatio: z.number().min(0).max(1).optional(),
+    rareWordRatio: z.number().min(0).max(1).optional(),
+    anchorDensity: z.number().min(0).max(1).optional(),
   }),
   naturalDifficulty: z.enum(['warmup', 'medium', 'hard', 'expert']),
   achievableTierRange: z.array(z.enum(['warmup', 'medium', 'hard', 'expert'])),
   reasons: z.array(z.string()),
   suggestions: z.array(z.string()),
+  difficultyExplanation: difficultyBreakdownSchema.optional(),
 });
 
 export const adminInjectManualChallengeWithAdjustmentInputSchema = z.object({
@@ -608,6 +808,10 @@ export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
       uniqueLetterCount: z.number().int(),
       oneLetterWordCount: z.number().int(),
       commonSuffixCount: z.number().int(),
+      lexiconCoverageRatio: z.number().min(0).max(1).optional(),
+      topCommonWordRatio: z.number().min(0).max(1).optional(),
+      rareWordRatio: z.number().min(0).max(1).optional(),
+      anchorDensity: z.number().min(0).max(1).optional(),
     }),
     naturalDifficulty: z.enum(['warmup', 'medium', 'hard', 'expert']),
     achievableTierRange: z.array(z.enum(['warmup', 'medium', 'hard', 'expert'])),
@@ -615,6 +819,7 @@ export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
     budgetTotal: z.number().int(),
     adjustmentsMade: z.array(z.string()),
     suggestions: z.array(z.string()).optional(),
+    difficultyExplanation: difficultyBreakdownSchema.optional(),
   }),
   error: z.string().optional(),
 });

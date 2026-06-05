@@ -6,11 +6,13 @@ import {
   maxPuzzleWordLength,
 } from './content.ts';
 
+const isUpperAlpha = (char: string): boolean => char >= 'A' && char <= 'Z';
+
 const uniqueLetters = (text: string): Set<string> => {
   const set = new Set<string>();
   for (let i = 0; i < text.length; i += 1) {
     const char = text.charAt(i);
-    if (/^[A-Z]$/.test(char)) {
+    if (isUpperAlpha(char)) {
       set.add(char);
     }
   }
@@ -92,6 +94,15 @@ const hasUnfairBlindTile = (puzzle: PuzzlePrivate): boolean => {
 
   const textLetters = uniqueLetters(puzzle.targetText);
   const blindSet = new Set(puzzle.blindIndices);
+  const visibleByChar = new Map<string, number[]>();
+  for (const tile of puzzle.tiles) {
+    if (tile.isLetter && !blindSet.has(tile.index)) {
+      const indices = visibleByChar.get(tile.char) ?? [];
+      indices.push(tile.index);
+      visibleByChar.set(tile.char, indices);
+    }
+  }
+
   for (const index of puzzle.blindIndices) {
     const tile = puzzle.tiles[index];
     if (!tile || !tile.isLetter) {
@@ -102,18 +113,7 @@ const hasUnfairBlindTile = (puzzle: PuzzlePrivate): boolean => {
       return true;
     }
 
-    let appearsElsewhere = false;
-    for (const other of puzzle.tiles) {
-      if (
-        other.index !== tile.index &&
-        other.char === tile.char &&
-        other.isLetter &&
-        !blindSet.has(other.index)
-      ) {
-        appearsElsewhere = true;
-        break;
-      }
-    }
+    const appearsElsewhere = (visibleByChar.get(tile.char)?.length ?? 0) > 0;
     if (!appearsElsewhere && textLetters.has(tile.char)) {
       return true;
     }

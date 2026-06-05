@@ -3,13 +3,17 @@ import type { Inventory, UserProfile } from '../../../shared/game';
 
 const {
   getCompletedLevelsMock,
+  getFailedOutcomeReceiptMock,
   getInventoryMock,
   getShareCompletionReceiptMock,
+  hasFailedLevelMock,
   getUserProfileMock,
 } = vi.hoisted(() => ({
   getCompletedLevelsMock: vi.fn(),
+  getFailedOutcomeReceiptMock: vi.fn(),
   getInventoryMock: vi.fn(),
   getShareCompletionReceiptMock: vi.fn(),
+  hasFailedLevelMock: vi.fn(),
   getUserProfileMock: vi.fn(),
 }));
 
@@ -29,10 +33,15 @@ vi.mock('../../core/share-receipts', () => ({
   getShareCompletionReceipt: getShareCompletionReceiptMock,
 }));
 
+vi.mock('../../core/leaderboard', () => ({
+  getRatingOutcomeReceipt: getFailedOutcomeReceiptMock,
+}));
+
 vi.mock('../../core/state', () => ({
   getCompletedLevels: getCompletedLevelsMock,
   getInventory: getInventoryMock,
   getUserProfile: getUserProfileMock,
+  hasFailedLevel: hasFailedLevelMock,
 }));
 
 import { gameRouter } from './game';
@@ -88,8 +97,10 @@ const inventory: Inventory = {
 
 afterEach(() => {
   getCompletedLevelsMock.mockReset();
+  getFailedOutcomeReceiptMock.mockReset();
   getInventoryMock.mockReset();
   getShareCompletionReceiptMock.mockReset();
+  hasFailedLevelMock.mockReset();
   getUserProfileMock.mockReset();
 });
 
@@ -110,6 +121,9 @@ describe('gameRouter.getCompletedOutcome', () => {
     getShareCompletionReceiptMock.mockResolvedValue({
       solveSeconds: 58,
       score: 1250,
+      ratingDelta: 24,
+      ratingAfter: 524,
+      globalScoreAfter: 1250,
       completedAtTs: 1778900000000,
     });
     getUserProfileMock.mockResolvedValue(profile);
@@ -121,9 +135,41 @@ describe('gameRouter.getCompletedOutcome', () => {
       levelId: 'daily_2026_05_16',
       solveSeconds: 58,
       score: 1250,
+      ratingDelta: 24,
+      ratingAfter: 524,
+      globalScoreAfter: 1250,
       completedAtTs: 1778900000000,
-      profile,
+      profile: expect.objectContaining(profile),
       inventory,
+    });
+  });
+});
+
+describe('gameRouter.getFailedOutcome', () => {
+  it('returns null when the current user has not failed the level', async () => {
+    hasFailedLevelMock.mockResolvedValue(false);
+
+    const result = await caller.getFailedOutcome({ levelId: 'daily_2026_05_16' });
+
+    expect(result).toBeNull();
+    expect(getFailedOutcomeReceiptMock).not.toHaveBeenCalled();
+  });
+
+  it('returns durable failure rating metadata for a failed level', async () => {
+    hasFailedLevelMock.mockResolvedValue(true);
+    getFailedOutcomeReceiptMock.mockResolvedValue({
+      ratingDelta: -18,
+      ratingAfter: 482,
+      ts: 1778900000000,
+    });
+
+    const result = await caller.getFailedOutcome({ levelId: 'daily_2026_05_16' });
+
+    expect(result).toEqual({
+      levelId: 'daily_2026_05_16',
+      ratingDelta: -18,
+      ratingAfter: 482,
+      pointsGained: 0,
     });
   });
 });

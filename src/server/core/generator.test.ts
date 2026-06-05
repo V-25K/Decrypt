@@ -410,6 +410,57 @@ describe('generatePuzzleForDate', () => {
     });
   });
 
+  it('accepts a safe challenge type fallback only on the final retry', async () => {
+    let challengeTypeSeed = 1;
+    while ((buildChallengeTypeQueueFromSeed(challengeTypeSeed)[0] ?? 'QUOTE') !== 'PROVERB') {
+      challengeTypeSeed += 1;
+    }
+
+    getDecryptSettingsMock.mockResolvedValue({
+      aiMaxRetries: 2,
+      geminiApiKey: 'api-key',
+      contentSafetyMode: 'strict',
+      logicalCipherPercent: 10,
+      publishHourUtc: 0,
+      timezone: 'UTC',
+    });
+    computeGlobalDailyBiasMock.mockResolvedValue(0);
+    peekNextLevelIdMock.mockResolvedValue('lvl_0011');
+    getPuzzlePrivateMock.mockResolvedValue(null);
+    reserveUsedSignatureMock.mockResolvedValue(true);
+    getBundledEndlessReservationOwnerMock.mockReturnValue(null);
+    redisIncrByMock.mockResolvedValue(1);
+    redisGetMock.mockImplementation((key) => {
+      if (String(key).includes('daily_challenge_type_seed')) {
+        return `${challengeTypeSeed}`;
+      }
+      return null;
+    });
+    generatePuzzlePhraseBatchMock.mockResolvedValue({
+      candidates: [{ ...hardValidPhrase, challengeType: 'QUOTE' }],
+      totalRequested: 3,
+      totalReturned: 1,
+    });
+    buildPuzzleMock.mockReturnValue({
+      puzzlePrivate: { targetText: hardValidPhrase.text },
+      puzzlePublic: {},
+    });
+
+    const result = await generatePuzzleForDate(new Date('2026-03-07T00:00:00Z'));
+
+    expect(generatePuzzlePhraseBatchMock).toHaveBeenCalledTimes(2);
+    expect(buildPuzzleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        challengeType: 'QUOTE',
+        levelId: 'lvl_0011',
+      })
+    );
+    expect(result).toEqual({
+      levelId: 'lvl_0011',
+      dateKey: '2026-03-07',
+    });
+  });
+
   it('uses pooled candidates before calling the live AI batch and schedules a refill', async () => {
     const challengeTypeSeed = 123456789;
     const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
@@ -1189,12 +1240,16 @@ describe('publishDailyPost', () => {
         dateKey: '2026-03-07',
       })
     );
-    expect(submitCustomPostMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        entry: 'default',
-      })
-    );
-  });
+	    expect(submitCustomPostMock).toHaveBeenCalledWith(
+	      expect.objectContaining({
+	        entry: 'default',
+        postData: expect.not.objectContaining({
+          creatorUsername: expect.any(String),
+          creatorAvatarUrl: expect.any(String),
+        }),
+	      })
+	    );
+	  });
 
   it('submits moderator-triggered publishes as the acting user when requested', async () => {
     submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });

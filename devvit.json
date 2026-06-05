@@ -82,7 +82,8 @@
   },
   "forms": {
     "mod_inject_form": "/internal/forms/mod-inject-submit",
-    "mod_inject_review_form": "/internal/forms/mod-inject-review-submit"
+    "mod_inject_review_form": "/internal/forms/mod-inject-review-submit",
+    "mod_clear_subreddit_data_form": "/internal/forms/mod-clear-subreddit-data-submit"
   },
   "scheduler": {
     "tasks": {
@@ -119,9 +120,8 @@
     "subreddit": {
       "publishHourUtc": {
         "type": "number",
-        "label": "Daily publish hour (UTC) - Display Only",
-        "defaultValue": 0,
-        "validationEndpoint": "/internal/settings/validate-publish-hour"
+        "label": "Daily publish hour UTC (informational - scheduler uses fixed slots)",
+        "defaultValue": 0
       },
       "timezone": {
         "type": "string",
@@ -188,14 +188,14 @@
     },
     "redis": true,
     "payments": true,
-      "reddit": {
-        "enable": true,
-        "asUser": [
-          "SUBMIT_POST",
-          "SUBMIT_COMMENT",
-          "SUBSCRIBE_TO_SUBREDDIT"
-        ]
-      }
+    "reddit": {
+      "enable": true,
+      "asUser": [
+        "SUBMIT_POST",
+        "SUBMIT_COMMENT",
+        "SUBSCRIBE_TO_SUBREDDIT"
+      ]
+    }
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install",

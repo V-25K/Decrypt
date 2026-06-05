@@ -3,14 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const bootstrapQuery = vi.fn();
 const loadLevelQuery = vi.fn();
 const startSessionMutation = vi.fn();
+const continueLevelMutation = vi.fn();
 const heartbeatMutation = vi.fn().mockResolvedValue({ ok: true });
 const getCurrentViewQuery = vi.fn();
 const getCompletedOutcomeQuery = vi.fn();
+const getFailedOutcomeQuery = vi.fn();
 const submitGuessMutation = vi.fn();
 const submitGuessesMutation = vi.fn();
 const completeSessionMutation = vi.fn();
 const powerupPurchaseMutation = vi.fn();
 const powerupUseMutation = vi.fn();
+const leaderboardDailyQuery = vi.fn();
+const leaderboardLevelQuery = vi.fn();
+const leaderboardAllTimeQuery = vi.fn();
+const leaderboardRankSummaryQuery = vi.fn();
 const storeProductsQuery = vi.fn();
 const questsGetStatusQuery = vi.fn();
 const questsClaimMutation = vi.fn();
@@ -34,9 +40,11 @@ vi.mock('./trpc', () => ({
       bootstrap: { query: bootstrapQuery },
       loadLevel: { query: loadLevelQuery },
       startSession: { mutate: startSessionMutation },
+      continueLevel: { mutate: continueLevelMutation },
       heartbeat: { mutate: heartbeatMutation },
       getCurrentView: { query: getCurrentViewQuery },
       getCompletedOutcome: { query: getCompletedOutcomeQuery },
+      getFailedOutcome: { query: getFailedOutcomeQuery },
       submitGuess: { mutate: submitGuessMutation },
       submitGuesses: { mutate: submitGuessesMutation },
       completeSession: { mutate: completeSessionMutation },
@@ -46,8 +54,10 @@ vi.mock('./trpc', () => ({
       use: { mutate: powerupUseMutation },
     },
     leaderboard: {
-      getDaily: { query: vi.fn() },
-      getLevel: { query: vi.fn() },
+      getDaily: { query: leaderboardDailyQuery },
+      getLevel: { query: leaderboardLevelQuery },
+      getAllTime: { query: leaderboardAllTimeQuery },
+      getRankSummary: { query: leaderboardRankSummaryQuery },
     },
     social: {
       shareResult: { mutate: vi.fn() },
@@ -170,6 +180,7 @@ const puzzleFixture = (displayChar = '_', targetTimeSeconds?: number) => ({
 const primeBaseMocks = (params?: {
   mode?: 'inline' | 'expanded';
   coins?: number;
+  hearts?: number;
   inventory?: Partial<{ hammer: number; wand: number; shield: number; rocket: number }>;
   puzzle?: ReturnType<typeof puzzleFixture>;
   startTimestamp?: number;
@@ -201,6 +212,7 @@ const primeBaseMocks = (params?: {
 }) => {
   getWebViewModeMock.mockReturnValue(params?.mode ?? 'inline');
   const puzzle = params?.puzzle ?? puzzleFixture('_');
+  const profile = { ...profileFixture(params?.coins ?? 500), hearts: params?.hearts ?? 3 };
   bootstrapQuery.mockResolvedValue({
     userId: 't2_test',
     username: 'tester',
@@ -234,7 +246,7 @@ const primeBaseMocks = (params?: {
       winRatePct: 50,
     },
   });
-  startSessionMutation.mockResolvedValue({
+	  startSessionMutation.mockResolvedValue({
     ok: true,
     session: {
       activeLevelId: 'lvl_0001',
@@ -251,9 +263,34 @@ const primeBaseMocks = (params?: {
       ...params?.session,
     },
     heartsRemaining: 3,
+	  });
+  continueLevelMutation.mockResolvedValue({
+    ok: true,
+    session: {
+      activeLevelId: 'lvl_0001',
+      mode: 'daily',
+      startTimestamp: params?.startTimestamp ?? 0,
+      activeMs: 0,
+      lastSeenAt: 0,
+      mistakesMade: 0,
+      shieldIsActive: false,
+      revealedIndices: [],
+      usedPowerups: 0,
+      wrongGuesses: 0,
+      guessCount: 0,
+      ...params?.session,
+    },
+    heartsRemaining: 3,
+    profile,
+    inventory: inventoryFixture(params?.inventory),
   });
   getCurrentViewQuery.mockResolvedValue(puzzle);
   getCompletedOutcomeQuery.mockResolvedValue(null);
+  getFailedOutcomeQuery.mockResolvedValue(null);
+  leaderboardDailyQuery.mockResolvedValue({ entries: [], userRank: null });
+  leaderboardLevelQuery.mockResolvedValue({ entries: [], userRank: null });
+  leaderboardAllTimeQuery.mockResolvedValue({ levels: [], userRank: null });
+  leaderboardRankSummaryQuery.mockResolvedValue(null);
   storeProductsQuery.mockResolvedValue({
     products: params?.storeProducts ?? [
       {
@@ -299,7 +336,7 @@ const primeBaseMocks = (params?: {
     reason: null,
     rewardCoins: 0,
     rewardInventory: inventoryFixture(),
-    profile: profileFixture(params?.coins ?? 500),
+    profile,
     inventory: inventoryFixture(params?.inventory),
   });
   profileJoinCommunityMutation.mockResolvedValue({
@@ -391,15 +428,21 @@ afterEach(() => {
   bootstrapQuery.mockReset();
   loadLevelQuery.mockReset();
   startSessionMutation.mockReset();
+  continueLevelMutation.mockReset();
   heartbeatMutation.mockReset();
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();
   getCompletedOutcomeQuery.mockReset();
+  getFailedOutcomeQuery.mockReset();
   submitGuessMutation.mockReset();
   submitGuessesMutation.mockReset();
   completeSessionMutation.mockReset();
   powerupPurchaseMutation.mockReset();
   powerupUseMutation.mockReset();
+  leaderboardDailyQuery.mockReset();
+  leaderboardLevelQuery.mockReset();
+  leaderboardAllTimeQuery.mockReset();
+  leaderboardRankSummaryQuery.mockReset();
   storeProductsQuery.mockReset();
   questsGetStatusQuery.mockReset();
   questsClaimMutation.mockReset();
@@ -534,7 +577,7 @@ describe('Game', { timeout: 15000 }, () => {
     expect(expandedUtilityPanel).toBeFalsy();
   });
 
-  it('shows the right-side bonus timer while an active challenge is inside the bonus window', async () => {
+  it('keeps the bonus timer off the challenge surface inside the bonus window', async () => {
     setViewportWidth(375);
     primeBaseMocks({
       mode: 'inline',
@@ -546,22 +589,10 @@ describe('Game', { timeout: 15000 }, () => {
     await renderGame();
     await waitForChallengeScreen();
 
-    const timer = document.querySelector('[data-testid="bonus-timer"]');
-    const countdown = document.querySelector('[data-testid="bonus-timer-countdown"]');
-    const initialCountdown = countdown?.textContent ?? '';
-
-    expect(timer).toBeTruthy();
-    expect(timer?.textContent).toContain('Bonus Timer');
-    expect(timer?.getAttribute('aria-label')).toContain('seconds left');
-    expect(initialCountdown).toMatch(/^00:\d{2}$/);
+    expect(document.querySelector('[data-testid="bonus-timer"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="bonus-timer-countdown"]')).toBeFalsy();
+    expect(document.body.textContent ?? '').not.toContain('Bonus Timer');
     expect(document.body.textContent ?? '').not.toContain('Fast solve');
-
-    await waitFor(
-      () =>
-        (document.querySelector('[data-testid="bonus-timer-countdown"]')?.textContent ??
-          '') !== initialCountdown,
-      2500
-    );
   });
 
   it('does not start the bonus timer for a fresh untouched session', async () => {
@@ -579,7 +610,7 @@ describe('Game', { timeout: 15000 }, () => {
     expect(document.body.textContent ?? '').not.toContain('Bonus Timer');
   });
 
-  it('starts the bonus timer when the player makes the first guess', async () => {
+  it('keeps the bonus timer hidden when the player makes the first guess', async () => {
     setViewportWidth(375);
     primeBaseMocks({
       mode: 'inline',
@@ -614,8 +645,48 @@ describe('Game', { timeout: 15000 }, () => {
     });
     expect(typeLetterWithProxy('Q')).toBe(true);
 
-    await waitFor(() => Boolean(document.querySelector('[data-testid="bonus-timer"]')));
-    expect(document.body.textContent ?? '').toContain('Bonus Timer');
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    expect(document.querySelector('[data-testid="bonus-timer"]')).toBeFalsy();
+    expect(document.body.textContent ?? '').not.toContain('Bonus Timer');
+  });
+
+  it('allows guesses in an active session after continue consumed the last profile life', async () => {
+    setViewportWidth(375);
+    primeBaseMocks({
+      mode: 'inline',
+      hearts: 0,
+      puzzle: puzzleFixture('_', 30),
+    });
+    submitGuessMutation.mockResolvedValue({
+      ok: true,
+      isCorrect: false,
+      errorCode: null,
+      sessionStartTimestamp: Date.now() - 1000,
+      revealedTiles: [],
+      revealedIndices: [],
+      revealedLetter: null,
+      newlyUnlockedChainIds: [],
+      lockProgressChanged: false,
+      heartsRemaining: 2,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await renderGame();
+    await waitForChallengeScreen();
+    document
+      .querySelector('[data-testid="puzzle-token-wrap"] button')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => {
+      const selectedTile = document.querySelector('[data-testid="puzzle-token-wrap"] button');
+      return selectedTile?.getAttribute('data-tile-state') === 'selected';
+    });
+
+    expect(typeLetterWithProxy('Q')).toBe(true);
+
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    expect(showToastMock).not.toHaveBeenCalledWith('No lives left. Wait for refill.');
   });
 
   it('keeps the bonus timer hidden when the server session is already outside the bonus window', async () => {
@@ -825,6 +896,135 @@ describe('Game', { timeout: 15000 }, () => {
     expect(document.body.textContent ?? '').toContain('50');
     expect(powerupGrid).toBeTruthy();
     expect(inputProxy).toBeTruthy();
+    expect(document.querySelector('[data-testid="virtual-keyboard-panel"]')).toBeFalsy();
+  });
+
+  it('places the virtual keyboard below the utility row for mobile expanded play', async () => {
+    setViewportWidth(390);
+    primeBaseMocks({
+      mode: 'expanded',
+      puzzle: {
+        ...puzzleFixture('_'),
+        words: ['HI'],
+        tiles: [
+          {
+            index: 0,
+            isLetter: true,
+            displayChar: '_',
+            cipherNumber: 1,
+            isBlind: false,
+            isGold: false,
+            isLocked: false,
+          },
+          {
+            index: 1,
+            isLetter: true,
+            displayChar: '_',
+            cipherNumber: 2,
+            isBlind: false,
+            isGold: false,
+            isLocked: false,
+          },
+        ],
+      },
+    });
+    submitGuessMutation.mockResolvedValue({
+      ok: true,
+      isCorrect: false,
+      errorCode: null,
+      revealedTiles: [],
+      revealedIndices: [],
+      revealedLetter: null,
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await waitForChallengeScreen();
+
+    const inputProxy = document.querySelector<HTMLInputElement>(
+      '[data-testid="inline-input-proxy"]'
+    );
+    const firstTile = document.querySelector<HTMLButtonElement>(
+      '[data-testid="puzzle-token-wrap"] button'
+    );
+    const secondTile = document.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="puzzle-token-wrap"] button'
+    )[1];
+    const keyboardPanel = document.querySelector('[data-testid="virtual-keyboard-panel"]');
+    const lastKeyboardRow = document.querySelector('[data-testid="virtual-key-row-2"]');
+    const powerupGrid = document.querySelector('[data-testid="inline-powerup-grid"]');
+    const utilityRow = document.querySelector('[data-testid="utility-row"]');
+
+    expect(inputProxy?.inputMode).toBe('none');
+    expect(keyboardPanel).toBeTruthy();
+    expect(powerupGrid).toBeTruthy();
+    expect(utilityRow).toBeTruthy();
+    expect(document.querySelector('[data-testid="virtual-keyboard-collapse"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="virtual-keyboard-toggle"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="virtual-key-ArrowUp"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="virtual-key-ArrowDown"]')).toBeFalsy();
+    expect(lastKeyboardRow?.firstElementChild?.getAttribute('data-testid')).toBe(
+      'virtual-key-ArrowLeft'
+    );
+    expect(lastKeyboardRow?.lastElementChild?.getAttribute('data-testid')).toBe(
+      'virtual-key-ArrowRight'
+    );
+    expect(
+      utilityRow && keyboardPanel
+        ? Boolean(
+            utilityRow.compareDocumentPosition(keyboardPanel) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        : false
+    ).toBe(true);
+
+    firstTile?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => firstTile?.getAttribute('data-tile-state') === 'selected');
+
+    document
+      .querySelector('[data-testid="virtual-key-ArrowRight"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => secondTile?.getAttribute('data-tile-state') === 'selected');
+
+    document
+      .querySelector('[data-testid="virtual-key-B"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    expect(submitGuessMutation).toHaveBeenCalledWith({
+      levelId: 'lvl_0001',
+      tileIndex: 1,
+      guessedLetter: 'B',
+    });
+  });
+
+  it('keeps the virtual keyboard permanent on mobile expanded play', async () => {
+    setViewportWidth(390);
+    primeBaseMocks({ mode: 'expanded' });
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await waitForChallengeScreen();
+    await waitFor(() => Boolean(document.querySelector('[data-testid="virtual-keyboard-panel"]')));
+
+    expect(document.querySelector('[data-testid="virtual-keyboard-collapse"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="virtual-keyboard-toggle"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="virtual-keyboard-panel"]')).toBeTruthy();
+  });
+
+  it('hides the virtual keyboard in desktop simulator sized expanded play', async () => {
+    setViewportWidth(800);
+    primeBaseMocks({ mode: 'expanded' });
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await waitForChallengeScreen();
+
+    expect(document.querySelector('[data-testid="virtual-keyboard-panel"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="inline-input-proxy"]')).toBeTruthy();
   });
 
   it('centers blind marker icons in the cipher row', async () => {
@@ -1033,6 +1233,41 @@ describe('Game', { timeout: 15000 }, () => {
     expect(stackedLayout).toBeTruthy();
     expect(utilityRow).toBeTruthy();
     expect(inputProxy).toBeTruthy();
+  });
+
+  it('returns to the same challenge after shopping for hearts from a no-life start', async () => {
+    primeBaseMocks({ mode: 'expanded', hearts: 0 });
+    startSessionMutation.mockRejectedValueOnce(
+      new Error('No lives left. Wait for refill.')
+    );
+    purchaseMock.mockResolvedValue({
+      status: 'STATUS_SUCCESS',
+      errorMessage: null,
+    });
+
+    await renderGame();
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="heart-purchase-dialog"]')));
+    expect(document.body.textContent ?? '').toContain('Restore Hearts');
+    expect(document.querySelector('[data-testid="heart-purchase-shop-packages"]')).toBeTruthy();
+
+    document
+      .querySelector('[data-testid="heart-purchase-shop-packages"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="shop-screen"]')));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="shop-buy-rookie_stash"]')));
+    expect(document.querySelector('[data-testid="heart-purchase-dialog"]')).toBeFalsy();
+
+    document
+      .querySelector('[data-testid="shop-buy-rookie_stash"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => purchaseMock.mock.calls.length > 0);
+    await waitFor(() => startSessionMutation.mock.calls.length >= 2);
+    await waitForChallengeScreen();
+    expect(document.querySelector('[data-testid="shop-screen"]')).toBeFalsy();
+    expect(document.querySelector('[data-testid="result-screen"]')).toBeFalsy();
   });
 
   it('uses decoder pack as Popular replacement when one-time offer is absent', async () => {
@@ -1459,12 +1694,15 @@ describe('Game', { timeout: 15000 }, () => {
       usedPowerups: 0,
       retryCount: 0,
       retryScoreFactor: 1,
-      isRecoveryRun: false,
-      isCurrentDaily: true,
-      rewardNotice: null,
-      profile: profileFixture(650),
-      inventory: inventoryFixture(),
-    });
+	      isRecoveryRun: false,
+	      isCurrentDaily: true,
+	      rewardNotice: null,
+	      ratingDelta: 18,
+	      ratingAfter: 518,
+	      globalScoreAfter: 120,
+	      profile: profileFixture(650),
+	      inventory: inventoryFixture(),
+	    });
 
     await renderGame();
     await openChallengeFromHome();
@@ -1477,11 +1715,14 @@ describe('Game', { timeout: 15000 }, () => {
     });
     expect(typeLetterWithProxy('H')).toBe(true);
 
-    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
-    expect(document.body.textContent ?? '').toContain('Challenge Completed');
-    expect(document.querySelector('[data-testid="outcome-overlay-quote"]')).toBeTruthy();
-    expect(document.querySelector('[data-testid="outcome-time-pill"]')).toBeTruthy();
-  });
+	    await waitFor(() => Boolean(document.querySelector('[data-testid="success-overlay"]')));
+	    expect(document.body.textContent ?? '').not.toContain('Challenge Completed');
+	    expect(document.querySelector('[data-testid="outcome-overlay-quote"]')).toBeTruthy();
+	    expect(document.querySelector('[data-testid="outcome-time-pill"]')).toBeTruthy();
+	    expect(document.querySelector('[data-testid="outcome-rating-pill"]')).toBeTruthy();
+	    expect(document.body.textContent ?? '').toContain('+18 ELO');
+	    expect(document.body.textContent ?? '').toContain('+120 pts');
+	  });
 
   it('shows the shield on the active mistake slot only until it absorbs a mistake', async () => {
     primeBaseMocks({ mode: 'expanded' });

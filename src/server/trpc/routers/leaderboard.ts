@@ -12,6 +12,7 @@ import {
   getAllTimeTopLevels,
   getAllTimeTopLogic,
   getDailyTop,
+  getGlobalTop,
   getLevelTop,
   getUserRankSummary,
 } from '../../core/leaderboard';
@@ -52,15 +53,22 @@ export const leaderboardRouter = router({
     .query(async ({ input }) => {
       return await paginatedLeaderboardService.getLevelLeaderboardPage(input);
     }),
-  getAllTime: publicProcedure
+	  getAllTime: publicProcedure
     .input(z.object({ limit: z.number().int().positive().max(50).optional() }))
     .query(async ({ input }) => {
       const limit = input.limit ?? 10;
       return {
-        levels: await getAllTimeTopLevels(limit),
-        logic: await getAllTimeTopLogic(limit),
-      };
-    }),
+	        levels: await getAllTimeTopLevels(limit),
+	        global: await getGlobalTop(limit),
+	        logic: await getAllTimeTopLogic(limit),
+	      };
+	    }),
+	  getGlobalPage: publicProcedure
+	    .input(leaderboardPageInputSchema)
+	    .output(leaderboardPageSchema)
+	    .query(async ({ input }) => {
+	      return await paginatedLeaderboardService.getGlobalLeaderboardPage(input);
+	    }),
   getAllTimeLevelsPage: publicProcedure
     .input(leaderboardPageInputSchema)
     .output(leaderboardPageSchema)
@@ -88,10 +96,11 @@ export const leaderboardRouter = router({
         getUserProfile(ctx.userId),
       ]);
       const bestOverallRank = profile.bestOverallRank;
-      return leaderboardRankSummarySchema.parse({
-        dailyRank: summary.dailyRank,
-        endlessRank: summary.endlessRank,
-        currentRank: summary.currentRank,
+	      return leaderboardRankSummarySchema.parse({
+	        dailyRank: summary.dailyRank,
+	        globalRank: summary.globalRank,
+	        endlessRank: summary.globalRank,
+	        currentRank: summary.currentRank,
         bestOverallRank:
           Number.isFinite(bestOverallRank) && bestOverallRank > 0
             ? Math.floor(bestOverallRank)

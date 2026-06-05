@@ -14,41 +14,26 @@ import {
   sanitizePhrase,
 } from './content.ts';
 import { runDummySolver } from './dummy-solver.ts';
+import {
+  buildDifficultyBreakdown,
+  difficultyModelVersion,
+  estimateDifficultyV2,
+} from './difficulty-model.ts';
 import { checkPadlockStatus } from './gameplay.ts';
 import { deriveSeed, mulberry32, shuffleWithRng, type Rng } from './rng.ts';
+import { solverThresholdForDifficulty } from './solver-thresholds.ts';
 
 const isLetter = (char: string): boolean => /^[A-Z]$/.test(char);
 
 const solveRatioThreshold = (difficulty: number): number => {
-  if (difficulty <= 3) {
-    return 0.82;
-  }
-  if (difficulty <= 5) {
-    return 0.7;
-  }
-  if (difficulty <= 7) {
-    return 0.56;
-  }
-  if (difficulty >= 9) {
-    return 0.42;
-  }
-  return 0.5;
+  return solverThresholdForDifficulty(difficulty, 'build');
 };
 
 const deepSolverThreshold = (difficulty: number): number => {
-  if (difficulty >= 9) {
-    return 0.42;
-  }
-  if (difficulty >= 8) {
-    return 0.48;
-  }
-  if (difficulty >= 6) {
-    return 0.56;
-  }
-  return solveRatioThreshold(difficulty);
+  return solverThresholdForDifficulty(difficulty, 'deep-build');
 };
 
-const requiresDeepSolverValidation = (difficulty: number): boolean => difficulty >= 8;
+const requiresDeepSolverValidation = (difficulty: number): boolean => difficulty >= 6;
 
 const hasOverlap = (a: number[], b: number[]): boolean => {
   const setB = new Set(b);
@@ -176,7 +161,7 @@ export type FairnessConstraints = {
  * - Base budget: warmup=22, medium=65, hard=108, expert=138
  * - Hardness discount: harder text reduces extra obstruction budget
  * - Helper / repetition bonus: easier text earns more obstruction budget so it can still be tuned upward
- * - Length bonus: longer lines can absorb more board obstructions fairly
+ * - Unique-word variety bonus: varied wording can absorb more obstructions fairly
  * 
  * @param context - The puzzle difficulty context including tier, crypto hardness, and helper counts
  * @returns ObstructionBudget with total points and spent points (initially 0)
@@ -186,17 +171,17 @@ export const computeObstructionBudget = (
 ): ObstructionBudget => {
   const baseBudget =
     context.tier === 'warmup' ? 22 : context.tier === 'medium' ? 65 : context.tier === 'hard' ? 108 : 138;
-  const totalLetters = context.totalLetters ?? Math.max(context.phraseUniqueLetters * 2, 0);
   const repeatedWordRatio =
     context.repeatedWordRatio ?? Math.max(0, 1 - (context.uniqueWordRatio ?? 1));
+  const uniqueWordCount = context.uniqueWordCount ?? 0;
   const hardnessDiscount = context.cryptoHardness * 16;
   const helperBonus =
     context.phraseOneLetterWords * 3 + context.phraseSuffixCount * 2;
   const repetitionBonus = repeatedWordRatio * 12;
-  const lengthBonus = Math.max(-6, Math.min(14, (totalLetters - 24) * 0.8));
+  const wordVarietyBonus = Math.max(0, Math.min(14, (uniqueWordCount - 4) * 2));
   const total = Math.max(
     0,
-    Math.round(baseBudget + helperBonus + repetitionBonus + lengthBonus - hardnessDiscount)
+    Math.round(baseBudget + helperBonus + repetitionBonus + wordVarietyBonus - hardnessDiscount)
   );
   return {
     total,
@@ -291,6 +276,15 @@ const countFullyPrefilledWords = (params: {
     }
   }
   return count;
+};
+
+const withDifficultyBreakdown = (puzzle: PuzzlePrivate): PuzzlePrivate => {
+  const difficultyBreakdown = buildDifficultyBreakdown(puzzle);
+  return {
+    ...puzzle,
+    difficultyModelVersion,
+    difficultyBreakdown,
+  };
 };
 
 const allLetterIndicesForWord = (tiles: PuzzleTile[], wordIndex: number): number[] =>
@@ -1191,13 +1185,14 @@ const passesFinalSolvabilityValidation = (params: {
 export const buildPublicPuzzle = (
   puzzle: PuzzlePrivate,
   revealedIndices: number[],
-  sessionRevealedIndices?: number[]
+  sessionRevealedIndices?: number[],
+  options?: { disableFallbackStarter?: boolean }
 ): PuzzlePublic => {
   const lockSet = new Set(puzzle.lockIndices ?? []);
   const prefilledSet = new Set(puzzle.prefilledIndices);
   const sessionRevealedSet = new Set(sessionRevealedIndices ?? []);
   const revealedSet = new Set([...puzzle.prefilledIndices, ...revealedIndices]);
-  if (revealedSet.size === 0) {
+  if (revealedSet.size === 0 && options?.disableFallbackStarter !== true) {
     const initialPadlockStatus = checkPadlockStatus(puzzle, revealedSet);
     const nonBlindStarter = puzzle.tiles.find(
       (tile) =>
@@ -1416,11 +1411,11 @@ export const buildPuzzle = (params: {
           prefilledIndices,
         }),
       });
-      const puzzlePrivate = puzzlePrivateSchema.parse({
+      const puzzlePrivate = withDifficultyBreakdown(puzzlePrivateSchema.parse({
         ...phase2Puzzle,
         targetTimeSeconds: baseTiming.targetTimeSeconds,
         starThresholds: baseTiming.starThresholds,
-      });
+      }));
       const puzzlePublic = buildPublicPuzzle(puzzlePrivate, []);
       return { puzzlePrivate, puzzlePublic };
     }
@@ -1453,7 +1448,7 @@ export const buildPuzzle = (params: {
       }),
     });
 
-    const puzzlePrivate = puzzlePrivateSchema.parse({
+    const puzzlePrivate = withDifficultyBreakdown(puzzlePrivateSchema.parse({
       ...phase2Puzzle,
       lockIndices: lockSelection.lockIndices,
       blindIndices,
@@ -1467,7 +1462,7 @@ export const buildPuzzle = (params: {
       padlockChains: lockSelection.padlockChains,
       targetTimeSeconds: finalTiming.targetTimeSeconds,
       starThresholds: finalTiming.starThresholds,
-    });
+    }));
     if (
       !params.skipSolvabilityCheck &&
       !passesFinalSolvabilityValidation({
@@ -1544,10 +1539,10 @@ export const adjustPuzzleDifficulty = async (params: {
     const estimatedDifficulty = estimateDifficultyFromObstructions(currentPuzzle);
     const currentTier = difficultyToTier(estimatedDifficulty);
     const difficultyGap = params.targetDifficulty - estimatedDifficulty;
-    const syncedPuzzle =
-      currentPuzzle.difficulty === estimatedDifficulty
-        ? currentPuzzle
-        : { ...currentPuzzle, difficulty: estimatedDifficulty };
+    const syncedPuzzle = withDifficultyBreakdown({
+      ...currentPuzzle,
+      difficulty: estimatedDifficulty,
+    });
     const stateKey = JSON.stringify({
       difficulty: estimatedDifficulty,
       blindIndices: [...currentPuzzle.blindIndices].sort((a, b) => a - b),
@@ -1699,10 +1694,10 @@ export const adjustPuzzleDifficulty = async (params: {
   const finalEstimatedDifficulty = estimateDifficultyFromObstructions(currentPuzzle);
   
   const finalTier = difficultyToTier(finalEstimatedDifficulty);
-  const finalPuzzle =
-    currentPuzzle.difficulty === finalEstimatedDifficulty
-      ? currentPuzzle
-      : { ...currentPuzzle, difficulty: finalEstimatedDifficulty };
+  const finalPuzzle = withDifficultyBreakdown({
+    ...currentPuzzle,
+    difficulty: finalEstimatedDifficulty,
+  });
 
   if (finalTier === targetTier) {
     console.log(`${tracePrefix} Convergence successful`, {
@@ -1754,38 +1749,8 @@ export const adjustPuzzleDifficulty = async (params: {
  * Estimates puzzle difficulty based on obstructions applied.
  * This is a heuristic that maps obstruction counts to difficulty tiers.
  */
-const estimateDifficultyFromObstructions = (puzzle: PuzzlePrivate): number => {
-  const phraseProfile = computePhraseDifficultyProfile(puzzle.targetText);
-  const padlockCount = puzzle.padlockChains.length;
-  const blindCount = puzzle.blindIndices.length;
-  const prefilledCount = puzzle.prefilledIndices.length;
-  const letterCount = puzzle.tiles.filter(t => t.isLetter).length;
-  const fullyPrefilledWordCount = countFullyPrefilledWords({
-    tiles: puzzle.tiles,
-    words: puzzle.words,
-    prefilledIndices: puzzle.prefilledIndices,
-  });
-  
-  const prefilledRatio = letterCount > 0 ? prefilledCount / letterCount : 0;
-  const textComplexityScore =
-    1.5 +
-    phraseProfile.cryptoHardness * 4.2 +
-    Math.min(1.6, phraseProfile.uniqueLetterCount / 12) +
-    Math.min(1.2, phraseProfile.uniqueWordRatio * 1.2) +
-    Math.min(0.8, Math.max(0, letterCount - 24) / 18);
-
-  let score = textComplexityScore;
-  score += padlockCount * 1.4;
-  score += blindCount * 0.9;
-  score -= prefilledRatio * 4.5;
-  score -= fullyPrefilledWordCount * 0.9;
-  if (puzzle.cipherType === 'random') {
-    score += 0.4;
-  } else if (puzzle.cipherType === 'shift') {
-    score -= 0.4;
-  }
-
-  return Math.max(1, Math.min(10, Math.round(score)));
+export const estimateDifficultyFromObstructions = (puzzle: PuzzlePrivate): number => {
+  return estimateDifficultyV2(puzzle);
 };
 
 /**
@@ -1796,28 +1761,18 @@ const computeAchievableRange = (
   budget: ObstructionBudget
 ): DifficultyTier[] => {
   const currentTier = difficultyToTier(estimateDifficultyFromObstructions(puzzle));
-  const remaining = remainingBudget(budget);
-  
-  // Simple heuristic: if we have significant budget remaining, we might reach higher tiers
-  const tiers: DifficultyTier[] = [currentTier];
-  
-  if (currentTier === 'warmup' && remaining >= PADLOCK_CHAIN_COST) {
-    tiers.push('medium');
+  const tiers = new Set<DifficultyTier>([currentTier]);
+  const dryRunRng = mulberry32(deriveSeed(puzzle.levelId, `${puzzle.targetText}:achievable`));
+  const candidates = [
+    ...getIncreaseAdjustments(puzzle, budget, dryRunRng),
+    ...getDecreaseAdjustments(puzzle, budget),
+  ];
+  for (const adjustment of candidates) {
+    const nextPuzzle = applyAdjustment(puzzle, adjustment);
+    tiers.add(difficultyToTier(estimateDifficultyFromObstructions(nextPuzzle)));
   }
-  if (currentTier === 'medium') {
-    tiers.push('warmup'); // Can always go down
-    if (remaining >= PADLOCK_CHAIN_COST * 2) {
-      tiers.push('hard');
-    }
-  }
-  if (currentTier === 'hard') {
-    tiers.push('medium', 'expert'); // Can always move one tier either way
-  }
-  if (currentTier === 'expert') {
-    tiers.push('hard');
-  }
-  
-  return tiers;
+  const orderedTiers: DifficultyTier[] = ['warmup', 'medium', 'hard', 'expert'];
+  return orderedTiers.filter((tier) => tiers.has(tier));
 };
 
 /**

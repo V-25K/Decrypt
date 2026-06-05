@@ -5,12 +5,18 @@ import {
   keyDailyLeaderboard,
   keyDailyLeaderboardStats,
   keyDailyRankAwarded,
+  keyGlobalRatingLeaderboard,
+  keyGlobalScoreLeaderboard,
   keyLevelWinners,
   keyUserQuestDaily,
   keyUserCompleted,
   keyUserEndlessLevelScores,
+  keyUserGlobalLevelScores,
   keyUserProfile,
+  keyUserRatingOutcomes,
 } from './keys';
+import type { PuzzlePrivate, UserProfile } from '../../shared/game';
+import { calculateRating } from '../../shared/rating';
 import { dailyDataTtlSeconds } from './constants';
 import { updateQuestProgressOnDailyTopRank } from './quests';
 import { getShareCompletionReceipt } from './share-receipts';
@@ -26,6 +32,51 @@ type LeaderboardUserMeta = {
   username: string | null;
   snoovatarUrl: string | null;
 };
+
+type RatingOutcomeReceipt = {
+  ratingDelta: number;
+  ratingAfter: number;
+  ts: number;
+};
+
+const encodeRatingOutcomeReceipt = (
+  receipt: RatingOutcomeReceipt
+): string => JSON.stringify(receipt);
+
+const parseRatingOutcomeReceipt = (
+  raw: string | null | undefined
+): RatingOutcomeReceipt | null => {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof parsed.ratingDelta === 'number' &&
+      typeof parsed.ratingAfter === 'number' &&
+      typeof parsed.ts === 'number'
+    ) {
+      return {
+        ratingDelta: Math.trunc(parsed.ratingDelta),
+        ratingAfter: Math.max(0, Math.trunc(parsed.ratingAfter)),
+        ts: Math.max(0, Math.trunc(parsed.ts)),
+      };
+    }
+  } catch (_error) {
+    return null;
+  }
+  return null;
+};
+
+export const getRatingOutcomeReceipt = async (
+  userId: string,
+  outcomeKey: string
+): Promise<RatingOutcomeReceipt | null> =>
+  parseRatingOutcomeReceipt(
+    await redis.hGet(keyUserRatingOutcomes(userId), outcomeKey)
+  );
 
 const publicLeaderboardCacheTtlSeconds = 12;
 
@@ -103,6 +154,19 @@ const readEndlessClears = async (userId: string): Promise<number> => {
     return 0;
   }
   return Math.max(0, Math.floor(parsed));
+};
+
+const readProfileNumber = async (
+  userId: string,
+  field: string,
+  fallback: number
+): Promise<number> => {
+  const raw = await redis.hGet(keyUserProfile(userId), field);
+  if (raw === null || raw === undefined || raw === '') {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
 };
 
 const dailyRepairScanLimit = 60;
@@ -395,6 +459,158 @@ export const recordAllTimeLevelScore = async (params: {
     }),
     redis.zIncrBy(keyAllTimeLevelsLeaderboard, params.userId, delta),
   ]);
+};
+
+export const recordGlobalWin = async (params: {
+  userId: string;
+  levelId: string;
+  solveScore: number;
+  profile: UserProfile;
+  puzzle: PuzzlePrivate;
+  solveSeconds: number;
+  mistakes: number;
+  usedPowerups: number;
+  isRecoveryRun: boolean;
+}): Promise<{
+  profile: UserProfile;
+  ratingDelta: number;
+  ratingAfter: number;
+  globalScoreDelta: number;
+}> => {
+  const levelScore = Number.isFinite(params.solveScore)
+    ? Math.max(0, Math.round(params.solveScore))
+    : 0;
+  const scoreKey = keyUserGlobalLevelScores(params.userId);
+  const existingRaw = await redis.hGet(scoreKey, params.levelId);
+  const existingScore =
+    existingRaw !== null && existingRaw !== undefined && existingRaw !== ''
+      ? Number(existingRaw)
+      : null;
+  const safeExisting =
+    existingScore !== null && Number.isFinite(existingScore)
+      ? Math.max(0, Math.round(existingScore))
+      : 0;
+  const globalScoreDelta = Math.max(0, levelScore - safeExisting);
+  if (globalScoreDelta > 0) {
+    await Promise.all([
+      redis.hSet(scoreKey, {
+        [params.levelId]: String(levelScore),
+      }),
+      redis.zIncrBy(keyGlobalScoreLeaderboard, params.userId, globalScoreDelta),
+    ]);
+  }
+
+  const outcomeInserted = await redis.hSetNX(
+    keyUserRatingOutcomes(params.userId),
+    `win:${params.levelId}`,
+    String(Date.now())
+  );
+  if (outcomeInserted !== 1) {
+    const nextProfile: UserProfile = {
+      ...params.profile,
+      globalScore: params.profile.globalScore + globalScoreDelta,
+    };
+    await redis.zAdd(keyGlobalRatingLeaderboard, {
+      member: params.userId,
+      score: nextProfile.globalRating,
+    });
+    return {
+      profile: nextProfile,
+      ratingDelta: 0,
+      ratingAfter: nextProfile.globalRating,
+      globalScoreDelta,
+    };
+  }
+
+  const result = calculateRating({
+    playerRating: params.profile.globalRating,
+    ratingGames: params.profile.ratingGames,
+    outcome: 'win',
+    difficulty: params.puzzle.difficulty,
+    cryptoHardness: params.puzzle.cryptoHardness ?? null,
+    isLogical: params.puzzle.isLogical,
+    solveSeconds: params.solveSeconds,
+    targetTimeSeconds: params.puzzle.targetTimeSeconds ?? null,
+    mistakes: params.mistakes,
+    usedPowerups: params.usedPowerups,
+    currentWinStreak: params.profile.globalWinStreak,
+    isRecoveryRun: params.isRecoveryRun,
+  });
+  const nextProfile: UserProfile = {
+    ...params.profile,
+    globalRating: result.nextRating,
+    globalScore: params.profile.globalScore + globalScoreDelta,
+    ratingGames: params.profile.ratingGames + 1,
+    ratingWins: params.profile.ratingWins + 1,
+    globalWinStreak: params.profile.globalWinStreak + 1,
+  };
+  await redis.zAdd(keyGlobalRatingLeaderboard, {
+    member: params.userId,
+    score: nextProfile.globalRating,
+  });
+  return {
+    profile: nextProfile,
+    ratingDelta: result.ratingDelta,
+    ratingAfter: nextProfile.globalRating,
+    globalScoreDelta,
+  };
+};
+
+export const recordGlobalLoss = async (params: {
+  userId: string;
+  levelId: string;
+  profile: UserProfile;
+  puzzle: PuzzlePrivate;
+}): Promise<{ profile: UserProfile; ratingDelta: number; ratingAfter: number }> => {
+  const result = calculateRating({
+    playerRating: params.profile.globalRating,
+    ratingGames: params.profile.ratingGames,
+    outcome: 'loss',
+    difficulty: params.puzzle.difficulty,
+    cryptoHardness: params.puzzle.cryptoHardness ?? null,
+    isLogical: params.puzzle.isLogical,
+  });
+  const nextRating = result.nextRating;
+  const outcomeKey = `loss:${params.levelId}`;
+  const outcomeInserted = await redis.hSetNX(
+    keyUserRatingOutcomes(params.userId),
+    outcomeKey,
+    encodeRatingOutcomeReceipt({
+      ratingDelta: result.ratingDelta,
+      ratingAfter: nextRating,
+      ts: Date.now(),
+    })
+  );
+  if (outcomeInserted !== 1) {
+    const existingReceipt = await getRatingOutcomeReceipt(
+      params.userId,
+      outcomeKey
+    );
+    return {
+      profile: {
+        ...params.profile,
+        globalWinStreak: 0,
+      },
+      ratingDelta: existingReceipt?.ratingDelta ?? 0,
+      ratingAfter: existingReceipt?.ratingAfter ?? params.profile.globalRating,
+    };
+  }
+  const nextProfile: UserProfile = {
+    ...params.profile,
+    globalRating: nextRating,
+    ratingGames: params.profile.ratingGames + 1,
+    ratingLosses: params.profile.ratingLosses + 1,
+    globalWinStreak: 0,
+  };
+  await redis.zAdd(keyGlobalRatingLeaderboard, {
+    member: params.userId,
+    score: nextProfile.globalRating,
+  });
+  return {
+    profile: nextProfile,
+    ratingDelta: result.ratingDelta,
+    ratingAfter: nextProfile.globalRating,
+  };
 };
 
 export const incrementAllTimeLogic = async (
@@ -760,43 +976,87 @@ export const getAllTimeTopLogic = async (
     }
   );
 
+export const getGlobalTop = async (
+  limit: number
+): Promise<{
+  userId: string;
+  username: string | null;
+  score: number;
+  rating: number;
+  snoovatarUrl: string | null;
+  globalScore: number;
+  challengesCompleted: number;
+}[]> =>
+  await withSharedCache(
+    `leaderboard:global:rating:limit:${limit}`,
+    publicLeaderboardCacheTtlSeconds,
+    async () => {
+      const fetchLimit = Math.max(limit * 4, limit);
+      const entries = await redis.zRange(
+        keyGlobalRatingLeaderboard,
+        0,
+        fetchLimit - 1,
+        {
+          by: 'rank',
+          reverse: true,
+        }
+      );
+      const resolved = await Promise.all(
+        entries.map(async (entry) => {
+          const [globalScore, challengesCompleted, userMeta] = await Promise.all([
+            readProfileNumber(entry.member, 'globalScore', 0),
+            readProfileNumber(entry.member, 'totalLevelsCompleted', 0),
+            resolveLeaderboardUserMeta(entry.member),
+          ]);
+          return {
+            userId: entry.member,
+            username: userMeta.username,
+            score: Math.round(entry.score),
+            rating: Math.round(entry.score),
+            snoovatarUrl: userMeta.snoovatarUrl,
+            globalScore,
+            challengesCompleted,
+          };
+        })
+      );
+      return resolved.slice(0, limit);
+    }
+  );
+
 export const getUserRankSummary = async (params: {
   userId: string;
   dateKey: string;
 }): Promise<{
   dailyRank: number | null;
-  endlessRank: number | null;
+  globalRank: number | null;
   currentRank: number | null;
 }> => {
   const dailyKey = keyDailyLeaderboard(params.dateKey);
-  const endlessKey = keyAllTimeLevelsLeaderboard;
-  const [dailyRankIndex, dailyCount, endlessRankIndex, endlessCount, endlessClears] =
+  const globalKey = keyGlobalRatingLeaderboard;
+  const [dailyRankIndex, dailyCount, globalRankIndex, globalCount] =
     await Promise.all([
       redis.zRank(dailyKey, params.userId),
       redis.zCard(dailyKey),
-      redis.zRank(endlessKey, params.userId),
-      redis.zCard(endlessKey),
-      readEndlessClears(params.userId),
+      redis.zRank(globalKey, params.userId),
+      redis.zCard(globalKey),
     ]);
   const dailyRank =
     typeof dailyRankIndex === 'number'
       ? Math.max(1, Math.floor(dailyCount) - Math.floor(dailyRankIndex))
       : null;
-  // Approximation note: this rank is derived from the all-time sorted set directly.
-  // It may include users with 0 clears who still have leaderboard entries.
-  const endlessRank =
-    endlessClears > 0 && typeof endlessRankIndex === 'number'
-      ? Math.max(1, Math.floor(endlessCount) - Math.floor(endlessRankIndex))
+  const globalRank =
+    typeof globalRankIndex === 'number'
+      ? Math.max(1, Math.floor(globalCount) - Math.floor(globalRankIndex))
       : null;
   const currentRank =
     dailyRank === null
-      ? endlessRank
-      : endlessRank === null
+      ? globalRank
+      : globalRank === null
         ? dailyRank
-        : Math.min(dailyRank, endlessRank);
+        : Math.min(dailyRank, globalRank);
   return {
     dailyRank,
-    endlessRank,
+    globalRank,
     currentRank,
   };
 };

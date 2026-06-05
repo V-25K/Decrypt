@@ -73,4 +73,46 @@ describe('filterCandidateBatch', () => {
       reason: 'substring/prefix duplicate',
     });
   });
+
+  it('keeps challenge type matching strict by default', () => {
+    const result = filterCandidateBatch({
+      candidates: [
+        {
+          text: 'FORTUNE FAVORS THE BOLD',
+          author: 'AUTHOR',
+          challengeType: 'QUOTE',
+        },
+      ],
+      preferredType: 'PROVERB',
+      difficulty: 5,
+      pipeline: acceptingPipeline,
+      recentSignatureEntries: [],
+    });
+
+    expect(result.accepted).toHaveLength(0);
+    expect(result.decisions[0]).toMatchObject({
+      accepted: false,
+      reason: 'challenge type mismatch (expected PROVERB got QUOTE)',
+    });
+  });
+
+  it('accepts close challenge type fallbacks when explicitly allowed', () => {
+    const result = filterCandidateBatch({
+      candidates: [
+        {
+          text: 'FORTUNE FAVORS THE BOLD',
+          author: 'AUTHOR',
+          challengeType: 'QUOTE',
+        },
+      ],
+      preferredType: 'PROVERB',
+      difficulty: 5,
+      pipeline: acceptingPipeline,
+      recentSignatureEntries: [],
+      allowChallengeTypeFallback: true,
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]?.challengeType).toBe('QUOTE');
+  });
 });

@@ -8,6 +8,14 @@ import { paymentsRoutes } from './routes/payments';
 import { settingsRoutes } from './routes/settings';
 import { appRouter } from './trpc';
 import { createContext } from './context';
+import {
+  getDailyInlineStatus,
+  getDailyPreview,
+} from './core/game-service';
+import {
+  gameInlineStatusResponseSchema,
+  gamePreviewResponseSchema,
+} from '../shared/game';
 
 const mountApiRoutes = (app: Hono) => {
   const api = new Hono();
@@ -19,6 +27,12 @@ const mountApiRoutes = (app: Hono) => {
       createContext,
     })
   );
+  api.get('/preview', async (c) => {
+    return c.json(gamePreviewResponseSchema.parse(await getDailyPreview()));
+  });
+  api.get('/preview-status', async (c) => {
+    return c.json(gameInlineStatusResponseSchema.parse(await getDailyInlineStatus()));
+  });
   app.route('/api', api);
 };
 

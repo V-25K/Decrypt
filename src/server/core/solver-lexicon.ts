@@ -1,3 +1,5 @@
+import { solverExpansionWords } from './common-word-ranks.ts';
+
 const solverLexiconWords = [
   'A', 'I',
   'OF', 'TO', 'IN', 'IS', 'IT', 'BE', 'AS', 'AT', 'SO', 'WE', 'HE', 'BY', 'OR', 'ON', 'DO',
@@ -8,6 +10,7 @@ const solverLexiconWords = [
   'ADD', 'AGO', 'AIR', 'ARM', 'ASK', 'BAD', 'BAR', 'BED', 'BIG', 'BOX', 'CAR', 'CUT', 'DOG',
   'END', 'EYE', 'FAR', 'FEW', 'FUN', 'GOD', 'GUY', 'JOB', 'LAW', 'LOT', 'MAP', 'MEN', 'PAY',
   'RUN', 'SET', 'SIT', 'SUN', 'TOP', 'TRY', 'WAR', 'WIN', 'YET',
+  'CANT', 'DONT', 'WONT', 'ISNT', 'AINT', 'IM', 'IVE', 'ILL',
   'THAT', 'WITH', 'HAVE', 'THIS', 'WILL', 'YOUR', 'FROM', 'THEY', 'KNOW', 'WANT', 'BEEN',
   'GOOD', 'MUCH', 'SOME', 'TIME', 'VERY', 'WHEN', 'COME', 'HERE', 'JUST', 'LIKE', 'LONG',
   'LOOK', 'MAKE', 'MANY', 'MORE', 'ONLY', 'OVER', 'SUCH', 'TAKE', 'THAN', 'THEM', 'WELL',
@@ -35,6 +38,7 @@ const solverLexiconWords = [
   'SHAPE', 'SOUND', 'SPACE', 'SPEAK', 'SPEND', 'STAGE', 'TABLE', 'THREE', 'TIMES', 'TIRED',
   'TOTAL', 'TOUCH', 'TRAIN', 'TRUTH', 'VALUE', 'VISIT',
   'WHITE', 'WORTH', 'YOURS',
+  'THATS', 'THERES', 'YOURE', 'YOUVE', 'YOULL', 'ARENT', 'WERENT', 'HADNT', 'HASNT',
   'PEOPLE', 'LITTLE', 'SHOULD', 'AROUND', 'BEFORE', 'MOTHER', 'FATHER', 'ALWAYS', 'REALLY',
   'FRIEND', 'FAMILY', 'WITHIN', 'SYSTEM', 'NUMBER', 'PUBLIC', 'THOUGH', 'DURING', 'BETTER',
   'BECOME', 'MOMENT', 'FOLLOW', 'CHANGE', 'ACROSS', 'COURSE', 'ENOUGH', 'PERSON', 'ALMOST',
@@ -54,8 +58,9 @@ const solverLexiconWords = [
   'QUIETLY', 'SOFTLY', 'SUDDENLY', 'SLOWLY', 'CLEARLY', 'NEARLY', 'SIMPLY', 'DEEPLY',
   'HIGHER', 'LOWER', 'BRIGHTER', 'SMARTEST', 'STRONGER', 'CLOSER', 'NEAREST', 'LONGEST',
   'WARMER', 'COLDEST', 'RANDOMLY', 'QUIETNESS', 'SWEETNESS',
+  'DIDNT', 'HAVENT', 'WOULDNT', 'COULDNT', 'SHOULDNT',
 ] as const;
 
-export const solverLexicon: string[] = [...new Set(solverLexiconWords)].filter(
-  (word) => /^[A-Z]+$/.test(word) && word.length >= 1 && word.length <= 10
+export const solverLexicon: string[] = [...new Set([...solverLexiconWords, ...solverExpansionWords])].filter(
+  (word) => /^[A-Z]+$/.test(word) && word.length >= 1 && word.length <= 12
 );

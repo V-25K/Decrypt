@@ -62,10 +62,11 @@ vi.mock('./state', () => ({
   getInventory: getInventoryMock,
   getUserProfile: getUserProfileMock,
   hasFailedLevel: hasFailedLevelMock,
-  incrementDailyRetryCount: vi.fn(),
-  markLevelCompleted: vi.fn(),
-  markLevelFailed: vi.fn(),
-  registerKnownUser: vi.fn(),
+	  incrementDailyRetryCount: vi.fn(),
+	  markLevelCompleted: vi.fn(),
+	  markLevelFailed: vi.fn(),
+	  unmarkLevelFailed: vi.fn(),
+	  registerKnownUser: vi.fn(),
   saveInventory: vi.fn(),
   saveUserProfile: saveUserProfileMock,
 }));
@@ -83,6 +84,7 @@ vi.mock('./puzzle-store', () => ({
   getDailyPointer: vi.fn(),
   getPuzzlePrivate: getPuzzlePrivateMock,
   getPuzzlePublic: vi.fn(),
+  isPuzzleRemovedFromPlay: vi.fn(async () => false),
 }));
 
 vi.mock('./engagement', () => ({

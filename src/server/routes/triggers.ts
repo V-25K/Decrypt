@@ -19,39 +19,46 @@ import { formatDateKey } from '../core/serde';
 const handleAutomationBootstrapTrigger = async (
   input: OnAppInstallRequest | OnAppUpgradeRequest
 ): Promise<TriggerRouteResult> => {
-  if (input.type === 'AppInstall') {
-    // Kick off the normal daily staging flow on initial install so tomorrow's
-    // scheduled posts have saved puzzles ready without relying on a background
-    // AI-pool refill loop.
-    try {
-      await scheduler.runJob({
-        name: 'decrypt-generate-daily-2200',
-        runAt: new Date(),
-      });
-      console.log(`[triggers] Scheduled immediate daily staging on ${input.type.toLowerCase()}.`);
-    } catch (error) {
-      console.error(
-        `[triggers] Failed to schedule post-${input.type.toLowerCase()} daily staging: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      await reportAutomatedGenerationFailure({
-        source: 'trigger.on-app-install',
-        dateKey: formatDateKey(new Date()),
-        error,
-      });
-    }
+  if (input.type !== 'AppInstall') {
+    return {
+      body: {
+        status: 'success',
+        message: 'AppUpgrade received; no immediate staging was performed.',
+      },
+      statusCode: 200,
+    };
   }
-  return {
-    body: {
-      status: 'success',
-      message:
-        input.type === 'AppInstall'
-          ? 'Bootstrap trigger received (AppInstall); requested an immediate daily staging run.'
-          : 'Bootstrap trigger received (AppUpgrade); no immediate staging or post creation was performed.',
-    },
-    statusCode: 200,
-  };
+
+  try {
+    await scheduler.runJob({
+      name: 'decrypt-generate-daily-2200',
+      runAt: new Date(),
+    });
+    console.log('[triggers] Bootstrap staging scheduled on AppInstall.');
+    return {
+      body: {
+        status: 'success',
+        message: 'AppInstall received; bootstrap staging job scheduled.',
+      },
+      statusCode: 200,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`[triggers] Failed to schedule bootstrap staging: ${reason}`);
+    await reportAutomatedGenerationFailure({
+      source: 'trigger.on-app-install',
+      dateKey: formatDateKey(new Date()),
+      error,
+    });
+    return {
+      body: {
+        status: 'error',
+        message:
+          'AppInstall received, but bootstrap staging could not be scheduled. Daily challenges will try again on the next scheduled run.',
+      },
+      statusCode: 200,
+    };
+  }
 };
 
 triggers.post('/on-app-install', async (c) => {

@@ -121,11 +121,11 @@ describe('getUserRankSummary', () => {
       dateKey: '2026-03-16',
     });
 
-    expect(summary).toEqual({
-      dailyRank: 3,
-      endlessRank: null,
-      currentRank: 3,
-    });
+	    expect(summary).toEqual({
+	      dailyRank: 3,
+	      globalRank: null,
+	      currentRank: 3,
+	    });
   });
 
   it('returns null ranks when user is unranked', async () => {
@@ -137,29 +137,28 @@ describe('getUserRankSummary', () => {
       dateKey: '2026-03-16',
     });
 
-    expect(summary).toEqual({
-      dailyRank: null,
-      endlessRank: null,
-      currentRank: null,
-    });
+	    expect(summary).toEqual({
+	      dailyRank: null,
+	      globalRank: null,
+	      currentRank: null,
+	    });
   });
 
-  it('hides endless rank when user has zero endless clears', async () => {
-    zRankMock.mockResolvedValueOnce(undefined).mockResolvedValueOnce(2);
-    zCardMock.mockResolvedValueOnce(10).mockResolvedValueOnce(10);
-    hGetMock.mockResolvedValue('0');
-
-    const summary = await getUserRankSummary({
-      userId: 'u_zero',
-      dateKey: '2026-03-16',
-    });
-
-    expect(summary).toEqual({
-      dailyRank: null,
-      endlessRank: null,
-      currentRank: null,
-    });
-  });
+	  it('returns global rank from the rating leaderboard', async () => {
+	    zRankMock.mockResolvedValueOnce(undefined).mockResolvedValueOnce(2);
+	    zCardMock.mockResolvedValueOnce(10).mockResolvedValueOnce(10);
+	
+	    const summary = await getUserRankSummary({
+	      userId: 'u_zero',
+	      dateKey: '2026-03-16',
+	    });
+	
+	    expect(summary).toEqual({
+	      dailyRank: null,
+	      globalRank: 8,
+	      currentRank: 8,
+	    });
+	  });
 
   it('filters out scores from challenges created on a different day', async () => {
     hGetMock.mockResolvedValue(null);

@@ -36,12 +36,32 @@ export type FilterCandidateBatchResult = {
   decisions: CandidateFilterDecision[];
 };
 
+const fallbackChallengeTypesByPreferred: Partial<
+  Record<ChallengeType, readonly ChallengeType[]>
+> = {
+  PROVERB: ['SAYING', 'QUOTE'],
+  SAYING: ['PROVERB', 'QUOTE'],
+  ANIME_LINE: ['QUOTE'],
+  SPEECH_LINE: ['QUOTE'],
+  BOOK_LINE: ['QUOTE'],
+  TV_LINE: ['QUOTE'],
+  MOVIE_LINE: ['QUOTE'],
+  LYRIC_LINE: ['QUOTE'],
+};
+
+const canUseChallengeTypeFallback = (
+  preferredType: ChallengeType,
+  candidateType: ChallengeType
+): boolean =>
+  fallbackChallengeTypesByPreferred[preferredType]?.includes(candidateType) ?? false;
+
 export const filterCandidateBatch = (params: {
   candidates: ChallengeCandidate[];
   preferredType: ChallengeType;
   difficulty: number;
   pipeline: ValidationPipeline;
   recentSignatureEntries: CandidateSignatureEntry[];
+  allowChallengeTypeFallback?: boolean;
 }): FilterCandidateBatchResult => {
   const accepted: FilteredChallengeCandidate[] = [];
   const acceptedSignatureEntries: CandidateSignatureEntry[] = [];
@@ -53,7 +73,11 @@ export const filterCandidateBatch = (params: {
       continue;
     }
 
-    if (candidate.challengeType !== params.preferredType) {
+    if (
+      candidate.challengeType !== params.preferredType &&
+      (!params.allowChallengeTypeFallback ||
+        !canUseChallengeTypeFallback(params.preferredType, candidate.challengeType))
+    ) {
       decisions.push({
         candidateIndex,
         accepted: false,

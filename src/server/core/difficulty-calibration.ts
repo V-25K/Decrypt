@@ -10,14 +10,15 @@ import {
 import { getQualifiedLevelTelemetry } from './engagement';
 import { getAllLevelIds, getPuzzlePrivate } from './puzzle-store';
 import { keyDifficultyCalibrationArtifact } from './keys';
+import { difficultyModelVersion } from './difficulty-model';
 
-export const BAYES_ALPHA = 6;
-export const BAYES_BETA = 4;
+export const BAYES_ALPHA = 4;
+export const BAYES_BETA = 2;
 export const MIN_QUALIFIED_PLAYS_PER_LEVEL = 30;
 export const LOOKBACK_ELIGIBLE_LEVELS = 30;
 export const RECENT_LEVEL_SCAN_LIMIT = 120;
 export const MIN_ELIGIBLE_LEVELS_FOR_BIAS = 5;
-export const BIAS_REQUIRED_SHARE = 0.6;
+export const BIAS_REQUIRED_SHARE = 0.5;
 export const OBSERVED_EASY_THRESHOLD = 0.72;
 export const OBSERVED_HARD_THRESHOLD = 0.4;
 export const OBSERVED_EXPERT_THRESHOLD = 0.25;
@@ -55,6 +56,7 @@ export type DifficultyCalibrationSnapshot = {
 };
 
 type CalibrationArtifact = {
+  difficultyModelVersion: typeof difficultyModelVersion;
   snapshot: DifficultyCalibrationSnapshot;
   hardnessBoundsByTier: HardnessBoundsByTier;
 };
@@ -97,6 +99,7 @@ const difficultyCalibrationSnapshotSchema = z.object({
   }),
 });
 const calibrationArtifactSchema = z.object({
+  difficultyModelVersion: z.literal(difficultyModelVersion),
   snapshot: difficultyCalibrationSnapshotSchema,
   hardnessBoundsByTier: z.object({
     warmup: hardnessTierSchema,
@@ -381,8 +384,9 @@ const buildCalibrationArtifact = async (): Promise<CalibrationArtifact> => {
     }
   }
 
-  return {
-    snapshot: {
+	  return {
+	    difficultyModelVersion,
+	    snapshot: {
       biasTierShift,
       eligibleLevels,
       harderCount,

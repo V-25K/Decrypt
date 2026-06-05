@@ -146,7 +146,7 @@ export const ChallengePuzzleGrid = memo(({
           className={`flex h-full justify-center overflow-x-hidden ${
             isInlineMode ? 'overflow-y-hidden' : 'overflow-y-auto'
           } ${
-            isPuzzleVerticallyCentered ? 'items-center' : 'items-start'
+            isInlineMode && isPuzzleVerticallyCentered ? 'items-center' : 'items-start'
           }`}
         >
           <div
@@ -157,7 +157,7 @@ export const ChallengePuzzleGrid = memo(({
             <div ref={contentRef} data-testid="puzzle-content" className="inline-block max-w-full">
               <div
                 data-testid="puzzle-token-wrap"
-                className="flex flex-col items-center gap-y-[4px]"
+                className="puzzle-readability-backdrop mt-2 flex flex-col items-center gap-y-[4px] sm:mt-10 lg:mt-14"
               >
                 {puzzleTokenLines.map((lineTokens, lineIndex) => (
                   <div key={`line-${lineIndex}`} className="flex flex-wrap items-end justify-center">

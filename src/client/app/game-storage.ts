@@ -1,3 +1,5 @@
+import type { ChallengeMode } from './challenge-session-state';
+import type { ChallengeType, EndlessSort } from '../../shared/game';
 import type { AppScreen, RouterOutputs } from './types';
 
 export type PersistedOutcomeState = {
@@ -6,16 +8,27 @@ export type PersistedOutcomeState = {
   isGameOver: boolean;
   completion: RouterOutputs['game']['completeSession'] | null;
   solveSeconds: number | null;
+  ratingDelta?: number | null;
+  pointsGained?: number | null;
   savedAt: number;
 };
 
 const expandedScreenIntentKey = 'decrypt-expanded-screen-intent';
+const expandedChallengeModeIntentKey = 'decrypt-expanded-challenge-mode-intent';
 const expandedScreenIntentTtlMs = 5000;
 const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
 const correctGuessStateStorageKeyPrefix = 'decrypt-correct-guess-tiles-v1:';
 const storageMigrationMarkerPrefix = 'decrypt-storage-migrated-v1:';
-const expandedIntentScreens = ['shop', 'home', 'quest', 'stats', 'leaderboard'] as const;
-const entrypointScreens = ['challenge', 'home', 'shop', 'quest', 'stats', 'leaderboard'] as const;
+const expandedIntentScreens = [
+  'challenge',
+  'shop',
+  'home',
+  'community',
+  'quest',
+  'stats',
+  'leaderboard',
+] as const;
+const entrypointScreens = ['challenge', 'home', 'community', 'shop', 'quest', 'stats', 'leaderboard'] as const;
 
 const isAppScreen = <TScreen extends AppScreen>(
   value: string,
@@ -69,6 +82,7 @@ export const setExpandedScreenIntent = (screen: AppScreen): void => {
   try {
     const payload = JSON.stringify({ screen, ts: Date.now() });
     sessionStorage.setItem(expandedScreenIntentKey, payload);
+    localStorage.setItem(expandedScreenIntentKey, payload);
   } catch (_error) {
     // Ignore storage failures; expanded fallback stays on challenge.
   }
@@ -76,8 +90,11 @@ export const setExpandedScreenIntent = (screen: AppScreen): void => {
 
 export const consumeExpandedScreenIntent = (): AppScreen | null => {
   try {
-    const value = sessionStorage.getItem(expandedScreenIntentKey);
+    const value =
+      sessionStorage.getItem(expandedScreenIntentKey) ??
+      localStorage.getItem(expandedScreenIntentKey);
     sessionStorage.removeItem(expandedScreenIntentKey);
+    localStorage.removeItem(expandedScreenIntentKey);
     if (!value) {
       return null;
     }
@@ -94,6 +111,123 @@ export const consumeExpandedScreenIntent = (): AppScreen | null => {
       Date.now() - tsValue <= expandedScreenIntentTtlMs
     ) {
       return screenValue;
+    }
+    return null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const isChallengeMode = (value: string): value is ChallengeMode =>
+  value === 'daily' || value === 'endless';
+
+const isChallengeType = (value: string): value is ChallengeType =>
+  value === 'QUOTE' ||
+  value === 'LYRIC_LINE' ||
+  value === 'MOVIE_LINE' ||
+  value === 'ANIME_LINE' ||
+  value === 'SPEECH_LINE' ||
+  value === 'BOOK_LINE' ||
+  value === 'TV_LINE' ||
+  value === 'SAYING' ||
+  value === 'PROVERB';
+
+const isEndlessSort = (value: string): value is EndlessSort =>
+  value === 'random' ||
+  value === 'latest' ||
+  value === 'oldest' ||
+  value === 'win_rate_desc' ||
+  value === 'win_rate_asc';
+
+export type ExpandedChallengeIntent = {
+  mode: ChallengeMode;
+  categoryFilter: ChallengeType | null;
+  endlessSort: EndlessSort;
+  dailyArchive: boolean;
+  excludeLevelId: string | null;
+  ignorePostLevel: boolean;
+};
+
+export const setExpandedChallengeModeIntent = (
+  mode: ChallengeMode,
+  categoryFilter: ChallengeType | null = null,
+  endlessSort: EndlessSort = 'random',
+  dailyArchive = false,
+  excludeLevelId: string | null = null,
+  ignorePostLevel = false
+): void => {
+  try {
+    const payload = JSON.stringify({
+      mode,
+      categoryFilter,
+      endlessSort,
+      dailyArchive,
+      excludeLevelId,
+      ignorePostLevel,
+      ts: Date.now(),
+    });
+    sessionStorage.setItem(expandedChallengeModeIntentKey, payload);
+    localStorage.setItem(expandedChallengeModeIntentKey, payload);
+  } catch (_error) {
+    // Ignore storage failures; expanded fallback loads the daily challenge.
+  }
+};
+
+export const consumeExpandedChallengeModeIntent = (): ExpandedChallengeIntent | null => {
+  try {
+    const value =
+      sessionStorage.getItem(expandedChallengeModeIntentKey) ??
+      localStorage.getItem(expandedChallengeModeIntentKey);
+    sessionStorage.removeItem(expandedChallengeModeIntentKey);
+    localStorage.removeItem(expandedChallengeModeIntentKey);
+    if (!value) {
+      return null;
+    }
+    const parsed = JSON.parse(value);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    const modeValue = parsed.mode;
+    const categoryValue = parsed.categoryFilter;
+    const sortValue = parsed.endlessSort;
+    const dailyArchiveValue = parsed.dailyArchive;
+    const excludeLevelIdValue = parsed.excludeLevelId;
+    const ignorePostLevelValue = parsed.ignorePostLevel;
+    const tsValue = parsed.ts;
+    if (
+      typeof modeValue === 'string' &&
+      isChallengeMode(modeValue) &&
+      (categoryValue === null ||
+        categoryValue === undefined ||
+        (typeof categoryValue === 'string' && isChallengeType(categoryValue))) &&
+      (sortValue === undefined ||
+        (typeof sortValue === 'string' && isEndlessSort(sortValue))) &&
+      (dailyArchiveValue === undefined || typeof dailyArchiveValue === 'boolean') &&
+      (excludeLevelIdValue === null ||
+        excludeLevelIdValue === undefined ||
+        typeof excludeLevelIdValue === 'string') &&
+      (ignorePostLevelValue === undefined ||
+        typeof ignorePostLevelValue === 'boolean') &&
+      typeof tsValue === 'number' &&
+      Date.now() - tsValue <= expandedScreenIntentTtlMs
+    ) {
+      return {
+        mode: modeValue,
+        categoryFilter:
+          typeof categoryValue === 'string' && isChallengeType(categoryValue)
+            ? categoryValue
+            : null,
+        endlessSort:
+          typeof sortValue === 'string' && isEndlessSort(sortValue)
+            ? sortValue
+            : 'random',
+        dailyArchive: dailyArchiveValue === true,
+        excludeLevelId:
+          typeof excludeLevelIdValue === 'string' && excludeLevelIdValue.length > 0
+            ? excludeLevelIdValue
+            : null,
+        ignorePostLevel: ignorePostLevelValue === true,
+      };
     }
     return null;
   } catch (_error) {
@@ -190,12 +324,22 @@ export const readOutcomeState = (userId: string): PersistedOutcomeState | null =
       parsed.solveSeconds === null || typeof parsed.solveSeconds === 'number'
         ? (parsed.solveSeconds ?? null)
         : null;
+    const ratingDelta =
+      parsed.ratingDelta === null || typeof parsed.ratingDelta === 'number'
+        ? (parsed.ratingDelta ?? null)
+        : null;
+    const pointsGained =
+      parsed.pointsGained === null || typeof parsed.pointsGained === 'number'
+        ? (parsed.pointsGained ?? null)
+        : null;
     return {
       levelId,
       isComplete,
       isGameOver,
       completion,
       solveSeconds,
+      ratingDelta,
+      pointsGained,
       savedAt,
     };
   } catch (_error) {

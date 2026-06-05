@@ -1,6 +1,10 @@
 import { context, redis } from '@devvit/web/server';
 import type {
   PowerupType,
+  GameInlineStatusResponse,
+  GamePreviewResponse,
+  ChallengeType,
+  EndlessSort,
   PuzzlePrivate,
   RevealedTile,
   SessionState,
@@ -8,23 +12,29 @@ import type {
 } from '../../shared/game';
 import { buildPublicPuzzle } from './puzzle';
 import {
+  getAllLevelIds,
   getDailyPointer,
   getPuzzlePrivate,
   getPuzzlePublic,
+  isPuzzleRemovedFromPlay,
   isPuzzlePublishedVisible,
 } from './puzzle-store';
 import {
   getCompletedLevels,
   getDailyRetryCount,
+  getFailedLevels,
   getInventory,
   getUserProfile,
+  hasContinuedLevel,
   hasFailedLevel,
   incrementUserEndlessCursor,
+  markLevelContinued,
   markLevelCompleted,
   markLevelFailed,
   registerKnownUser,
   saveInventory,
   saveUserProfile,
+  unmarkLevelFailed,
 } from './state';
 import {
   clearSessionState,
@@ -57,12 +67,14 @@ import {
 } from './constants';
 import { getDailyRetryQuote } from '../../shared/game-balance';
 import {
-  computeScore,
-  getUserRankSummary,
-  incrementAllTimeLogic,
-  recordAllTimeLevelScore,
-  recordDailyScore,
-} from './leaderboard';
+	  computeScore,
+	  getUserRankSummary,
+	  incrementAllTimeLogic,
+	  recordAllTimeLevelScore,
+	  recordDailyScore,
+	  recordGlobalLoss,
+	  recordGlobalWin,
+	} from './leaderboard';
 import {
   getLevelEngagement,
   recordQualifiedLevelFailure,
@@ -80,8 +92,15 @@ import {
 import { consumePowerup } from './economy';
 import { z } from 'zod';
 import { canStartChallenge, consumeHeartOnFailure } from './hearts';
-import { saveShareCompletionReceipt } from './share-receipts';
+import {
+  saveShareCompletionReceipt,
+} from './share-receipts';
 import { getEndlessCatalogStatus, getNextEndlessCatalogLevelId } from './endless-catalog';
+import { hasAdminAccess } from './admin-auth';
+import {
+  getCommunityNotificationSummary,
+  recordCommunityEndlessCompletion,
+} from './community';
 import { formatDateKey } from './serde';
 import {
   keyCompletionFinalizeJournal,
@@ -109,14 +128,24 @@ const assertPostId = (): string => {
 
 const postDataSchema = z.object({
   levelId: z.string().min(1).optional(),
+  previewTitle: z.string().min(1).max(80).optional(),
+  creatorUsername: z.string().min(1).optional(),
+  creatorAvatarUrl: z.string().min(1).optional(),
 });
 
-const getPostLevelId = (): string | null => {
+type PostData = z.infer<typeof postDataSchema>;
+
+const getPostData = (): PostData | null => {
   const parsed = postDataSchema.safeParse(context.postData ?? {});
   if (!parsed.success) {
     return null;
   }
-  return parsed.data.levelId ?? null;
+  return parsed.data;
+};
+
+const getPostLevelId = (): string | null => {
+  const postData = getPostData();
+  return postData?.levelId ?? null;
 };
 
 import { parseNumber, transactionCommitted } from './redis-util';
@@ -124,6 +153,8 @@ import { parseNumber, transactionCommitted } from './redis-util';
 const maxOptimisticRetries = 3;
 
 const completionLockTtlMs = 120_000;
+
+const continueScorePenalty = 50;
 
 const completionLockExpiration = (): Date =>
   new Date(Date.now() + completionLockTtlMs);
@@ -147,8 +178,39 @@ const assertPublishedPuzzleVisibility = async (levelId: string): Promise<void> =
   }
 };
 
+const assertPuzzlePlayable = async (levelId: string): Promise<void> => {
+  if (await isPuzzleRemovedFromPlay(levelId)) {
+    throw new Error('Puzzle is unavailable.');
+  }
+};
+
 const recomputeLegacyCurrentStreak = (profile: UserProfile): number =>
   Math.max(profile.dailyCurrentStreak, profile.endlessCurrentStreak);
+
+const officialDailySources = new Set(['AUTO_DAILY', 'MANUAL_INJECTED']);
+
+const isOfficialDailyPuzzle = (params: {
+  puzzle: PuzzlePrivate;
+  currentDateKey: string;
+  dailyPointer: string | null;
+}): boolean =>
+  params.currentDateKey.trim().length > 0 &&
+  params.dailyPointer === params.puzzle.levelId &&
+  officialDailySources.has(params.puzzle.source);
+
+const isGlobalEligiblePuzzle = (params: {
+  puzzle: PuzzlePrivate;
+  officialDaily: boolean;
+}): boolean => {
+  if (params.puzzle.source === 'MANUAL_INJECTED') {
+    return params.officialDaily;
+  }
+  return (
+    params.puzzle.source === 'AUTO_DAILY' ||
+    params.puzzle.source === 'AUTO_ENDLESS' ||
+    params.puzzle.source === 'COMMUNITY'
+  );
+};
 
 const previousDateKey = (dateKey: string): string | null => {
   const rawParts = dateKey.split('-');
@@ -434,14 +496,21 @@ const getNewlyUnlockedChainIds = (params: {
 export const bootstrapGame = async () => {
     const userId = assertUserId();
     await registerKnownUser(userId);
-    const [profile, inventory, dailyPointer] = await Promise.all([
+    const [profile, inventory, dailyPointer, isModerator] = await Promise.all([
       getUserProfile(userId),
       getInventory(userId),
       getDailyPointer(),
+      hasAdminAccess({
+        subredditName: context.subredditName,
+        username: context.username,
+      }),
     ]);
-    const endlessCatalog = await getEndlessCatalogStatus();
+    const [endlessCatalog, communityNotifications] = await Promise.all([
+      getEndlessCatalogStatus(),
+      getCommunityNotificationSummary({ userId, isModerator }),
+    ]);
 
-    return {
+	    return {
       userId,
       username: context.username ?? null,
       subredditName: context.subredditName ?? null,
@@ -449,23 +518,79 @@ export const bootstrapGame = async () => {
       currentDailyLevelId: dailyPointer,
       todayDateKey: formatDateKey(new Date()),
       profile,
-      inventory,
-      endlessCatalog,
-    };
+	      inventory,
+	      endlessCatalog,
+	      isModerator,
+      communityNotifications,
+		};
+};
+
+const getNextDailyArchiveLevelId = async (
+  userId: string,
+  excludeLevelId: string | null
+): Promise<string | null> => {
+  const [allLevelIds, completed, failed] = await Promise.all([
+    getAllLevelIds(),
+    getCompletedLevels(userId),
+    getFailedLevels(userId),
+  ]);
+  const anchorPuzzle = excludeLevelId
+    ? await getPuzzlePrivate(excludeLevelId)
+    : null;
+  const anchorCreatedAt = anchorPuzzle?.createdAt ?? null;
+  const candidates: Array<{ levelId: string; createdAt: number }> = [];
+  for (const levelId of allLevelIds) {
+    if (levelId === excludeLevelId || completed.has(levelId) || failed.has(levelId)) {
+      continue;
+    }
+    const puzzle = await getPuzzlePrivate(levelId);
+    if (!puzzle || puzzle.source !== 'AUTO_DAILY') {
+      continue;
+    }
+    if (!(await isPuzzlePublishedVisible(levelId))) {
+      continue;
+    }
+    if (anchorCreatedAt !== null && puzzle.createdAt >= anchorCreatedAt) {
+      continue;
+    }
+    candidates.push({ levelId, createdAt: puzzle.createdAt });
+  }
+  candidates.sort((left, right) => right.createdAt - left.createdAt);
+  return candidates[0]?.levelId ?? null;
 };
 
 export const loadLevelForUser = async (params: {
   mode: 'daily' | 'endless';
   requestedLevelId?: string | null;
+  dailyArchive?: boolean;
+  excludeLevelId?: string | null;
+  ignorePostLevel?: boolean;
+  categoryFilter?: ChallengeType | null;
+  endlessSort?: EndlessSort;
 }) => {
   const userId = assertUserId();
 
   let levelId: string | null = null;
   if (params.mode === 'daily') {
-    const postLevelId = getPostLevelId();
-    levelId =
-      params.requestedLevelId ?? postLevelId ?? (await getDailyPointer());
-    if (postLevelId) {
+    const postLevelId = params.ignorePostLevel ? null : getPostLevelId();
+    const isLoadingPostLevel =
+      Boolean(postLevelId) && !params.requestedLevelId && !params.dailyArchive;
+    if (params.requestedLevelId) {
+      levelId = params.requestedLevelId;
+    } else if (params.dailyArchive) {
+      levelId = await getNextDailyArchiveLevelId(
+        userId,
+        params.excludeLevelId ?? null
+      );
+      if (!levelId) {
+        throw new Error("You're all caught up.");
+      }
+    } else if (postLevelId) {
+      levelId = postLevelId;
+    } else {
+      levelId = await getDailyPointer();
+    }
+    if (isLoadingPostLevel) {
       console.log('[loadLevelForUser] Loaded daily level from post data', {
         levelId,
         postLevelId,
@@ -474,8 +599,18 @@ export const loadLevelForUser = async (params: {
   } else if (params.requestedLevelId) {
     levelId = params.requestedLevelId;
   } else {
-    // Endless mode - use cursor-based lookup (O(1))
-    levelId = await getNextEndlessCatalogLevelId(userId);
+    const selection = await getNextEndlessCatalogLevelId(
+      userId,
+      params.categoryFilter ?? null,
+      params.endlessSort ?? 'random'
+    );
+    levelId = selection.levelId;
+    if (!levelId && selection.reason === 'all_completed') {
+      throw new Error("You're all caught up.");
+    }
+    if (!levelId && params.categoryFilter) {
+      throw new Error('No Endless challenges are available for that category yet.');
+    }
   }
 
   if (!levelId) {
@@ -488,6 +623,7 @@ export const loadLevelForUser = async (params: {
   if (params.mode === 'daily') {
     await assertPublishedPuzzleVisibility(levelId);
   }
+  await assertPuzzlePlayable(levelId);
 
   const puzzlePublic = await getPuzzlePublic(levelId);
   if (!puzzlePublic) {
@@ -522,7 +658,8 @@ export const loadLevelForUser = async (params: {
       !(
         activeSession &&
         activeSession.activeLevelId === levelId &&
-        activeSession.mode === 'daily'
+        activeSession.mode === 'daily' &&
+        heartsRemaining(activeSession) > 0
       ),
     difficulty: puzzlePublic.difficulty,
   });
@@ -537,12 +674,86 @@ export const loadLevelForUser = async (params: {
   };
 };
 
+export const getDailyPreview = async (): Promise<GamePreviewResponse> => {
+  const postData = getPostData();
+  const levelId = postData?.levelId ?? (await getDailyPointer());
+  if (!levelId) {
+    throw new Error('No level available.');
+  }
+
+  await assertPublishedPuzzleVisibility(levelId);
+  const [puzzlePublic, challengeMetrics] = await Promise.all([
+    getPuzzlePublic(levelId),
+    getLevelEngagement(levelId),
+  ]);
+
+  if (!puzzlePublic) {
+    console.error('[getDailyPreview] Puzzle data not found in Redis', {
+      levelId,
+    });
+    throw new Error('Public puzzle payload not found.');
+  }
+
+  return {
+    mode: 'daily',
+    levelId,
+    previewTitle: postData?.previewTitle ?? 'Can you decrypt this?',
+    puzzle: puzzlePublic,
+    challengeMetrics,
+    creator: {
+      username: postData?.creatorUsername ?? null,
+      avatarUrl: postData?.creatorAvatarUrl ?? null,
+    },
+  };
+};
+
+export const getDailyInlineStatus = async (): Promise<GameInlineStatusResponse> => {
+  const postData = getPostData();
+  const levelId = postData?.levelId ?? (await getDailyPointer());
+  if (!levelId) {
+	    return {
+	      levelId: null,
+	      completed: false,
+	      failed: false,
+      removed: false,
+	    };
+  }
+  if (await isPuzzleRemovedFromPlay(levelId)) {
+    return {
+      levelId,
+      completed: false,
+      failed: false,
+      removed: true,
+    };
+  }
+  const userId = context.userId ?? null;
+  if (!userId) {
+	    return {
+	      levelId,
+	      completed: false,
+	      failed: false,
+      removed: false,
+	    };
+  }
+  const [completedLevels, failedLevel] = await Promise.all([
+    getCompletedLevels(userId),
+    hasFailedLevel(userId, levelId),
+  ]);
+	  return {
+	    levelId,
+	    completed: completedLevels.has(levelId),
+	    failed: failedLevel && !completedLevels.has(levelId),
+    removed: false,
+	  };
+};
+
 export const startSessionForLevel = async (
   levelId: string,
   mode: 'daily' | 'endless'
 ) => {
   const userId = assertUserId();
   const postId = assertPostId();
+  await assertPuzzlePlayable(levelId);
   const [profile, activeSession] = await Promise.all([
     getUserProfile(userId),
     getSessionState(userId, postId),
@@ -558,22 +769,15 @@ export const startSessionForLevel = async (
       heartsRemaining: heartsRemaining(activeSession),
     };
   }
-  if (mode === 'daily') {
-    const [completed, failedLevel] = await Promise.all([
-      getCompletedLevels(userId),
-      hasFailedLevel(userId, levelId),
-    ]);
-    if (completed.has(levelId)) {
-      throw new Error('Daily challenge already completed.');
-    }
-    if (failedLevel) {
-      throw new Error('Daily retry requires coins.');
-    }
-  } else {
-    const completed = await getCompletedLevels(userId);
-    if (completed.has(levelId)) {
-      throw new Error('Endless level already completed.');
-    }
+  const [completed, failedLevel] = await Promise.all([
+    getCompletedLevels(userId),
+    hasFailedLevel(userId, levelId),
+  ]);
+  if (mode === 'daily' && completed.has(levelId)) {
+    throw new Error('Daily challenge already completed.');
+  }
+  if (failedLevel) {
+    throw new Error('Challenge already failed.');
   }
   if (!canStartChallenge(profile)) {
     throw new Error('No lives left. Wait for refill.');
@@ -717,6 +921,59 @@ export const purchaseDailyRetryForLevel = async (params: {
   throw new Error('Daily retry purchase conflicted. Please try again.');
 };
 
+export const continueSessionForLevel = async (params: {
+  levelId: string;
+  mode: 'daily' | 'endless';
+}) => {
+  const userId = assertUserId();
+  const postId = assertPostId();
+  const [session, profile, inventory] = await Promise.all([
+    getSessionState(userId, postId),
+    getUserProfile(userId),
+    getInventory(userId),
+  ]);
+
+  if (!session || session.activeLevelId !== params.levelId) {
+    throw new Error('Session missing.');
+  }
+  if (session.mode !== params.mode) {
+    throw new Error('Session mode mismatch.');
+  }
+  if (heartsRemaining(session) > 0) {
+    throw new Error('Continue is only available after all mistakes are used.');
+  }
+  if (!canStartChallenge(profile)) {
+    throw new Error('No lives left. Wait for refill.');
+  }
+
+  const now = Date.now();
+  const nextProfile = consumeHeartOnFailure(profile, now);
+  const continuedSession = withTrackedSessionActivity(
+    {
+      ...session,
+      mistakesMade: 0,
+      wrongGuesses: 0,
+      shieldIsActive: false,
+    },
+    now
+  );
+
+	  await Promise.all([
+	    saveUserProfile(userId, nextProfile),
+	    saveSessionState(userId, postId, continuedSession),
+	    markLevelContinued(userId, params.levelId),
+	    unmarkLevelFailed(userId, params.levelId),
+	  ]);
+
+  return {
+    ok: true,
+    session: continuedSession,
+    heartsRemaining: heartsRemaining(continuedSession),
+    profile: nextProfile,
+    inventory,
+  };
+};
+
 export const submitGuessForSession = async (params: {
   levelId: string;
   tileIndex: number;
@@ -724,6 +981,7 @@ export const submitGuessForSession = async (params: {
 }) => {
   const userId = assertUserId();
   const postId = assertPostId();
+  await assertPuzzlePlayable(params.levelId);
   const puzzle = await loadPuzzlePrivate(params.levelId);
   const session = await getSessionState(userId, postId);
   if (!session) {
@@ -756,6 +1014,8 @@ export const submitGuessForSession = async (params: {
       shieldConsumed: false,
       isLevelComplete: false,
       isGameOver: false,
+      ratingDelta: null,
+      ratingAfter: null,
     };
   }
 
@@ -836,48 +1096,67 @@ export const submitGuessForSession = async (params: {
   const complete = puzzleIsComplete(puzzle, nextSession);
   const remaining = heartsRemaining(nextSession);
   const isGameOver = !complete && remaining <= 0;
-  if (isGameOver) {
-    const retryCountForTelemetry =
-      session.mode === 'daily' ? await getDailyRetryCount(userId, params.levelId) : 0;
-    const profileBeforeFailure = await getUserProfile(userId);
-    let nextProfile = consumeHeartOnFailure(profileBeforeFailure);
-    if (session.mode === 'daily') {
-      nextProfile = {
-        ...nextProfile,
-        dailyCurrentStreak: 0,
+  let ratingDelta: number | null = null;
+  let ratingAfter: number | null = null;
+		  if (isGameOver) {
+	    const retryCountForTelemetry =
+	      session.mode === 'daily' ? await getDailyRetryCount(userId, params.levelId) : 0;
+	    const profileBeforeFailure = await getUserProfile(userId);
+	    const currentDateKey = formatDateKey(new Date());
+	    const dailyPointer =
+	      session.mode === 'daily' || puzzle.source === 'MANUAL_INJECTED'
+	        ? await getDailyPointer()
+	        : null;
+	    const officialDaily = isOfficialDailyPuzzle({
+	      puzzle,
+	      currentDateKey,
+	      dailyPointer,
+	    });
+	    const globalEligible = isGlobalEligiblePuzzle({
+	      puzzle,
+	      officialDaily,
+	    });
+	    let nextProfile: UserProfile;
+	    if (session.mode === 'daily') {
+	      nextProfile = {
+	        ...profileBeforeFailure,
+	        dailyCurrentStreak: 0,
       };
     } else {
       nextProfile = {
-        ...nextProfile,
+        ...profileBeforeFailure,
         endlessCurrentStreak: 0,
       };
     }
-    nextProfile = {
-      ...nextProfile,
-      currentStreak: recomputeLegacyCurrentStreak(nextProfile),
-    };
-    if (
-      nextProfile.hearts !== profileBeforeFailure.hearts ||
-      nextProfile.lastHeartRefillTs !== profileBeforeFailure.lastHeartRefillTs ||
-      nextProfile.currentStreak !== profileBeforeFailure.currentStreak ||
-      nextProfile.dailyCurrentStreak !== profileBeforeFailure.dailyCurrentStreak ||
-      nextProfile.endlessCurrentStreak !== profileBeforeFailure.endlessCurrentStreak
-    ) {
-      await saveUserProfile(userId, nextProfile);
-    }
-    await Promise.all([
-      markLevelFailed(userId, params.levelId),
-      nextSession.guessCount >= 1
-        ? recordQualifiedLevelFailure(params.levelId, userId, {
-            mistakes: nextSession.mistakesMade,
-            usedPowerups: nextSession.usedPowerups,
-            retryCount: retryCountForTelemetry,
-            targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
-          })
-        : Promise.resolve(),
-    ]);
-    await clearSessionState(userId, postId);
-  }
+	    nextProfile = {
+	      ...nextProfile,
+	      currentStreak: recomputeLegacyCurrentStreak(nextProfile),
+	      globalWinStreak: 0,
+	    };
+		    if (globalEligible) {
+		      const ratingOutcome = await recordGlobalLoss({
+		        userId,
+		        levelId: params.levelId,
+		        profile: nextProfile,
+		        puzzle,
+		      });
+		      nextProfile = ratingOutcome.profile;
+		      ratingDelta = ratingOutcome.ratingDelta;
+		      ratingAfter = ratingOutcome.ratingAfter;
+		    }
+	    await saveUserProfile(userId, nextProfile);
+	    await Promise.all([
+	      markLevelFailed(userId, params.levelId),
+	      nextSession.guessCount >= 1
+	        ? recordQualifiedLevelFailure(params.levelId, userId, {
+	            mistakes: nextSession.mistakesMade,
+	            usedPowerups: nextSession.usedPowerups,
+	            retryCount: retryCountForTelemetry,
+	            targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+	          })
+	        : Promise.resolve(),
+	    ]);
+	  }
   const afterPadlockStatus = checkPadlockStatus(
     puzzle,
     new Set(nextSession.revealedIndices)
@@ -910,6 +1189,8 @@ export const submitGuessForSession = async (params: {
     shieldConsumed,
     isLevelComplete: complete,
     isGameOver,
+    ratingDelta,
+    ratingAfter,
   };
 };
 
@@ -941,6 +1222,7 @@ export const completeSessionForLevel = async (params: {
 }) => {
   const userId = assertUserId();
   const postId = assertPostId();
+  await assertPuzzlePlayable(params.levelId);
   const [session, puzzle, profile, inventory] = await Promise.all([
     getSessionState(userId, postId),
     loadPuzzlePrivate(params.levelId),
@@ -997,15 +1279,29 @@ export const completeSessionForLevel = async (params: {
   const solveSeconds = isActiveTimeReasonable 
     ? activeSolveSeconds 
     : fallbackWallClockSolveSeconds;
-  const currentDateKey = formatDateKey(new Date());
-  const dailyRetryCount =
-    params.mode === 'daily'
-      ? await getDailyRetryCount(userId, params.levelId)
-      : 0;
-  const retryScoreFactor = getDailyRetryScoreFactor(dailyRetryCount);
-  const isRecoveryRun = params.mode === 'daily' && dailyRetryCount > 0;
-  const isCurrentDaily =
-    params.mode === 'daily' ? puzzle.dateKey === currentDateKey : false;
+	  const currentDateKey = formatDateKey(new Date());
+	  const dailyPointer =
+	    params.mode === 'daily' || puzzle.source === 'MANUAL_INJECTED'
+	      ? await getDailyPointer()
+	      : null;
+	  const dailyRetryCount =
+	    params.mode === 'daily'
+	      ? await getDailyRetryCount(userId, params.levelId)
+	      : 0;
+	  const retryScoreFactor = getDailyRetryScoreFactor(dailyRetryCount);
+	  const isRecoveryRun = params.mode === 'daily' && dailyRetryCount > 0;
+	  const isCurrentDaily =
+	    params.mode === 'daily'
+	      ? isOfficialDailyPuzzle({
+	          puzzle,
+	          currentDateKey,
+	          dailyPointer,
+	        })
+	      : false;
+	  const globalEligible = isGlobalEligiblePuzzle({
+	    puzzle,
+	    officialDaily: isCurrentDaily,
+	  });
   if (solveSeconds < minSolveSeconds) {
     await clearSessionState(userId, postId);
     return {
@@ -1074,6 +1370,33 @@ export const completeSessionForLevel = async (params: {
       keyUserCompleted(userId),
       params.levelId
     );
+    const isRepeatEndlessCompletion =
+      params.mode === 'endless' && Boolean(completionRecorded);
+    const hasMeaningfulInteraction = trackedSession.guessCount >= 1;
+    if (isRepeatEndlessCompletion) {
+      await recordCommunityEndlessCompletion({
+        userId,
+        levelId: params.levelId,
+        meaningful: hasMeaningfulInteraction,
+      });
+      await clearSessionState(userId, postId);
+      return {
+        ok: true,
+        accepted: true,
+        solveSeconds,
+        score: 0,
+        rewardCoins: 0,
+        mistakes: trackedSession.mistakesMade,
+        usedPowerups: trackedSession.usedPowerups,
+        retryCount: dailyRetryCount,
+        retryScoreFactor,
+        isRecoveryRun,
+        isCurrentDaily,
+        rewardNotice: 'Replay complete. Rewards are only paid on the first clear.',
+        profile,
+        inventory,
+      };
+    }
     if (completionRecorded && (!journalExists || hasStep('finalized'))) {
       await clearSessionState(userId, postId);
       return {
@@ -1120,10 +1443,14 @@ export const completeSessionForLevel = async (params: {
       await markStep(step);
     };
 
-    let rewardCoins = defaultCoinsReward;
-    if (trackedSession.mistakesMade === 0) {
-      rewardCoins += flawlessBonusCoins;
-    }
+	    const [priorFailure, continuedLevel] = await Promise.all([
+	      hasFailedLevel(userId, params.levelId),
+	      hasContinuedLevel(userId, params.levelId),
+	    ]);
+	    let rewardCoins = defaultCoinsReward;
+	    if (trackedSession.mistakesMade === 0 && !continuedLevel) {
+	      rewardCoins += flawlessBonusCoins;
+	    }
     
     const fastSolveBonus = getFastSolveBonus(
       solveSeconds,
@@ -1141,16 +1468,19 @@ export const completeSessionForLevel = async (params: {
       mistakes: trackedSession.mistakesMade,
       usedPowerups: trackedSession.usedPowerups,
     });
-    const score =
-      params.mode === 'daily'
-        ? applyDailyRetryPenalty(baseScore, dailyRetryCount)
-        : baseScore;
-    const priorFailure = await hasFailedLevel(userId, params.levelId);
+	    const scoreBeforeContinuePenalty =
+	      params.mode === 'daily'
+	        ? applyDailyRetryPenalty(baseScore, dailyRetryCount)
+	        : baseScore;
+	    const score = Math.max(
+	      0,
+	      scoreBeforeContinuePenalty - (continuedLevel ? continueScorePenalty : 0)
+	    );
 
-    const nextProfile = updateProfileOnCompletion({
-      profile,
-      puzzle,
-      mode: params.mode,
+	    let nextProfile = updateProfileOnCompletion({
+	      profile,
+	      puzzle,
+	      mode: params.mode,
       solveSeconds,
       mistakes: trackedSession.mistakesMade,
       rewardCoins,
@@ -1164,14 +1494,19 @@ export const completeSessionForLevel = async (params: {
       // Increment cursor for endless mode progression
       if (params.mode === 'endless') {
         await incrementUserEndlessCursor(userId);
+        await recordCommunityEndlessCompletion({
+          userId,
+          levelId: params.levelId,
+          meaningful: trackedSession.guessCount >= 1,
+        });
       }
     });
     await runCompletionStep('save_inventory', async () => {
       await saveInventory(userId, inventory);
     });
-    if (params.mode === 'daily') {
-      await runCompletionStep('record_daily_score', async () => {
-        await recordDailyScore({
+	    if (isCurrentDaily) {
+	      await runCompletionStep('record_daily_score', async () => {
+	        await recordDailyScore({
           dateKey: puzzle.dateKey,
           userId,
           score,
@@ -1181,7 +1516,6 @@ export const completeSessionForLevel = async (params: {
         });
       });
     }
-    const hasMeaningfulInteraction = trackedSession.guessCount >= 1;
     if (hasMeaningfulInteraction) {
       await runCompletionStep('record_level_win', async () => {
         await recordLevelWin(params.levelId, userId);
@@ -1198,16 +1532,38 @@ export const completeSessionForLevel = async (params: {
         });
       });
     }
-    if (params.mode === 'endless') {
-      await runCompletionStep('record_all_time_level_score', async () => {
-        await recordAllTimeLevelScore({
+	    if (params.mode === 'endless') {
+	      await runCompletionStep('record_all_time_level_score', async () => {
+	        await recordAllTimeLevelScore({
           userId,
           levelId: params.levelId,
           solveScore: score,
-        });
-      });
-    }
-    if (puzzle.isLogical) {
+	        });
+	      });
+	    }
+	    let ratingDelta = 0;
+	    let ratingAfter = nextProfile.globalRating;
+	    let globalScoreAfter = nextProfile.globalScore;
+	    if (globalEligible) {
+	      await runCompletionStep('record_global_win', async () => {
+	        const ratingOutcome = await recordGlobalWin({
+	          userId,
+	          levelId: params.levelId,
+	          solveScore: score,
+	          profile: nextProfile,
+	          puzzle,
+	          solveSeconds,
+	          mistakes: trackedSession.mistakesMade,
+	          usedPowerups: trackedSession.usedPowerups,
+	          isRecoveryRun,
+	        });
+	        nextProfile = ratingOutcome.profile;
+	        ratingDelta = ratingOutcome.ratingDelta;
+	        ratingAfter = ratingOutcome.ratingAfter;
+	        globalScoreAfter = ratingOutcome.profile.globalScore;
+	      });
+	    }
+	    if (puzzle.isLogical) {
       await runCompletionStep('increment_all_time_logic', async () => {
         await incrementAllTimeLogic(userId, 1);
       });
@@ -1217,16 +1573,23 @@ export const completeSessionForLevel = async (params: {
       userId,
       dateKey: rankDateKey,
     });
-    const updatedBestRank =
-      rankSummary.currentRank === null
-        ? nextProfile.bestOverallRank
-        : nextProfile.bestOverallRank === 0
-          ? rankSummary.currentRank
-          : Math.min(nextProfile.bestOverallRank, rankSummary.currentRank);
-    const profileWithBestRank: UserProfile = {
-      ...nextProfile,
-      bestOverallRank: updatedBestRank,
-    };
+	    const updatedBestRank =
+	      rankSummary.currentRank === null
+	        ? nextProfile.bestOverallRank
+	        : nextProfile.bestOverallRank === 0
+	          ? rankSummary.currentRank
+	          : Math.min(nextProfile.bestOverallRank, rankSummary.currentRank);
+	    const updatedBestGlobalRank =
+	      rankSummary.globalRank === null
+	        ? nextProfile.bestGlobalRank
+	        : nextProfile.bestGlobalRank === 0
+	          ? rankSummary.globalRank
+	          : Math.min(nextProfile.bestGlobalRank, rankSummary.globalRank);
+	    const profileWithBestRank: UserProfile = {
+	      ...nextProfile,
+	      bestOverallRank: updatedBestRank,
+	      bestGlobalRank: updatedBestGlobalRank,
+	    };
     await runCompletionStep('save_profile', async () => {
       await saveUserProfile(userId, profileWithBestRank);
     });
@@ -1252,10 +1615,13 @@ export const completeSessionForLevel = async (params: {
         solveSeconds,
         mistakes: trackedSession.mistakesMade,
         heartsRemaining: heartsRemaining(trackedSession),
-        usedPowerups: trackedSession.usedPowerups,
-        score,
-      });
-    });
+	        usedPowerups: trackedSession.usedPowerups,
+	        score,
+	        ratingDelta,
+	        ratingAfter,
+	        globalScoreAfter,
+	      });
+	    });
     await runCompletionStep('clear_session', async () => {
       await clearSessionState(userId, postId);
     });
@@ -1281,6 +1647,9 @@ export const completeSessionForLevel = async (params: {
       isRecoveryRun,
       isCurrentDaily,
       rewardNotice,
+      ratingDelta,
+      ratingAfter,
+      globalScoreAfter,
       profile: profileWithBestRank,
       inventory,
     };

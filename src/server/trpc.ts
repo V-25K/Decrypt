@@ -1,5 +1,6 @@
 import { router } from './trpc/base';
 import { adminRouter } from './trpc/routers/admin';
+import { communityRouter } from './trpc/routers/community';
 import { gameRouter } from './trpc/routers/game';
 import { leaderboardRouter } from './trpc/routers/leaderboard';
 import { powerupRouter } from './trpc/routers/powerup';
@@ -15,6 +16,7 @@ export const appRouter = router({
   quests: questsRouter,
   social: socialRouter,
   admin: adminRouter,
+  community: communityRouter,
   store: storeRouter,
   profile: profileRouter,
 });

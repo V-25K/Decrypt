@@ -37,9 +37,9 @@ export const StatsScreen = ({
           <button className={tabButtonClass(statsTab === 'daily')} onClick={() => onTabChange('daily')}>
             Daily
           </button>
-          <button className={tabButtonClass(statsTab === 'endless')} onClick={() => onTabChange('endless')}>
-            Endless
-          </button>
+	          <button className={tabButtonClass(statsTab === 'global')} onClick={() => onTabChange('global')}>
+	            Global
+	          </button>
         </div>
       </section>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">

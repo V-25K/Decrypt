@@ -45,6 +45,7 @@ vi.mock('./puzzle-store', () => ({
   getDailyPointer: vi.fn(),
   getPuzzlePrivate: getPuzzlePrivateMock,
   getPuzzlePublic: vi.fn(),
+  isPuzzleRemovedFromPlay: vi.fn(async () => false),
 }));
 
 vi.mock('./state', () => ({
@@ -53,10 +54,11 @@ vi.mock('./state', () => ({
   getInventory: getInventoryMock,
   getUserProfile: getUserProfileMock,
   hasFailedLevel: vi.fn(),
-  incrementDailyRetryCount: vi.fn(),
-  markLevelCompleted: vi.fn(),
-  markLevelFailed: vi.fn(),
-  registerKnownUser: vi.fn(),
+	  incrementDailyRetryCount: vi.fn(),
+	  markLevelCompleted: vi.fn(),
+	  markLevelFailed: vi.fn(),
+	  unmarkLevelFailed: vi.fn(),
+	  registerKnownUser: vi.fn(),
   saveInventory: vi.fn(),
   saveUserProfile: vi.fn(),
 }));
@@ -94,8 +96,10 @@ vi.mock('./constants', async () => {
 vi.mock('./leaderboard', () => ({
   computeScore: vi.fn(),
   getUserRankSummary: vi.fn(),
-  incrementAllTimeLogic: vi.fn(),
-  recordAllTimeLevelScore: vi.fn(),
+	  incrementAllTimeLogic: vi.fn(),
+	  recordGlobalLoss: vi.fn(),
+	  recordGlobalWin: vi.fn(),
+	  recordAllTimeLevelScore: vi.fn(),
   recordDailyScore: vi.fn(),
 }));
 

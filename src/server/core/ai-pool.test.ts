@@ -254,7 +254,7 @@ describe('warmAICandidatePool', () => {
       }
       return null;
     });
-    redisZCardMock.mockResolvedValue(4);
+    redisZCardMock.mockResolvedValue(6);
 
     await warmAICandidatePool({ maxCandidatesToGenerate: 1 });
 

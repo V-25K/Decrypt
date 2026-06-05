@@ -45,7 +45,30 @@ describe('triggers route', () => {
     const body = await response.json();
     expect(body).toEqual({
       status: 'success',
-      message: 'Bootstrap trigger received (AppInstall); requested an immediate daily staging run.',
+      message: 'AppInstall received; bootstrap staging job scheduled.',
+    });
+  });
+
+  it('reports bootstrap scheduling failure with a truthful 200 response', async () => {
+    runJobMock.mockRejectedValue(new Error('scheduler unavailable'));
+
+    const response = await triggers.request('http://localhost/on-app-install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'AppInstall' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(reportFailureMock).toHaveBeenCalledWith({
+      source: 'trigger.on-app-install',
+      dateKey: expect.any(String),
+      error: expect.any(Error),
+    });
+    const body = await response.json();
+    expect(body).toEqual({
+      status: 'error',
+      message:
+        'AppInstall received, but bootstrap staging could not be scheduled. Daily challenges will try again on the next scheduled run.',
     });
   });
 
@@ -61,8 +84,7 @@ describe('triggers route', () => {
     const body = await response.json();
     expect(body).toEqual({
       status: 'success',
-      message:
-        'Bootstrap trigger received (AppUpgrade); no immediate staging or post creation was performed.',
+      message: 'AppUpgrade received; no immediate staging was performed.',
     });
   });
 });

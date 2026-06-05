@@ -41,6 +41,8 @@ tools/
 .codex/
 tmp/
 progress.md
+.agents/
+skills-lock.json
 
 # Local one-off debugging scripts (keep production/admin debug endpoints versioned)
 scripts/debug-local/

@@ -63,10 +63,6 @@ const bannedExactWords = [
   'SHIT',
   'BITCH',
   'ASSHOLE',
-  'BASTARD',
-  'SLUR',
-  'HATE',
-  'KILL',
   'SUICIDE',
   'RAPE',
 ];
@@ -353,15 +349,15 @@ const preferredPromptLengthBounds = (
 ): { min: number; max: number } => {
   const tier = difficultyToTier(difficulty);
   if (tier === 'warmup') {
-    return { min: 14, max: 26 };
+    return { min: 14, max: 35 };
   }
   if (tier === 'medium') {
-    return { min: 22, max: 38 };
+    return { min: 22, max: 70 };
   }
   if (tier === 'hard') {
-    return { min: 28, max: 48 };
+    return { min: 32, max: 105 };
   }
-  return { min: 32, max: maxPuzzleTotalLength };
+  return { min: 60, max: maxPuzzleTotalLength };
 };
 
 const flexiblePromptLengthBounds = (
@@ -369,15 +365,15 @@ const flexiblePromptLengthBounds = (
 ): { min: number; max: number } => {
   const tier = difficultyToTier(difficulty);
   if (tier === 'warmup') {
-    return { min: minPlayablePuzzleTotalLength, max: 32 };
+    return { min: minPlayablePuzzleTotalLength, max: 45 };
   }
   if (tier === 'medium') {
-    return { min: 18, max: 46 };
+    return { min: 18, max: 85 };
   }
   if (tier === 'hard') {
-    return { min: 20, max: maxPuzzleTotalLength };
+    return { min: 24, max: maxPuzzleTotalLength };
   }
-  return { min: 24, max: maxPuzzleTotalLength };
+  return { min: 36, max: maxPuzzleTotalLength };
 };
 
 const temperatureForDifficulty = (difficulty: number): number => {
@@ -426,18 +422,18 @@ export const generatePuzzlePhraseBatch = async (params: {
         label: params.difficultyLabel,
         value: params.difficulty,
         tier,
-      length_policy: 'soft_recommendation_not_hard_gate',
+	      length_policy: 'playability_bound_not_difficulty_signal',
       preferred_bounds_by_tier: {
-        warmup: [14, 26],
-        medium: [22, 38],
-        hard: [28, 48],
-        expert: [32, maxPuzzleTotalLength],
+        warmup: [14, 35],
+        medium: [22, 70],
+        hard: [32, 105],
+        expert: [60, maxPuzzleTotalLength],
       },
       flexible_bounds_by_tier: {
-        warmup: [minPlayablePuzzleTotalLength, 32],
-        medium: [18, 46],
-        hard: [20, maxPuzzleTotalLength],
-        expert: [24, maxPuzzleTotalLength],
+        warmup: [minPlayablePuzzleTotalLength, 45],
+        medium: [18, 85],
+        hard: [24, maxPuzzleTotalLength],
+        expert: [36, maxPuzzleTotalLength],
       },
       playable_bounds: [minPlayablePuzzleTotalLength, maxPuzzleTotalLength],
       active_preferred_bounds: [preferredBounds.min, preferredBounds.max],
@@ -456,22 +452,27 @@ export const generatePuzzlePhraseBatch = async (params: {
         promptProfile.wordCountBounds.min,
         promptProfile.wordCountBounds.max,
       ],
-      recommended_letter_count_range: [
-        promptProfile.letterBounds.min,
-        promptProfile.letterBounds.max,
-      ],
-      recommended_min_unique_words: promptProfile.recommendedMinUniqueWords,
-      recommended_unique_letter_range: [
-        promptProfile.uniqueLetterBounds.min,
+	      recommended_min_unique_words: promptProfile.recommendedMinUniqueWords,
+	      recommended_unique_letter_range: [
+	        promptProfile.uniqueLetterBounds.min,
         promptProfile.uniqueLetterBounds.max,
       ],
-      target_crypto_hardness_range: [
-        promptProfile.cryptoHardnessBounds.min,
-        promptProfile.cryptoHardnessBounds.max,
-      ],
-      repeated_whole_words: 'avoid',
-      requires_repeated_letter: true,
-    },
+	      target_crypto_hardness_range: [
+	        promptProfile.cryptoHardnessBounds.min,
+	        promptProfile.cryptoHardnessBounds.max,
+	      ],
+	      difficulty_signals: [
+	        'unique_words',
+	        'unique_letters',
+	        'letter_distribution',
+	        'repetition',
+	        'clue_structure',
+	        'crypto_hardness',
+	      ],
+	      ignored_difficulty_signals: ['raw_letter_count', 'total_character_count'],
+	      repeated_whole_words: 'avoid',
+	      requires_repeated_letter: true,
+	    },
     hints: {
       preferred_challenge_type: params.preferredType,
       preferred_type_mode: 'strict_required',
@@ -506,17 +507,15 @@ export const generatePuzzlePhraseBatch = async (params: {
     'Format: [{target_string, author, challenge_type}, ...]. ' +
     'Each candidate must be independent and meet all constraints. ' +
     'Output keys per candidate: target_string, author, challenge_type. ' +
-    `challenge_type must be one of: ${challengeTypeList}. ` +
-    'challenge_type must equal preferred_challenge_type. ' +
-    `Target ${promptProfile.wordCountBounds.min}-${promptProfile.wordCountBounds.max} words, ` +
-    `${promptProfile.letterBounds.min}-${promptProfile.letterBounds.max} letters, and ` +
-    `usually ${preferredBounds.min}-${preferredBounds.max} total characters. ` +
-    `Anything within ${flexibleBounds.min}-${flexibleBounds.max} total characters is allowed if the phrase naturally fits the tier's hardness and clue profile. ` +
-    `Use at least ${promptProfile.recommendedMinUniqueWords} unique words and avoid repeating whole words. ` +
-    `Target ${promptProfile.uniqueLetterBounds.min}-${promptProfile.uniqueLetterBounds.max} unique letters and ` +
-    `hardness ${promptProfile.cryptoHardnessBounds.min.toFixed(2)}-${promptProfile.cryptoHardnessBounds.max.toFixed(2)}. ` +
-    'Do not force hard or expert lines to be long just to seem difficult, and do not force warmup or medium lines to be short if repetition keeps them fair. ' +
-    'Every word should be short enough for mobile and the phrase must contain at least one repeated letter overall. ' +
+	    `challenge_type must be one of: ${challengeTypeList}. ` +
+	    'challenge_type must equal preferred_challenge_type. ' +
+	    `Aim for ${promptProfile.wordCountBounds.min}-${promptProfile.wordCountBounds.max} words when it sounds natural. ` +
+	    `Prefer ${preferredBounds.min}-${preferredBounds.max} total characters for readability, but anything within ${flexibleBounds.min}-${flexibleBounds.max} total characters is allowed if the phrase fits the tier's hardness and clue profile. ` +
+	    `Use at least ${promptProfile.recommendedMinUniqueWords} unique words and avoid repeating whole words. ` +
+	    `Target ${promptProfile.uniqueLetterBounds.min}-${promptProfile.uniqueLetterBounds.max} unique letters and ` +
+	    `hardness ${promptProfile.cryptoHardnessBounds.min.toFixed(2)}-${promptProfile.cryptoHardnessBounds.max.toFixed(2)}. ` +
+	    'Do not use raw letter count or total character count as difficulty signals. Difficulty comes from unique words, unique letters, letter distribution, repetition, clue structure, and crypto hardness. ' +
+	    'Every word should be short enough for mobile and the phrase must contain at least one repeated letter overall. ' +
     `RULES=${JSON.stringify(promptRules)}`;
 
   const fetchAndParsePayload = async (): Promise<RawChallengeCandidate[]> => {

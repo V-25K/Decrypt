@@ -14,6 +14,11 @@ const isDailyEntry = (entry: LeaderboardEntry): entry is LeaderboardEntry & { so
 const isAllTimeEntry = (entry: LeaderboardEntry): entry is LeaderboardEntry & { levelsCompleted: number } =>
   entry.levelsCompleted !== undefined;
 
+const formatLeaderboardNumber = (value: number | null | undefined): string =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(value).toLocaleString()
+    : '--';
+
 type LeaderboardScreenProps = {
   leaderboardTab: LeaderboardTab;
   onTabChange: (tab: LeaderboardTab) => void;
@@ -108,9 +113,9 @@ export const LeaderboardScreen = ({
     }
     await runLeaderboardRequest({
       load: async () =>
-        leaderboardTab === 'daily'
-          ? await trpc.leaderboard.getDailyPage.query({ page, pageSize: 50 })
-          : await trpc.leaderboard.getAllTimeLevelsPage.query({ page, pageSize: 50 }),
+	        leaderboardTab === 'daily'
+	          ? await trpc.leaderboard.getDailyPage.query({ page, pageSize: 50 })
+	          : await trpc.leaderboard.getGlobalPage.query({ page, pageSize: 50 }),
       apply: (data) => {
         if (!data) {
           return;
@@ -171,12 +176,12 @@ export const LeaderboardScreen = ({
             >
               Daily
             </button>
-            <button
-              className={tabButtonClass(leaderboardTab === 'endless')}
-              onClick={() => onTabChange('endless')}
-            >
-              Endless
-            </button>
+	            <button
+	              className={tabButtonClass(leaderboardTab === 'global')}
+	              onClick={() => onTabChange('global')}
+	            >
+	              Global
+	            </button>
           </div>
         </section>
 
@@ -223,14 +228,16 @@ export const LeaderboardScreen = ({
 
           {/* Leaderboard Header */}
           {!isLoading && !error && leaderboardData && leaderboardData.entries.length > 0 && (
-            <div className="hub-subpanel app-surface-subtle grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5">
+	            <div className="hub-subpanel app-surface-subtle grid grid-cols-[26px_34px_minmax(0,1fr)_76px_76px] items-center gap-2 rounded-lg border app-border px-2 py-1.5">
               <div className="app-text-muted text-[9px] font-black uppercase">Rank</div>
               <div className="app-text-muted text-[9px] font-black uppercase" aria-hidden="true" />
               <div className="app-text-muted text-[9px] font-black uppercase">Player</div>
-              <div className="app-text-muted text-right text-[9px] font-black uppercase">Score</div>
-              <div className="app-text-muted text-right text-[9px] font-black uppercase">
-                {leaderboardTab === 'daily' ? 'Avg. Time' : 'Levels'}
-              </div>
+	              <div className="app-text-muted text-right text-[9px] font-black uppercase">
+	                {leaderboardTab === 'daily' ? 'Score' : 'Rating'}
+	              </div>
+		              <div className="app-text-muted text-right text-[9px] font-black uppercase">
+		                {leaderboardTab === 'daily' ? 'Avg. Time' : 'Total Points'}
+		              </div>
             </div>
           )}
 
@@ -243,23 +250,30 @@ export const LeaderboardScreen = ({
 	                  userId: entry.userId,
 	                  username: entry.username ?? null
 	                });
-	                const detail =
-	                  leaderboardTab === 'daily'
-	                    ? formatStatDuration(isDailyEntry(entry) ? (entry.solveSeconds ?? null) : null)
-                    : String(isAllTimeEntry(entry) ? (entry.levelsCompleted ?? '--') : '--');
-                return (
-                  <article
-                    key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
-                    className="hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_70px_60px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
+		                const scoreValue =
+		                  leaderboardTab === 'daily'
+		                    ? formatLeaderboardNumber(entry.score)
+		                    : formatLeaderboardNumber(entry.rating ?? entry.score);
+		                const detail =
+		                  leaderboardTab === 'daily'
+		                    ? formatStatDuration(isDailyEntry(entry) ? (entry.solveSeconds ?? null) : null)
+		                    : formatLeaderboardNumber(
+		                        entry.globalScore ??
+		                          (isAllTimeEntry(entry) ? entry.levelsCompleted : null)
+		                      );
+	                return (
+	                  <article
+	                    key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
+	                    className="hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_76px_76px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
 	                  >
 	                    <span className="app-text text-[11px] font-black">#{globalRank}</span>
 	                    <LeaderboardAvatar entry={entry} displayName={displayName} eager={index < 4} />
 	                    <div className="app-text truncate text-[11px] font-bold">
 	                      {displayName}
 	                    </div>
-                    <div className="app-text text-right text-[11px] font-black">
-                      {Math.round(entry.score)}
-                    </div>
+	                    <div className="app-text text-right text-[11px] font-black">
+	                      {scoreValue}
+	                    </div>
                     <div className="app-text-muted text-right text-[10px] font-bold">
                       {detail}
                     </div>
@@ -318,7 +332,7 @@ export const LeaderboardScreen = ({
         <footer className="hub-subpanel app-surface-subtle mt-2 shrink-0 rounded-lg border app-border px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <span className="app-text-muted text-[10px] font-black uppercase tracking-[0.03em]">
-              Your {leaderboardTab === 'daily' ? 'Daily' : 'Endless'} Rank
+	              Your {leaderboardTab === 'daily' ? 'Daily' : 'Global'} Rank
             </span>
             <span className="app-text text-sm font-black">
               {typeof currentUserRank === 'number' && currentUserRank > 0

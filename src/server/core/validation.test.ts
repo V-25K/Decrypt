@@ -101,7 +101,7 @@ describe('validation', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0005',
       dateKey: '2026-02-24',
-      text: 'THIS CHALLENGE TEXT IS INTENTIONALLY LONG TO EXCEED THE SEVENTY TWO CHARACTER HARD LIMIT',
+      text: `${'ALPHA BRAVO '.repeat(17)}END`,
       author: 'UNKNOWN',
       difficulty: 5,
       logicalPercent: 10,
@@ -115,7 +115,7 @@ describe('validation', () => {
   });
 
   it('counts punctuation toward total challenge length cap', () => {
-    const overLimitWithPunctuation = `${'A '.repeat(36)}!`;
+    const overLimitWithPunctuation = `${'A '.repeat(101)}!`;
     const generated = buildPuzzle({
       levelId: 'lvl_0006',
       dateKey: '2026-02-24',

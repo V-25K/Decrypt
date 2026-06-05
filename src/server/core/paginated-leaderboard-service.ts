@@ -1,7 +1,18 @@
 import { redis } from '@devvit/web/server';
 import { type LeaderboardEntry } from '../../shared/game.ts';
-import { getDailyTop, getLevelTop, getAllTimeTopLevels, getAllTimeTopLogic } from './leaderboard';
-import { keyDailyLeaderboard, keyAllTimeLevelsLeaderboard, keyAllTimeLogicLeaderboard } from './keys';
+import {
+  getDailyTop,
+  getLevelTop,
+  getAllTimeTopLevels,
+  getAllTimeTopLogic,
+  getGlobalTop,
+} from './leaderboard';
+import {
+  keyDailyLeaderboard,
+  keyAllTimeLevelsLeaderboard,
+  keyAllTimeLogicLeaderboard,
+  keyGlobalRatingLeaderboard,
+} from './keys';
 import { formatDateKey } from './serde';
 
 /**
@@ -127,6 +138,20 @@ export class PaginatedLeaderboardService {
     return this.buildLeaderboardPage(entries, params.page, pageSize, totalCount);
   }
 
+  async getGlobalLeaderboardPage(
+    params: LeaderboardPageParams
+  ): Promise<LeaderboardPage<LeaderboardEntry>> {
+    const pageSize = Math.min(params.pageSize || this.PAGE_SIZE, this.PAGE_SIZE);
+    const offset = (params.page - 1) * pageSize;
+
+    const [totalCount, entries] = await Promise.all([
+      redis.zCard(keyGlobalRatingLeaderboard),
+      this.getGlobalEntriesForPage(offset, pageSize)
+    ]);
+
+    return this.buildLeaderboardPage(entries, params.page, pageSize, totalCount);
+  }
+
   /**
    * Get a paginated all-time logic leaderboard
    */
@@ -186,6 +211,13 @@ export class PaginatedLeaderboardService {
     const totalNeeded = offset + pageSize;
     const allEntries = await getAllTimeTopLogic(totalNeeded);
     
+    return allEntries.slice(offset, offset + pageSize);
+  }
+
+  private async getGlobalEntriesForPage(offset: number, pageSize: number) {
+    const totalNeeded = offset + pageSize;
+    const allEntries = await getGlobalTop(totalNeeded);
+
     return allEntries.slice(offset, offset + pageSize);
   }
 

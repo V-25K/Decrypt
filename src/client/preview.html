@@ -8,20 +8,17 @@
     />
     <link rel="preload" as="image" href="/backgrounds/img1.webp" type="image/webp" fetchpriority="high" />
     <link rel="preload" as="image" href="/loading_glass.png" fetchpriority="high" />
-    <link rel="preload" as="image" href="/char.webp" type="image/webp" fetchpriority="high" />
-    <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
-    <link rel="preload" as="audio" href="/sounds/buttonClick.wav" type="audio/wav" />
-    <link rel="preload" as="audio" href="/sounds/correct.wav" type="audio/wav" />
-    <link rel="preload" as="audio" href="/sounds/mistake.wav" type="audio/wav" />
+    <link rel="preload" as="image" href="/ui_lock.png" fetchpriority="high" />
+    <link rel="preload" as="image" href="/ui_question.png" fetchpriority="high" />
     <link rel="stylesheet" href="/boot.css" />
     <title>Decrypt</title>
   </head>
-  <body class="h-full boot-bg-challenge">
-    <div id="root" data-initial-screen="challenge" class="h-full">
+  <body class="boot-bg-challenge">
+    <div id="root">
       <div class="boot-loading-shell">
         <img class="boot-loading-glass" src="/loading_glass.png" alt="" />
       </div>
     </div>
-    <script type="module" src="game.tsx"></script>
+    <script type="module" src="preview.ts"></script>
   </body>
 </html>

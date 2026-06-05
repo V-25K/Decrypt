@@ -1,20 +1,30 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  approveCommunitySubmissionMock,
   completeSavedManualPuzzlePublishMock,
   formatModeratorRerollErrorMock,
   hasAdminAccessMock,
   injectAndPublishManualPuzzleMock,
   injectManualChallengeWithAdjustmentMock,
+  listCommunitySubmissionsForReviewMock,
   preflightManualChallengeForPublishMock,
+  rejectCommunitySubmissionMock,
+  removeCommunityPuzzleMock,
+  requestCommunitySubmissionChangesMock,
   rerollAndPublishMock,
 } = vi.hoisted(() => ({
+  approveCommunitySubmissionMock: vi.fn(),
   completeSavedManualPuzzlePublishMock: vi.fn(),
   formatModeratorRerollErrorMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   injectAndPublishManualPuzzleMock: vi.fn(),
   injectManualChallengeWithAdjustmentMock: vi.fn(),
+  listCommunitySubmissionsForReviewMock: vi.fn(),
   preflightManualChallengeForPublishMock: vi.fn(),
+  rejectCommunitySubmissionMock: vi.fn(),
+  removeCommunityPuzzleMock: vi.fn(),
+  requestCommunitySubmissionChangesMock: vi.fn(),
   rerollAndPublishMock: vi.fn(),
 }));
 
@@ -42,6 +52,14 @@ vi.mock('../../core/metrics', () => ({
   getMetricsSnapshot: vi.fn(),
 }));
 
+vi.mock('../../core/community', () => ({
+  approveCommunitySubmission: approveCommunitySubmissionMock,
+  listCommunitySubmissionsForReview: listCommunitySubmissionsForReviewMock,
+  rejectCommunitySubmission: rejectCommunitySubmissionMock,
+  removeCommunityPuzzle: removeCommunityPuzzleMock,
+  requestCommunitySubmissionChanges: requestCommunitySubmissionChangesMock,
+}));
+
 vi.mock('./admin.debug', () => ({
   adminDebugProcedures: {},
 }));
@@ -62,13 +80,45 @@ const feedback = {
   adjustmentsMade: ['Adjusted padlocks'],
 };
 
+const communitySubmission = {
+  submissionId: 'sub_001',
+  authorId: 't2_creator',
+  authorName: 'creator',
+  title: 'Test Cipher',
+  text: 'NEVER SETTLE FOR LESS THAN YOUR BEST',
+  normalizedSig: 'NEVERSETTLEFORLESSTHANYOURBEST',
+  tokenSig: 'NEVER SETTLE FOR LESS THAN YOUR BEST',
+  category: 'QUOTE',
+  attribution: 'TEST AUTHOR',
+  targetDifficulty: 5,
+  creationMode: 'auto',
+  manualLayout: null,
+  suggestedTier: 'medium',
+  status: 'approved',
+  submittedAt: 1,
+  reviewedBy: 't2_mod',
+  reviewedAt: 2,
+  rejectionReason: null,
+  levelId: 'lvl_community001',
+};
+
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
 afterEach(() => {
+  vi.restoreAllMocks();
+  approveCommunitySubmissionMock.mockReset();
   completeSavedManualPuzzlePublishMock.mockReset();
   formatModeratorRerollErrorMock.mockReset();
   hasAdminAccessMock.mockReset();
   injectAndPublishManualPuzzleMock.mockReset();
   injectManualChallengeWithAdjustmentMock.mockReset();
+  listCommunitySubmissionsForReviewMock.mockReset();
   preflightManualChallengeForPublishMock.mockReset();
+  rejectCommunitySubmissionMock.mockReset();
+  removeCommunityPuzzleMock.mockReset();
+  requestCommunitySubmissionChangesMock.mockReset();
   rerollAndPublishMock.mockReset();
 });
 
@@ -283,7 +333,7 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
     });
 
     const result = await caller.injectManualChallengeWithAdjustment({
-      text: 'TO BE OR NOT TO BE',
+      text: 'TO BE OR NOT TO BE AGAIN',
       author: 'TEST AUTHOR',
       targetDifficulty: 9,
       challengeType: 'QUOTE',
@@ -340,6 +390,134 @@ describe('adminRouter.injectManualChallengeWithAdjustment', () => {
       levelId: 'lvl_0201',
       error: 'Manual puzzle lvl_0201 was saved for 2026-03-07, but publish failed: redis unavailable',
       feedback,
+    });
+  });
+});
+
+describe('adminRouter community moderation actions', () => {
+  it('returns a structured approval failure instead of throwing', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    approveCommunitySubmissionMock.mockRejectedValue(
+      new Error('Submission is no longer pending.')
+    );
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.approveCommunitySubmission({
+      submissionId: 'sub_001',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      message: 'Submission is no longer pending.',
+      submission: null,
+    });
+  });
+
+  it('returns a structured rejection failure instead of throwing', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    rejectCommunitySubmissionMock.mockRejectedValue(
+      new Error('Add a short reason before rejecting.')
+    );
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.rejectCommunitySubmission({
+      submissionId: 'sub_001',
+      reason: 'Needs attribution',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      message: 'Add a short reason before rejecting.',
+      submission: null,
+    });
+  });
+
+  it('returns a structured removal failure instead of throwing', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    removeCommunityPuzzleMock.mockRejectedValue(
+      new Error('Community puzzle is already removed.')
+    );
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.removeCommunityPuzzle({
+      submissionId: 'sub_001',
+      reason: 'Content cleanup',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      message: 'Community puzzle is already removed.',
+      submission: null,
+    });
+  });
+
+  it('keeps successful approval responses structured', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    approveCommunitySubmissionMock.mockResolvedValue(communitySubmission);
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.approveCommunitySubmission({
+      submissionId: 'sub_001',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      message: 'Approved as lvl_community001.',
+      submission: communitySubmission,
+    });
+  });
+
+  it('returns a structured request-changes response', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    requestCommunitySubmissionChangesMock.mockResolvedValue({
+      ...communitySubmission,
+      status: 'changes_requested',
+      rejectionReason: 'Fix punctuation in the quote.',
+    });
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.requestCommunitySubmissionChanges({
+      submissionId: 'sub_001',
+      reason: 'Fix punctuation in the quote.',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      message: 'Changes requested from creator.',
+      submission: {
+        status: 'changes_requested',
+        rejectionReason: 'Fix punctuation in the quote.',
+      },
     });
   });
 });

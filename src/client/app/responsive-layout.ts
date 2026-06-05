@@ -59,13 +59,13 @@ export const getResponsiveLayoutState = (
       : deviceTier === 'desktop'
         ? 'h-[40px] w-[40px]'
         : 'h-[36px] w-[36px]',
-    utilityRowClass: isInlineMode
-      ? deviceTier === 'desktop'
-        ? 'bg-transparent px-3 pt-2 pb-4'
-        : deviceTier === 'tablet'
-          ? 'bg-transparent px-2.5 pt-1.5 pb-[14px]'
-          : 'bg-transparent px-2 pt-1 pb-3'
-      : 'bg-transparent px-3 py-3',
+	    utilityRowClass: isInlineMode
+	      ? deviceTier === 'desktop'
+	        ? 'bg-transparent px-3 pt-0.5 pb-2'
+	        : deviceTier === 'tablet'
+	          ? 'bg-transparent px-2.5 pt-0.5 pb-[7px]'
+	          : 'bg-transparent px-2 pt-0 pb-1.5'
+	      : 'bg-transparent px-3 pt-0.5 pb-1.5',
     helpButtonClass: isInlineMode
       ? 'h-8 w-8 text-[14px]'
       : 'h-9 w-9 text-[15px]',
@@ -88,53 +88,53 @@ export const getResponsiveLayoutState = (
       : 'w-[clamp(18px,5vw,24px)]',
     punctuationTileMinWidthClass: isInlineMode ? 'min-w-[2px]' : 'min-w-[4px]',
     inlinePromoClusterClass: inlineTight
-      ? '-ml-[28px] h-[104px] w-[168px]'
+      ? '-ml-[21px] h-[78px] w-[126px]'
       : deviceTier === 'desktop'
-        ? '-ml-[36px] h-[152px] w-[240px]'
+        ? '-ml-[27px] h-[114px] w-[180px]'
         : deviceTier === 'tablet'
-          ? '-ml-[32px] h-[132px] w-[212px]'
-          : '-ml-[28px] h-[116px] w-[186px]',
+          ? '-ml-[24px] h-[99px] w-[159px]'
+          : '-ml-[21px] h-[87px] w-[140px]',
     inlineSnooClass: inlineTight
-      ? 'h-[104px] w-[104px]'
+      ? 'h-[78px] w-[78px]'
       : deviceTier === 'desktop'
-        ? 'h-[152px] w-[152px]'
+        ? 'h-[114px] w-[114px]'
         : deviceTier === 'tablet'
-          ? 'h-[132px] w-[132px]'
-          : 'h-[116px] w-[116px]',
+          ? 'h-[99px] w-[99px]'
+          : 'h-[87px] w-[87px]',
     inlineSnooDockClass: inlineTight
-      ? 'bottom-[-12px]'
+      ? 'bottom-[-9px]'
       : deviceTier === 'desktop'
-        ? 'bottom-[-16px]'
+        ? 'bottom-[-12px]'
         : deviceTier === 'tablet'
-          ? 'bottom-[-14px]'
-          : 'bottom-[-13px]',
+          ? 'bottom-[-11px]'
+          : 'bottom-[-10px]',
     inlineBundleDockClass: inlineTight
-      ? 'left-[60px] bottom-0'
+      ? 'left-[45px] bottom-0'
       : deviceTier === 'desktop'
-        ? 'left-[96px] bottom-0'
+        ? 'left-[72px] bottom-0'
         : deviceTier === 'tablet'
-          ? 'left-[82px] bottom-0'
-          : 'left-[68px] bottom-0',
+          ? 'left-[62px] bottom-0'
+          : 'left-[51px] bottom-0',
     inlineBundleCardClass: inlineTight
-      ? 'h-[78px] w-[74px] rounded-[11px] p-[3px]'
+      ? 'h-[58px] w-[56px] rounded-[9px] p-[2px]'
       : deviceTier === 'desktop'
-        ? 'h-[102px] w-[96px] rounded-[14px] p-1'
+        ? 'h-[77px] w-[72px] rounded-[11px] p-[3px]'
         : deviceTier === 'tablet'
-          ? 'h-[94px] w-[88px] rounded-[13px] p-1'
-          : 'h-[86px] w-[80px] rounded-[12px] p-1',
+          ? 'h-[71px] w-[66px] rounded-[10px] p-[3px]'
+          : 'h-[65px] w-[60px] rounded-[10px] p-[3px]',
     bundleRewardRowTextClass: inlineTight
-      ? 'text-[11px]'
+      ? 'text-[9px]'
       : deviceTier === 'desktop'
-        ? 'text-[14px]'
+        ? 'text-[11px]'
         : deviceTier === 'tablet'
-          ? 'text-[13px]'
-          : 'text-[12px]',
+          ? 'text-[10px]'
+          : 'text-[9px]',
     bundleRewardValueTextClass: inlineTight
-      ? 'text-[12px]'
+      ? 'text-[10px]'
       : deviceTier === 'desktop'
-        ? 'text-[15px]'
+        ? 'text-[12px]'
         : deviceTier === 'tablet'
-          ? 'text-[14px]'
-          : 'text-[13px]',
+          ? 'text-[11px]'
+          : 'text-[10px]',
   };
 };

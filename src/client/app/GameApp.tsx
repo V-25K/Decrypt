@@ -37,6 +37,7 @@ import {
   buildRestoredOutcomeSessionPatch,
   challengeSessionReducer,
   initialChallengeSessionState,
+  type ChallengeMode,
   type ChallengeSessionState,
 } from './challenge-session-state';
 import {
@@ -66,7 +67,11 @@ import {
   maxWordTileColumns,
   powerupLabel,
 } from './constants';
-import { getDailyRetryQuote } from '../../shared/game-balance';
+import {
+  challengeTypeMetadata,
+  type ChallengeType,
+  type EndlessSort,
+} from '../../shared/game';
 import type {
   AppScreen,
   BuyDialogState,
@@ -78,7 +83,6 @@ import type {
   PowerupType,
   Profile,
   QuestStatus,
-  RetryDialogState,
   RouterOutputs,
   RankSummary,
   StatsTab,
@@ -97,18 +101,23 @@ import { BuyDialog } from '../components/BuyDialog';
 import { BottomNav } from '../components/BottomNav';
 import { ChallengePuzzleGrid } from '../components/ChallengePuzzleGrid';
 import { OutcomeOverlay } from '../components/OutcomeOverlay';
-import { RetryDialog } from '../components/RetryDialog';
 import { HeartPurchaseDialog } from '../components/HeartPurchaseDialog';
 import { LoadingScreen } from '../components/LoadingScreen';
+import {
+  VirtualKeyboardOverlay,
+  type VirtualArrowKey,
+} from '../components/VirtualKeyboardOverlay';
 import { HomeScreen } from '../screens/HomeScreen';
 import {
   clearCorrectGuessIndices,
+  consumeExpandedChallengeModeIntent,
   consumeExpandedScreenIntent,
   migrateSessionStorageForUser,
   persistCorrectGuessIndices,
   persistOutcomeState,
   readEntrypointScreen,
   readOutcomeState,
+  setExpandedChallengeModeIntent,
   setExpandedScreenIntent,
 } from './game-storage';
 import {
@@ -132,7 +141,6 @@ import {
 import { useCompletionConfetti } from './completion-confetti';
 import { getOutcomeOverlayView } from './outcome-overlay-view';
 import { getChallengeSummaryView } from './challenge-summary-view';
-import { getBonusTimerView } from './bonus-timer-view';
 import { getFeaturedOfferView } from './featured-offer-view';
 import {
   getBuyDialogView,
@@ -207,10 +215,6 @@ import {
   toPurchaseErrorMessage,
 } from './purchase-flow';
 import {
-  buildRetryDialogState,
-  getRetryAction,
-} from './retry-flow';
-import {
   hasActiveGuessWork,
   getBusyActionBlockState,
   getOfferPurchaseBlockState,
@@ -232,7 +236,9 @@ const criticalUiImageAssets = [
   '/powerup_shield.png',
   '/powerup_rocket.png',
   '/char.webp',
+  '/ui_create.png',
   '/ui_home.png',
+  '/ui_key.png',
   '/ui_leaderboard.png',
   '/ui_lock.png',
   '/ui_question.png',
@@ -261,6 +267,11 @@ const LazyLeaderboardScreen = lazy(() =>
     default: module.LeaderboardScreen,
   }))
 );
+const LazyCommunityScreen = lazy(() =>
+  import('../screens/CommunityScreen').then((module) => ({
+    default: module.CommunityScreen,
+  }))
+);
 
 const scheduleNonCriticalWarmup = (
   task: () => void,
@@ -286,6 +297,20 @@ const scheduleNonCriticalWarmup = (
     window.clearTimeout(timerId);
   };
 };
+
+const isEndlessCaughtUpMessage = (message: string): boolean =>
+  message.toLowerCase().includes('caught up');
+
+const errorMessageFromUnknown = (
+  error: unknown,
+  fallback: string
+): string =>
+  error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : fallback;
+
+const isNoLivesMessage = (message: string): boolean =>
+  message.toLowerCase().includes('no lives left');
 
 const letterTileState = (
   selected: boolean,
@@ -352,6 +377,44 @@ type ChallengeSessionTiming = {
   startTimestamp: number;
 };
 
+type LoadLevelOptions = {
+  dailyArchive?: boolean;
+  excludeLevelId?: string | null;
+  ignorePostLevel?: boolean;
+};
+
+type ContinuePromptState = {
+  levelId: string;
+  mode: ChallengeMode;
+  heartsRemaining: number;
+  ratingDelta: number | null;
+};
+
+type CompletedOutcomeStats = {
+  solveSeconds: number | null;
+  ratingDelta: number | null;
+  score: number | null;
+};
+
+type FailedOutcomeStats = {
+  ratingDelta: number | null;
+};
+
+type HeartShopReturnIntent = {
+  levelId: string;
+  mode: ChallengeMode;
+  action: 'start' | 'continue';
+};
+
+const continuePromptPointCost = 50;
+
+const buildEndlessCaughtUpMessage = (
+  categoryFilter: ChallengeType | null
+): string =>
+  categoryFilter
+    ? `You are caught up with ${challengeTypeMetadata[categoryFilter].label} type.`
+    : 'You are caught up with Endless.';
+
 const hasChallengeActivity = (session: ChallengeSessionTiming): boolean =>
   session.guessCount > 0 || session.usedPowerups > 0 || session.mistakesMade > 0;
 
@@ -360,6 +423,21 @@ const defaultChallengeMetrics: ChallengeMetrics = {
   wins: 0,
   winRatePct: 0,
 };
+
+const defaultCommunityNotifications: RouterOutputs['game']['bootstrap']['communityNotifications'] = {
+  creatorChangesRequestedCount: 0,
+  moderatorPendingReviewCount: 0,
+  moderatorRevisionReviewCount: 0,
+};
+
+const normalizeCommunityNotifications = (
+  notifications:
+    | RouterOutputs['game']['bootstrap']['communityNotifications']
+    | undefined
+): RouterOutputs['game']['bootstrap']['communityNotifications'] => ({
+  ...defaultCommunityNotifications,
+  ...notifications,
+});
 
 export const GameApp = () => {
   const [appRuntimeState, dispatchAppRuntime] = useReducer(
@@ -375,8 +453,17 @@ export const GameApp = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [subredditName, setSubredditName] = useState<string | null>(null);
+  const [isModerator, setIsModerator] = useState(false);
+  const [communityNotifications, setCommunityNotifications] = useState<
+    RouterOutputs['game']['bootstrap']['communityNotifications']
+  >(defaultCommunityNotifications);
   const [endlessCatalogStatus, setEndlessCatalogStatus] =
     useState<EndlessCatalogStatus | null>(null);
+  const [endlessCategoryFilter, setEndlessCategoryFilter] =
+    useState<ChallengeType | null>(null);
+  const [endlessSort, setEndlessSort] = useState<EndlessSort>('random');
+  const [endlessCaughtUpMessage, setEndlessCaughtUpMessage] =
+    useState<string | null>(null);
   const [challengeSession, dispatchChallengeSession] = useReducer(
     challengeSessionReducer,
     initialChallengeSessionState
@@ -402,18 +489,26 @@ export const GameApp = () => {
   );
   const [completionResult, setCompletionResult] = useState<RouterOutputs['game']['completeSession'] | null>(null);
   const [completionSolveSeconds, setCompletionSolveSeconds] = useState<number | null>(null);
+  const [completionRatingDelta, setCompletionRatingDelta] = useState<number | null>(null);
+  const [completionPointsGained, setCompletionPointsGained] = useState<number | null>(null);
+  const [failureRatingDelta, setFailureRatingDelta] = useState<number | null>(null);
   const [challengeStartTs, setChallengeStartTs] = useState<number | null>(null);
   const [completionCelebrationId, setCompletionCelebrationId] = useState(0);
   const [featuredOffer, setFeaturedOffer] = useState<StoreProduct | null>(null);
-  const [shopProducts, setShopProducts] = useState<StoreProduct[]>([]);
-  const [shopError, setShopError] = useState<string | null>(null);
-  const [offerBusy, setOfferBusy] = useState(false);
-  const [webViewMode, setWebViewMode] = useState<'inline' | 'expanded'>(() => getWebViewMode());
-  const [activeScreen, setActiveScreen] = useState<AppScreen>(() =>
-    getWebViewMode() === 'expanded'
-      ? (readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'challenge')
-      : 'challenge'
+	  const [shopProducts, setShopProducts] = useState<StoreProduct[]>([]);
+	  const [shopError, setShopError] = useState<string | null>(null);
+	  const [offerBusy, setOfferBusy] = useState(false);
+  const [initialWebViewMode] = useState<'inline' | 'expanded'>(() =>
+    getWebViewMode()
   );
+	  const [webViewMode, setWebViewMode] = useState<'inline' | 'expanded'>(
+    initialWebViewMode
+  );
+		  const [activeScreen, setActiveScreen] = useState<AppScreen>(() =>
+		    initialWebViewMode === 'expanded'
+		      ? (consumeExpandedScreenIntent() ?? readEntrypointScreen() ?? 'challenge')
+		      : 'challenge'
+		  );
   const [uiOverlayState, dispatchUiOverlay] = useReducer(
     uiOverlayReducer,
     initialUiOverlayState
@@ -441,14 +536,21 @@ export const GameApp = () => {
     viewportWidth,
   } = layoutTimingState;
   const [challengeMetrics, setChallengeMetrics] = useState<ChallengeMetrics>(defaultChallengeMetrics);
-  const [dailyRetryCount, setDailyRetryCount] = useState(0);
-  const [nextDailyRetryCost, setNextDailyRetryCost] = useState(0);
-  const [nextDailyRetryScoreFactor, setNextDailyRetryScoreFactor] = useState(1);
   const [requiresPaidRetry, setRequiresPaidRetry] = useState(false);
+  const [continuePrompt, setContinuePrompt] =
+    useState<ContinuePromptState | null>(null);
+  const [continueCancelConfirmOpen, setContinueCancelConfirmOpen] =
+    useState(false);
+  const continuePromptActive =
+    continuePrompt !== null &&
+    continuePrompt.levelId === levelId &&
+    continuePrompt.mode === mode;
   const [heartPurchaseBusy, setHeartPurchaseBusy] = useState(false);
   const [coinHeartLimitReached, setCoinHeartLimitReached] = useState(false);
   const [heartPurchaseLimitStatus, setHeartPurchaseLimitStatus] =
     useState<HeartPurchaseLimitStatus | null>(null);
+  const [heartShopReturnIntent, setHeartShopReturnIntent] =
+    useState<HeartShopReturnIntent | null>(null);
   const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => isSfxEnabled());
   const [audioPreferenceBusy, setAudioPreferenceBusy] = useState(false);
   const [questStatus, setQuestStatus] = useState<QuestStatus | null>(null);
@@ -498,6 +600,9 @@ export const GameApp = () => {
     [questStatus]
   );
   const { hasClaimableQuest } = questVisibilityView;
+  const communityNotificationCount =
+    communityNotifications.creatorChangesRequestedCount +
+    communityNotifications.moderatorPendingReviewCount;
   const [leaderboardStatsUiState, dispatchLeaderboardStatsUi] = useReducer(
     leaderboardStatsUiReducer,
     initialLeaderboardStatsUiState
@@ -525,6 +630,8 @@ export const GameApp = () => {
   const processingGuessRef = useRef(false);
   const completionInProgressRef = useRef(false);
   const heartbeatInFlightRef = useRef(false);
+  const communityNotificationToastShownRef = useRef(false);
+  const expandedScreenSyncHandledRef = useRef(initialWebViewMode === 'expanded');
   const communityJoinRecorded = profile?.communityJoinRecorded === true;
   const isChallengeScreen = activeScreen === 'challenge';
   const setBuyDialog = useCallback(
@@ -545,11 +652,6 @@ export const GameApp = () => {
   const setIsSettingsOpen = useCallback(
     (update: StateUpdate<boolean>) =>
       dispatchUiOverlay({ type: 'setSettingsOpen', update }),
-    []
-  );
-  const setRetryDialog = useCallback(
-    (update: StateUpdate<RetryDialogState | null>) =>
-      dispatchUiOverlay({ type: 'setRetryDialog', update }),
     []
   );
   const setClaimingQuestId = useCallback(
@@ -689,6 +791,21 @@ export const GameApp = () => {
     dispatchGuessWork({ type: 'reset' });
   }, [levelId, isGameOver, isComplete]);
 
+  useEffect(() => {
+    setContinuePrompt((current) => {
+      if (current === null) {
+        return current;
+      }
+      return current.levelId === levelId && current.mode === mode ? current : null;
+    });
+  }, [levelId, mode]);
+
+  useEffect(() => {
+    if (continuePrompt === null) {
+      setContinueCancelConfirmOpen(false);
+    }
+  }, [continuePrompt]);
+
   const refreshBootstrapState = useCallback(async () => {
     const bootstrap = await trpc.game.bootstrap.query();
     currentUserIdRef.current = bootstrap.userId;
@@ -697,35 +814,126 @@ export const GameApp = () => {
     setInventory(bootstrap.inventory);
     setSubredditName(bootstrap.subredditName);
     setEndlessCatalogStatus(bootstrap.endlessCatalog);
+    setIsModerator(bootstrap.isModerator);
+    setCommunityNotifications(
+      normalizeCommunityNotifications(bootstrap.communityNotifications)
+    );
     return bootstrap;
   }, []);
+
+  useEffect(() => {
+    if (communityNotificationCount === 0) {
+      communityNotificationToastShownRef.current = false;
+      return;
+    }
+    if (communityNotificationToastShownRef.current) {
+      return;
+    }
+    communityNotificationToastShownRef.current = true;
+    if (communityNotifications.creatorChangesRequestedCount > 0) {
+      showToast(
+        communityNotifications.creatorChangesRequestedCount === 1
+          ? '1 cipher needs changes. Open Create > My Ciphers.'
+          : `${communityNotifications.creatorChangesRequestedCount} ciphers need changes. Open Create > My Ciphers.`
+      );
+      return;
+    }
+    if (communityNotifications.moderatorPendingReviewCount > 0) {
+      showToast(
+        communityNotifications.moderatorPendingReviewCount === 1
+          ? '1 community submission awaits review.'
+          : `${communityNotifications.moderatorPendingReviewCount} community submissions await review.`
+      );
+    }
+  }, [communityNotificationCount, communityNotifications]);
+
+  const finalizeContinuePrompt = useCallback(() => {
+    if (continuePrompt === null) {
+      return;
+    }
+    const promptLevelId = continuePrompt.levelId;
+    setContinuePrompt(null);
+    setContinueCancelConfirmOpen(false);
+    if (promptLevelId !== levelId || continuePrompt.mode !== mode) {
+      return;
+    }
+    patchChallengeSession(
+      buildGameOverChallengeSessionPatch(continuePrompt.heartsRemaining)
+    );
+    setCompletionRatingDelta(null);
+    setCompletionPointsGained(null);
+    setFailureRatingDelta(continuePrompt.ratingDelta);
+    setRequiresPaidRetry(mode === 'daily');
+    setCompletionResult(null);
+    setCompletionSolveSeconds(null);
+    void refreshBootstrapState().catch(() => undefined);
+    const storageUserId = currentUserIdRef.current;
+    if (storageUserId) {
+      persistOutcomeState(
+        storageUserId,
+        buildPersistedGameOverOutcomeState(
+          promptLevelId,
+          Date.now(),
+          continuePrompt.ratingDelta
+        )
+      );
+    }
+  }, [
+    continuePrompt,
+    levelId,
+    mode,
+    patchChallengeSession,
+    refreshBootstrapState,
+  ]);
 
   const applyDailyRetryState = useCallback(
     (state: Pick<
 	      RouterOutputs['game']['loadLevel'],
-	      | 'retryCount'
-	      | 'nextRetryCost'
-	      | 'nextRetryScoreFactor'
 	      | 'requiresPaidRetry'
-	    >) => {
-	      setDailyRetryCount(state.retryCount);
-	      setNextDailyRetryCost(state.nextRetryCost);
-	      setNextDailyRetryScoreFactor(state.nextRetryScoreFactor);
-	      setRequiresPaidRetry(state.requiresPaidRetry);
-	    },
+		    >) => {
+		      setRequiresPaidRetry(state.requiresPaidRetry);
+		    },
     []
   );
 
-  const loadCompletionSolveSecondsFromDatabase = useCallback(async (
+  const loadCompletedOutcomeStatsFromDatabase = useCallback(async (
     levelIdToLookup: string
-  ): Promise<number | null> => {
+  ): Promise<CompletedOutcomeStats> => {
     try {
       const outcome = await trpc.game.getCompletedOutcome.query({
         levelId: levelIdToLookup,
       });
-      return typeof outcome?.solveSeconds === 'number' ? outcome.solveSeconds : null;
+      return {
+        solveSeconds:
+          typeof outcome?.solveSeconds === 'number' ? outcome.solveSeconds : null,
+        ratingDelta:
+          typeof outcome?.ratingDelta === 'number' ? outcome.ratingDelta : null,
+        score: typeof outcome?.score === 'number' ? outcome.score : null,
+      };
     } catch (_error) {
-      return null;
+      return {
+        solveSeconds: null,
+        ratingDelta: null,
+        score: null,
+      };
+    }
+  }, []);
+
+  const loadFailedOutcomeStatsFromDatabase = useCallback(async (
+    levelIdToLookup: string
+  ): Promise<FailedOutcomeStats> => {
+    try {
+      const outcome = await trpc.game.getFailedOutcome.query({
+        levelId: levelIdToLookup,
+      });
+      return {
+        ratingDelta:
+          typeof outcome?.ratingDelta === 'number' ? outcome.ratingDelta : null,
+      };
+    } catch (_error) {
+      return {
+        ratingDelta: null,
+      };
     }
   }, []);
 
@@ -933,6 +1141,9 @@ export const GameApp = () => {
       );
       setCompletionResult(null);
       setCompletionSolveSeconds(null);
+      setCompletionRatingDelta(null);
+      setCompletionPointsGained(null);
+      setFailureRatingDelta(null);
       setChallengeStartTs(
         hasChallengeActivity(session.session) ? session.session.startTimestamp : null
       );
@@ -942,13 +1153,11 @@ export const GameApp = () => {
       clearTileFeedback({ resetSelection: true });
       return true;
     } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : 'Unable to start level.';
-      if (message.toLowerCase().includes('no lives left')) {
-        await refreshBootstrapState();
-        showToast(message);
+      const message = errorMessageFromUnknown(error, 'Unable to start level.');
+      if (isNoLivesMessage(message)) {
+        await refreshBootstrapState().catch(() => undefined);
+        setHeartPurchaseDialogOpen(true);
+        showToast('Restore hearts to keep playing.');
         return false;
       }
       if (message.toLowerCase().includes('retry requires coins')) {
@@ -961,20 +1170,39 @@ export const GameApp = () => {
       }
       throw error;
     }
-  }, [clearTileFeedback, patchChallengeSession, refreshBootstrapState]);
+  }, [
+    clearTileFeedback,
+    patchChallengeSession,
+    refreshBootstrapState,
+    setHeartPurchaseDialogOpen,
+  ]);
 
-  const loadLevel = async (nextMode: 'daily' | 'endless') => {
-    patchChallengeSession({
-      isComplete: false,
-      isGameOver: false,
-      isShieldActive: false,
-    });
+  const loadLevel = async (
+    nextMode: 'daily' | 'endless',
+    options: LoadLevelOptions = {}
+  ) => {
     dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
       const loaded = await trpc.game.loadLevel.query({
         mode: nextMode,
+        dailyArchive: nextMode === 'daily' ? options.dailyArchive ?? false : false,
+        excludeLevelId: options.excludeLevelId ?? null,
+        ignorePostLevel: nextMode === 'daily' ? options.ignorePostLevel ?? false : false,
+        categoryFilter:
+          nextMode === 'endless' ? endlessCategoryFilter : null,
+        endlessSort: nextMode === 'endless' ? endlessSort : 'random',
       });
-      patchChallengeSession({ mode: nextMode, levelId: loaded.levelId });
+      if (nextMode === 'endless') {
+        setEndlessCaughtUpMessage(null);
+      }
+      dispatchAppRuntime({ type: 'setBootstrapError', update: null });
+      patchChallengeSession({
+        mode: nextMode,
+        levelId: loaded.levelId,
+        isComplete: false,
+        isGameOver: false,
+        isShieldActive: false,
+      });
       setPuzzleView(loaded.puzzle, { resetSelection: true });
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
@@ -990,33 +1218,49 @@ export const GameApp = () => {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
         }
         patchChallengeSession({ isComplete: true, isGameOver: false });
-        setCompletionResult(null);
-        setCompletionSolveSeconds(
-          await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
+        const completedStats = await loadCompletedOutcomeStatsFromDatabase(
+          loaded.levelId
         );
+        setCompletionResult(null);
+        setCompletionSolveSeconds(completedStats.solveSeconds);
+        setCompletionRatingDelta(completedStats.ratingDelta);
+        setCompletionPointsGained(completedStats.score);
+        setFailureRatingDelta(null);
         if (storageUserId) {
           persistOutcomeState(
             storageUserId,
             buildPersistedCompleteOutcomeState({
               levelId: loaded.levelId,
               completion: null,
-              solveSeconds: null,
+              solveSeconds: completedStats.solveSeconds,
+              ratingDelta: completedStats.ratingDelta,
+              pointsGained: completedStats.score,
             })
           );
         }
       } else if (outcomeDecision === 'show-paid-retry') {
         const storageUserId = currentUserIdRef.current;
+        const failedStats = await loadFailedOutcomeStatsFromDatabase(
+          loaded.levelId
+        );
         patchChallengeSession(
           buildGameOverChallengeSessionPatch(loaded.puzzle.heartsMax)
         );
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
+        setCompletionRatingDelta(null);
+        setCompletionPointsGained(null);
+        setFailureRatingDelta(failedStats.ratingDelta);
         setChallengeStartTs(null);
         clearTileFeedback();
         if (storageUserId) {
           persistOutcomeState(
             storageUserId,
-            buildPersistedGameOverOutcomeState(loaded.levelId)
+            buildPersistedGameOverOutcomeState(
+              loaded.levelId,
+              Date.now(),
+              failedStats.ratingDelta
+            )
           );
         }
       } else {
@@ -1047,18 +1291,14 @@ export const GameApp = () => {
       });
       const storageUserId = currentUserIdRef.current;
       const completed = result.ok && result.accepted;
-      const retryQuote = getDailyRetryQuote({
-        retryCount: result.retryCount,
-        difficulty: puzzle?.difficulty,
-      });
       setProfile(result.profile);
       setInventory(result.inventory);
-      setDailyRetryCount(result.retryCount);
-      setNextDailyRetryCost(retryQuote.nextRetryCost);
-      setNextDailyRetryScoreFactor(retryQuote.nextRetryScoreFactor);
       setRequiresPaidRetry(false);
       patchChallengeSession({ isComplete: completed, isGameOver: false });
       setCompletionResult(completed ? result : null);
+      setCompletionRatingDelta(completed ? result.ratingDelta : null);
+      setCompletionPointsGained(completed ? result.score : null);
+      setFailureRatingDelta(null);
       const resolvedSolveSeconds =
         completed
           ? resolveCompletionSolveSeconds(result, fallbackSolveSeconds)
@@ -1113,10 +1353,55 @@ export const GameApp = () => {
       dispatchAppRuntime({ type: 'setBusy', update: true });
       dispatchAppRuntime({ type: 'setBootstrapError', update: null });
       try {
-        const [loaded, bootstrap] = await Promise.all([
-          trpc.game.loadLevel.query({ mode: 'daily' }),
-          refreshBootstrapState(),
-        ]);
+        const initialIntent = consumeExpandedChallengeModeIntent();
+        let activeMode = initialIntent?.mode ?? 'daily';
+        if (activeMode === 'endless') {
+          setEndlessCategoryFilter(initialIntent?.categoryFilter ?? null);
+          setEndlessSort(initialIntent?.endlessSort ?? 'random');
+        }
+        let shouldStartLoadedLevel = true;
+        const bootstrap = await refreshBootstrapState();
+        let loaded: RouterOutputs['game']['loadLevel'];
+        try {
+          loaded = await trpc.game.loadLevel.query({
+            mode: activeMode,
+            dailyArchive:
+              activeMode === 'daily' ? initialIntent?.dailyArchive ?? false : false,
+            excludeLevelId:
+              activeMode === 'daily' ? initialIntent?.excludeLevelId ?? null : null,
+            ignorePostLevel:
+              activeMode === 'daily' ? initialIntent?.ignorePostLevel ?? false : false,
+            categoryFilter:
+              activeMode === 'endless' ? initialIntent?.categoryFilter ?? null : null,
+            endlessSort:
+              activeMode === 'endless' ? initialIntent?.endlessSort ?? 'random' : 'random',
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error && error.message.trim().length > 0
+              ? error.message
+              : 'Unable to load Endless.';
+          if (
+            activeMode === 'endless' &&
+            (isEndlessCaughtUpMessage(message) ||
+              message.toLowerCase().includes('no endless challenges'))
+          ) {
+            const caughtUpMessage = buildEndlessCaughtUpMessage(
+              initialIntent?.categoryFilter ?? null
+            );
+            setEndlessCaughtUpMessage(caughtUpMessage);
+            showToast(
+              isEndlessCaughtUpMessage(message) ? caughtUpMessage : message
+            );
+            setHomeTab('endless');
+            setActiveScreen('home');
+            activeMode = 'daily';
+            shouldStartLoadedLevel = false;
+            loaded = await trpc.game.loadLevel.query({ mode: 'daily' });
+          } else {
+            throw error;
+          }
+        }
         if (cancelled) {
           return;
         }
@@ -1127,7 +1412,7 @@ export const GameApp = () => {
           void loadFeaturedOffer();
           void loadQuestStatus();
         });
-        patchChallengeSession({ mode: 'daily', levelId: loaded.levelId });
+        patchChallengeSession({ mode: activeMode, levelId: loaded.levelId });
         setPuzzleView(loaded.puzzle, { resetSelection: true });
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
@@ -1152,39 +1437,83 @@ export const GameApp = () => {
             })
           );
           setCompletionResult(restoredOutcome.completion ?? null);
+          const restoredStats = restoredOutcome.isComplete
+            ? await loadCompletedOutcomeStatsFromDatabase(loaded.levelId)
+            : null;
+          const restoredFailedStats = restoredOutcome.isGameOver
+            ? await loadFailedOutcomeStatsFromDatabase(loaded.levelId)
+            : null;
+          setCompletionRatingDelta(
+            restoredOutcome.isComplete
+              ? restoredOutcome.ratingDelta ??
+                  restoredOutcome.completion?.ratingDelta ??
+                  restoredStats?.ratingDelta ??
+                  null
+              : null
+          );
+          setCompletionPointsGained(
+            restoredOutcome.isComplete
+              ? restoredOutcome.pointsGained ??
+                  restoredOutcome.completion?.score ??
+                  restoredStats?.score ??
+                  null
+              : null
+          );
+          setFailureRatingDelta(
+            restoredOutcome.isGameOver
+              ? restoredOutcome.ratingDelta ??
+                  restoredFailedStats?.ratingDelta ??
+                  null
+              : null
+          );
           const restoredSolveSeconds =
             resolvePersistedOutcomeSolveSeconds(restoredOutcome);
           setCompletionSolveSeconds(
             restoredSolveSeconds ??
-              (await loadCompletionSolveSecondsFromDatabase(loaded.levelId))
+              restoredStats?.solveSeconds ??
+              null
           );
           setChallengeStartTs(null);
           clearTileFeedback();
         } else if (outcomeDecision.branch === 'show-paid-retry') {
+          const failedStats = await loadFailedOutcomeStatsFromDatabase(
+            loaded.levelId
+          );
           patchChallengeSession(
             buildGameOverChallengeSessionPatch(loaded.puzzle.heartsMax)
           );
           setCompletionResult(null);
           setCompletionSolveSeconds(null);
+          setCompletionRatingDelta(null);
+          setCompletionPointsGained(null);
+          setFailureRatingDelta(failedStats.ratingDelta);
           setChallengeStartTs(null);
           clearTileFeedback();
           persistOutcomeState(
             storageUserId,
-            buildPersistedGameOverOutcomeState(loaded.levelId)
+            buildPersistedGameOverOutcomeState(
+              loaded.levelId,
+              Date.now(),
+              failedStats.ratingDelta
+            )
           );
         } else if (outcomeDecision.branch === 'already-completed') {
           clearCorrectGuessIndices(storageUserId, loaded.levelId);
           patchChallengeSession(
             buildCompleteChallengeSessionPatch(loaded.puzzle.heartsMax)
           );
-          setCompletionResult(null);
-          setCompletionSolveSeconds(
-            await loadCompletionSolveSecondsFromDatabase(loaded.levelId)
+          const completedStats = await loadCompletedOutcomeStatsFromDatabase(
+            loaded.levelId
           );
+          setCompletionResult(null);
+          setCompletionSolveSeconds(completedStats.solveSeconds);
+          setCompletionRatingDelta(completedStats.ratingDelta);
+          setCompletionPointsGained(completedStats.score);
+          setFailureRatingDelta(null);
           setChallengeStartTs(null);
           clearTileFeedback();
-        } else {
-          await startLevel(loaded.levelId, 'daily');
+        } else if (shouldStartLoadedLevel) {
+          await startLevel(loaded.levelId, activeMode);
         }
         const view = await trpc.game.getCurrentView.query({
           levelId: loaded.levelId,
@@ -1219,7 +1548,8 @@ export const GameApp = () => {
   }, [
     applyDailyRetryState,
     clearTileFeedback,
-    loadCompletionSolveSecondsFromDatabase,
+    loadCompletedOutcomeStatsFromDatabase,
+    loadFailedOutcomeStatsFromDatabase,
     loadFeaturedOffer,
     loadQuestStatus,
     patchChallengeSession,
@@ -1304,13 +1634,18 @@ export const GameApp = () => {
     queuedGuessCount,
   ]);
 
-  useEffect(() => {
-    if (webViewMode !== 'expanded') {
+	  useEffect(() => {
+	    if (webViewMode !== 'expanded') {
+      expandedScreenSyncHandledRef.current = false;
+	      return;
+	    }
+    if (expandedScreenSyncHandledRef.current) {
       return;
     }
-    const nextScreen = readEntrypointScreen() ?? consumeExpandedScreenIntent() ?? 'challenge';
-    setActiveScreen(nextScreen);
-  }, [webViewMode]);
+    expandedScreenSyncHandledRef.current = true;
+	    const nextScreen = consumeExpandedScreenIntent() ?? readEntrypointScreen() ?? 'challenge';
+	    setActiveScreen(nextScreen);
+	  }, [webViewMode]);
 
   useEffect(() => {
     primeSfx();
@@ -1453,6 +1788,15 @@ export const GameApp = () => {
       if (!viewport || !content) {
         return;
       }
+      if (webViewMode !== 'inline') {
+        dispatchLayoutTiming({
+          type: 'setPuzzleFit',
+          isPuzzleVerticallyCentered:
+            content.scrollHeight <= viewport.clientHeight - 6,
+          puzzleScale: 1,
+        });
+        return;
+      }
       const widthRatio = viewport.clientWidth / content.scrollWidth;
       const heightRatio = viewport.clientHeight / content.scrollHeight;
       const nextScale = Math.min(1, widthRatio, heightRatio);
@@ -1484,6 +1828,17 @@ export const GameApp = () => {
       observer?.disconnect();
     };
   }, [tokens.length, puzzle?.levelId, webViewMode]);
+
+  useEffect(() => {
+    if (activeScreen !== 'challenge') {
+      return;
+    }
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTop = 0;
+  }, [activeScreen, puzzle?.levelId, webViewMode]);
 
   useEffect(() => {
     if (activeScreen !== 'leaderboard') {
@@ -1546,7 +1901,17 @@ export const GameApp = () => {
       playSfx('wrong');
       flashWrongTile(tileIndex);
     }
-    patchChallengeSession(buildGuessSessionPatch(result));
+    const pendingFailure = result.isGameOver && !result.isLevelComplete;
+    const sessionPatch = buildGuessSessionPatch(result);
+    patchChallengeSession(
+      pendingFailure
+        ? {
+            ...sessionPatch,
+            isComplete: false,
+            isGameOver: false,
+          }
+        : sessionPatch
+    );
     const shouldRefresh = shouldRefreshPuzzleViewAfterGuess(result);
     const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
     if (result.newlyUnlockedChainIds.length > 0) {
@@ -1554,18 +1919,24 @@ export const GameApp = () => {
     }
       if (result.isLevelComplete) {
         await finishLevel();
-      } else if (result.isGameOver) {
-        setRequiresPaidRetry(mode === 'daily');
+      } else if (pendingFailure) {
+        guessQueueRef.current = [];
+        dispatchGuessWork({
+          type: 'syncQueuedGuessCount',
+          queuedGuessCount: 0,
+        });
+        setContinuePrompt({
+          levelId,
+          mode,
+          heartsRemaining: result.heartsRemaining,
+          ratingDelta: result.ratingDelta,
+        });
+        setRequiresPaidRetry(false);
         setCompletionResult(null);
         setCompletionSolveSeconds(null);
-        await refreshBootstrapState();
-        const storageUserId = currentUserIdRef.current;
-        if (storageUserId) {
-          persistOutcomeState(
-            storageUserId,
-            buildPersistedGameOverOutcomeState(levelId)
-          );
-        }
+        setCompletionRatingDelta(null);
+        setCompletionPointsGained(null);
+        setFailureRatingDelta(result.ratingDelta);
     } else {
       if (viewPromise) {
         void viewPromise
@@ -1597,7 +1968,7 @@ export const GameApp = () => {
     isGameOver: boolean;
     nextPuzzle: Puzzle | null;
   } | null> => {
-    if (busy || isComplete || isGameOver) {
+	    if (busy || isComplete || isGameOver || continuePromptActive) {
       return null;
     }
     const currentPuzzle = currentPuzzleOverride ?? puzzleRef.current;
@@ -1606,10 +1977,6 @@ export const GameApp = () => {
     }
     const selected = currentPuzzle.tiles[tileIndex];
     if (!selected || !selected.isLetter || selected.isLocked || selected.displayChar !== '_') {
-      return null;
-    }
-    if (!canUseLifeForChallenge) {
-      showToast('No lives left. Wait for refill.');
       return null;
     }
     try {
@@ -1625,16 +1992,23 @@ export const GameApp = () => {
         isGameOver: result.isGameOver,
         nextPuzzle,
       };
-    } catch (_error) {
-      showToast('Guess failed.');
+    } catch (error) {
+      const message = errorMessageFromUnknown(error, 'Guess failed.');
+      if (isNoLivesMessage(message)) {
+        await refreshBootstrapState().catch(() => undefined);
+        setHeartPurchaseDialogOpen(true);
+        showToast('Restore hearts to keep playing.');
+      } else {
+        showToast('Guess failed.');
+      }
       return null;
     }
   };
 
-  const processGuessQueue = async () => {
-    if (processingGuessRef.current) {
-      return;
-    }
+	  const processGuessQueue = async () => {
+	    if (processingGuessRef.current || continuePromptActive) {
+	      return;
+	    }
     processingGuessRef.current = true;
     dispatchGuessWork({ type: 'setGuessInFlight', update: true });
     try {
@@ -1799,8 +2173,9 @@ export const GameApp = () => {
 	      !puzzle ||
 	      !profile ||
 	      !inventory ||
-	      getBusyActionState().blocked ||
-	      isGameOver ||
+		      getBusyActionState().blocked ||
+		      continuePromptActive ||
+		      isGameOver ||
 	      isComplete ||
 	      completionInProgressRef.current
     ) {
@@ -1885,7 +2260,7 @@ export const GameApp = () => {
   };
 
 	  const openBuyDialog = (item: PowerupType) => {
-	    if (getBusyActionState().blocked) {
+		    if (getBusyActionState().blocked || continuePromptActive) {
 	      showFinishGuessesToastIfNeeded();
 	      return;
 	    }
@@ -1903,9 +2278,10 @@ export const GameApp = () => {
 
   const handleQuickPowerupTap = (item: PowerupType) => {
 	    if (
-	      !inventory ||
-	      getBusyActionState().blocked ||
-	      isGameOver ||
+		      !inventory ||
+		      getBusyActionState().blocked ||
+		      continuePromptActive ||
+		      isGameOver ||
 	      isComplete
     ) {
       return;
@@ -1963,29 +2339,6 @@ export const GameApp = () => {
     }
   };
 
-	  const openRetryDialog = () => {
-	    if (getBusyActionState().blocked) {
-	      showFinishGuessesToastIfNeeded();
-	      return;
-	    }
-    if (!profile) {
-      return;
-    }
-    const nextDialog = buildRetryDialogState({
-      coins: profile.coins,
-      nextDailyRetryCost,
-      nextDailyRetryScoreFactor,
-      dailyRetryCount,
-      puzzleDifficulty: puzzle?.difficulty,
-      difficultyLabel,
-    });
-    if (!nextDialog) {
-      showToast('Retry is unavailable right now.');
-      return;
-    }
-    setRetryDialog(nextDialog);
-  };
-
 	  const handleProductPurchase = async (sku: string) => {
 	    if (getOfferPurchaseActionState().blocked) {
 	      showFinishGuessesToastIfNeeded();
@@ -1997,6 +2350,17 @@ export const GameApp = () => {
       if (isSuccessfulOrderStatus(result.status)) {
         showToast('Purchase successful.');
         await Promise.all([refreshBootstrapState(), loadFeaturedOffer()]);
+        if (heartShopReturnIntent) {
+          const returnIntent = heartShopReturnIntent;
+          setHeartShopReturnIntent(null);
+          setActiveScreen('challenge');
+          if (returnIntent.action === 'start') {
+            await startLevel(returnIntent.levelId, returnIntent.mode);
+            await refreshCurrentView(returnIntent.levelId);
+          } else {
+            showToast('Hearts restored. Continue your challenge.');
+          }
+        }
       } else {
         showToast(toPurchaseErrorMessage(result.errorMessage));
       }
@@ -2027,6 +2391,31 @@ export const GameApp = () => {
       return;
     }
     setActiveScreen('shop');
+  };
+
+  const openHeartShopPackages = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (levelId) {
+      setHeartShopReturnIntent({
+        levelId,
+        mode,
+        action: continuePromptActive || isGameOver ? 'continue' : 'start',
+      });
+    }
+    setHeartPurchaseDialogOpen(false);
+    openShop(event);
+  };
+
+  const openCommunity = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (webViewMode === 'inline') {
+      setExpandedScreenIntent('community');
+      try {
+        requestExpandedMode(event.nativeEvent, 'game');
+      } catch (_error) {
+        showToast('Reddit needs to expand this panel to show Community. Try tapping the button directly.');
+      }
+      return;
+    }
+    setActiveScreen('community');
   };
 
   const openQuest = (event?: ReactMouseEvent<HTMLButtonElement>) => {
@@ -2070,17 +2459,46 @@ export const GameApp = () => {
   };
 
   const openHome = () => {
+    finalizeContinuePrompt();
     setActiveScreen('home');
   };
 
-  const loadModeAndOpenChallenge = async (nextMode: 'daily' | 'endless') => {
-    patchChallengeSession({ isComplete: false, isGameOver: false });
+  const requestChallengeExpandedMode = (
+    nextMode: 'daily' | 'endless',
+    event?: ReactMouseEvent<HTMLButtonElement>,
+    options: LoadLevelOptions = {}
+  ) => {
+    setExpandedScreenIntent('challenge');
+    setExpandedChallengeModeIntent(
+      nextMode,
+      nextMode === 'endless' ? endlessCategoryFilter : null,
+      nextMode === 'endless' ? endlessSort : 'random',
+      nextMode === 'daily' ? options.dailyArchive ?? false : false,
+      options.excludeLevelId ?? null,
+      nextMode === 'daily' ? options.ignorePostLevel ?? false : false
+    );
+    if (event?.nativeEvent) {
+      void requestExpandedMode(event.nativeEvent, 'game');
+    } else {
+      showToast('Tap play to open expanded mode.');
+    }
+  };
+
+	  const loadModeAndOpenChallenge = async (
+	    nextMode: 'daily' | 'endless',
+	    event?: ReactMouseEvent<HTMLButtonElement>,
+	    options: LoadLevelOptions = {}
+  ) => {
+    if (webViewMode === 'inline') {
+      requestChallengeExpandedMode(nextMode, event, options);
+      return;
+    }
     if (nextMode === 'endless' && !endlessCatalogAvailable) {
       showToast('Endless mode is not available yet.');
       return;
     }
     try {
-      await loadLevel(nextMode);
+      await loadLevel(nextMode, options);
       setActiveScreen('challenge');
     } catch (error) {
       const message =
@@ -2092,15 +2510,95 @@ export const GameApp = () => {
         showToast('Endless mode is not available yet.');
         return;
       }
+      if (
+        isEndlessCaughtUpMessage(message) ||
+        (nextMode === 'endless' &&
+          message.toLowerCase().includes('no endless challenges'))
+      ) {
+        await refreshBootstrapState();
+        if (nextMode === 'endless') {
+          setEndlessCaughtUpMessage(
+            buildEndlessCaughtUpMessage(endlessCategoryFilter)
+          );
+          setHomeTab('endless');
+          setActiveScreen('home');
+        }
+        showToast(
+          nextMode === 'endless'
+            ? buildEndlessCaughtUpMessage(endlessCategoryFilter)
+            : "You're all caught up."
+        );
+        return;
+      }
       showToast(message);
+	    }
+	  };
+
+  const recoverFromUnavailablePost = async () => {
+    try {
+      await loadLevel('daily', { ignorePostLevel: true });
+      dispatchAppRuntime({ type: 'setBootstrapError', update: null });
+      setActiveScreen('challenge');
+    } catch (error) {
+      showToast(
+        errorMessageFromUnknown(
+          error,
+          'No playable daily challenge is available right now.'
+        )
+      );
     }
   };
+
+  const leaveUnavailablePost = async () => {
+    try {
+      await loadLevel('daily', { ignorePostLevel: true });
+      dispatchAppRuntime({ type: 'setBootstrapError', update: null });
+      setEndlessCaughtUpMessage(null);
+      setHomeTab('daily');
+      setActiveScreen('home');
+    } catch (error) {
+      showToast(
+        errorMessageFromUnknown(
+          error,
+          'No playable daily challenge is available right now.'
+        )
+      );
+    }
+  };
+
+		  const handleOutcomeNextChallenge = (
+	    event?: ReactMouseEvent<HTMLButtonElement>
+	  ) => {
+    const currentMode = mode;
+	    void loadModeAndOpenChallenge(
+      currentMode,
+	      event,
+      currentMode === 'daily'
+	        ? { dailyArchive: true, excludeLevelId: levelId }
+	        : {}
+	    );
+	  };
 
   const handleHomeTabSelect = (nextTab: HomeTab) => {
     setHomeTab(nextTab);
     if (nextTab === 'endless' && !endlessCatalogAvailable) {
       showToast('Endless mode is coming soon.');
     }
+  };
+
+  const handleEndlessCategoryFilterChange = (category: ChallengeType | null) => {
+    setEndlessCategoryFilter(category);
+    setEndlessCaughtUpMessage(null);
+  };
+
+  const handleEndlessSortChange = (sort: EndlessSort) => {
+    setEndlessSort(sort);
+    setEndlessCaughtUpMessage(null);
+  };
+
+  const handleEndlessCaughtUpHome = () => {
+    setEndlessCaughtUpMessage(null);
+    setHomeTab('daily');
   };
 
   const handleAudioToggle = async () => {
@@ -2131,16 +2629,17 @@ export const GameApp = () => {
     }
   };
 
-  const handleHomePlay = () => {
+  const handleHomePlay = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (homeTab === 'endless') {
-      void loadModeAndOpenChallenge('endless');
+      void loadModeAndOpenChallenge('endless', event);
     } else {
-      void loadModeAndOpenChallenge('daily');
+      void loadModeAndOpenChallenge('daily', event);
     }
   };
 
-  const handleHomePlayEndless = () => {
-    void loadModeAndOpenChallenge('endless');
+  const handleHomePlayEndless = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    setEndlessCaughtUpMessage(null);
+    void loadModeAndOpenChallenge('endless', event);
   };
 
   const handleQuestClaim = async (questId: string) => {
@@ -2223,54 +2722,6 @@ export const GameApp = () => {
     }
   };
 
-  const handlePurchaseDailyRetry = async () => {
-    if (!levelId) {
-      return;
-    }
-    dispatchAppRuntime({ type: 'setBusy', update: true });
-    try {
-      const result = await trpc.game.purchaseDailyRetry.mutate({
-        levelId,
-        mode,
-      });
-      setProfile(result.profile);
-      setInventory(result.inventory);
-      setDailyRetryCount(result.retryCount);
-      setNextDailyRetryCost(result.nextRetryCost);
-      setNextDailyRetryScoreFactor(result.nextRetryScoreFactor);
-      setRequiresPaidRetry(result.requiresPaidRetry);
-      const storageUserId = currentUserIdRef.current;
-      if (storageUserId) {
-        clearCorrectGuessIndices(storageUserId, levelId);
-      }
-      patchChallengeSession(
-        buildActiveChallengeSessionPatch({
-          heartsRemaining: result.heartsRemaining,
-          isShieldActive: result.session.shieldIsActive,
-        })
-      );
-      setCompletionResult(null);
-      setCompletionSolveSeconds(null);
-      setChallengeStartTs(
-        hasChallengeActivity(result.session) ? result.session.startTimestamp : null
-      );
-      if (storageUserId) {
-        persistOutcomeState(storageUserId, null);
-      }
-      setRetryDialog(null);
-      clearTileFeedback({ resetSelection: true });
-      await refreshCurrentView(levelId);
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : 'Unable to start daily retry.';
-      showToast(message);
-    } finally {
-      dispatchAppRuntime({ type: 'setBusy', update: false });
-    }
-  };
-
   const handleCoinHeartRefill = async () => {
     if (!canBuyCoinHearts || !coinRefillAffordable) {
       if (!coinRefillAffordable) {
@@ -2335,31 +2786,62 @@ export const GameApp = () => {
     }
   };
 
-  const retry = async () => {
-    const action = getRetryAction({
-      levelId,
-      mode,
-      isGameOver,
-      requiresPaidRetry,
-      hasInfiniteHearts,
-      currentLives,
-    });
-    if (action === 'none') {
-      return;
-    }
-    if (action === 'open-heart-purchase') {
-      setHeartPurchaseDialogOpen(true);
-      return;
-    }
-    if (action === 'open-paid-daily-retry') {
-      openRetryDialog();
-      return;
-    }
-    dispatchAppRuntime({ type: 'setBusy', update: true });
-    try {
+	  const retry = async () => {
+	    if (!levelId) {
+	      return;
+	    }
+	    dispatchAppRuntime({ type: 'setBusy', update: true });
+	    try {
+	      if (isGameOver || continuePromptActive) {
+	        if (!hasInfiniteHearts && currentLives <= 0) {
+	          setHeartPurchaseDialogOpen(true);
+	          return;
+	        }
+	        const result = await trpc.game.continueLevel.mutate({
+	          levelId,
+	          mode,
+	        });
+	        setProfile(result.profile);
+	        setInventory(result.inventory);
+	        setContinuePrompt(null);
+	        setContinueCancelConfirmOpen(false);
+	        patchChallengeSession(
+	          buildActiveChallengeSessionPatch({
+            heartsRemaining: result.heartsRemaining,
+            isShieldActive: result.session.shieldIsActive,
+          })
+        );
+        setRequiresPaidRetry(false);
+        setCompletionResult(null);
+        setCompletionSolveSeconds(null);
+        setCompletionRatingDelta(null);
+        setCompletionPointsGained(null);
+        setFailureRatingDelta(null);
+        setChallengeStartTs(
+          hasChallengeActivity(result.session) ? result.session.startTimestamp : null
+        );
+        const storageUserId = currentUserIdRef.current;
+        if (storageUserId) {
+          persistOutcomeState(storageUserId, null);
+        }
+        clearTileFeedback();
+        await refreshCurrentView(levelId);
+        return;
+      }
+
+      if (!hasInfiniteHearts && currentLives <= 0) {
+        setHeartPurchaseDialogOpen(true);
+        return;
+      }
       await startLevel(levelId, mode);
       await refreshCurrentView(levelId);
       patchChallengeSession({ isGameOver: false });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : 'Unable to continue challenge.';
+      showToast(message);
     } finally {
       dispatchAppRuntime({ type: 'setBusy', update: false });
     }
@@ -2379,44 +2861,139 @@ export const GameApp = () => {
     }
   };
 
-  useEffect(() => {
-    if (activeScreen !== 'challenge' || selectedTile === null || busy || isGameOver || isComplete) {
-      return;
-    }
+	  useEffect(() => {
+	    if (
+	      activeScreen !== 'challenge' ||
+	      selectedTile === null ||
+	      busy ||
+	      continuePromptActive ||
+	      isGameOver ||
+	      isComplete
+	    ) {
+	      return;
+	    }
     const frame = requestAnimationFrame(() => {
       focusInlineInputProxy();
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeScreen, selectedTile, busy, isGameOver, isComplete]);
+	  }, [activeScreen, selectedTile, busy, continuePromptActive, isGameOver, isComplete]);
+
+  useEffect(() => {
+    if (
+      activeScreen !== 'challenge' ||
+      viewportWidth >= 640 ||
+      selectedTile === null ||
+      isHelpOpen ||
+      isSettingsOpen ||
+	      Boolean(buyDialog) ||
+	      retryDialog !== null ||
+	      heartPurchaseDialogOpen ||
+	      continuePromptActive ||
+	      isComplete ||
+	      isGameOver
+    ) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      const selectedElement = viewport?.querySelector('[data-tile-state="selected"]');
+      if (
+        selectedElement instanceof HTMLElement &&
+        typeof selectedElement.scrollIntoView === 'function'
+      ) {
+        selectedElement.scrollIntoView({
+          block: 'nearest',
+          inline: 'nearest',
+        });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    activeScreen,
+    viewportWidth,
+    selectedTile,
+    isHelpOpen,
+    isSettingsOpen,
+    buyDialog,
+    retryDialog,
+	    heartPurchaseDialogOpen,
+	    continuePromptActive,
+	    isComplete,
+    isGameOver,
+  ]);
 
   if (loading) {
     return <LoadingScreen />;
   }
 
-  if (bootstrapError || !profile || !inventory || !puzzle) {
-    return (
-      <div className="app-surface flex h-full items-center justify-center p-4">
-        <div className="app-surface-strong w-full max-w-[320px] rounded-2xl border app-border px-4 py-5 text-center">
-          <div className="app-text text-sm font-black uppercase tracking-[0.04em]">
-            Decrypt unavailable
-          </div>
-          <p className="app-text-muted mt-2 text-sm font-semibold">
-            {bootstrapError ?? 'Unable to load the current challenge right now.'}
-          </p>
-          <button
-            type="button"
-            data-testid="bootstrap-retry"
-            className="btn-3d btn-primary mt-4 rounded-xl px-4 py-2 text-sm font-black uppercase"
-            onClick={() =>
-              dispatchAppRuntime({ type: 'incrementBootstrapAttempt' })
-            }
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
+	  if (bootstrapError || !profile || !inventory || !puzzle) {
+	    const isUnavailablePuzzle =
+	      bootstrapError?.toLowerCase().includes('puzzle is unavailable') === true;
+	    const isCaughtUpBootstrap =
+	      bootstrapError?.toLowerCase().includes('caught up') === true;
+	    const needsRecoveryActions = isUnavailablePuzzle || isCaughtUpBootstrap;
+		    return (
+		      <div className="theme-app result-backdrop app-surface-subtle relative flex h-full items-center justify-center overflow-hidden p-4">
+		        <div className="app-surface-strong app-border relative z-10 w-full max-w-[360px] rounded-2xl border px-5 py-6 text-center shadow-[0_18px_44px_rgba(0,0,0,0.42)]">
+	          {isUnavailablePuzzle && (
+	            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-xl border border-black/30 bg-black/10">
+	              <img
+	                src="/ui_lock.png"
+	                alt=""
+	                loading="eager"
+	                className="ui-sprite h-9 w-9"
+	              />
+	            </div>
+	          )}
+		          <div className="app-text text-sm font-black uppercase tracking-[0.04em]">
+		            {isCaughtUpBootstrap
+	                ? 'You are all caught up'
+	                : isUnavailablePuzzle
+	                  ? 'Cipher removed'
+	                  : 'Decrypt unavailable'}
+		          </div>
+		          <p className="app-text-muted mt-2 text-sm font-semibold leading-snug">
+		            {isCaughtUpBootstrap
+	                ? 'New daily ciphers will appear here soon.'
+	                : isUnavailablePuzzle
+	                  ? 'This challenge left the game, but another cipher is ready.'
+	                : bootstrapError ?? 'Unable to load the current challenge right now.'}
+	          </p>
+	          {!needsRecoveryActions && (
+	            <button
+              type="button"
+              data-testid="bootstrap-retry"
+              className="btn-3d btn-primary mt-4 rounded-xl px-4 py-2 text-sm font-black uppercase"
+              onClick={() =>
+                dispatchAppRuntime({ type: 'incrementBootstrapAttempt' })
+              }
+            >
+	              Retry
+	            </button>
+	          )}
+	          {needsRecoveryActions && (
+	            <div className="mt-4 grid grid-cols-1 gap-2">
+	              <button
+	                type="button"
+	                data-testid="removed-next-challenge"
+	                className="btn-3d btn-primary rounded-xl px-4 py-2 text-sm font-black uppercase"
+	                onClick={() => void recoverFromUnavailablePost()}
+	              >
+	                {isCaughtUpBootstrap ? 'Play Current Daily' : 'Next Cipher'}
+	              </button>
+	              <button
+	                type="button"
+	                className="btn-3d btn-neutral rounded-xl px-4 py-2 text-xs font-black uppercase"
+	                onClick={() => void leaveUnavailablePost()}
+	              >
+	                Home
+	              </button>
+            </div>
+	          )}
+	        </div>
+	      </div>
+	    );
+	  }
 
   const mistakesMade = Math.max(0, puzzle.heartsMax - heartsRemaining);
   const protectedMistakeIndex =
@@ -2438,19 +3015,6 @@ export const GameApp = () => {
   } = buyDialogView;
   const hasQueuedGuesses = queuedGuessCount > 0;
   const guessBusy = guessInFlight || hasQueuedGuesses;
-  const bonusTimerView = getBonusTimerView({
-    challengeStartTs,
-    isChallengeScreen,
-    isComplete,
-    isGameOver,
-    nowTs: headerNowTs,
-    targetTimeSeconds: puzzle.targetTimeSeconds,
-  });
-  const {
-    countdownLabel: bonusTimerCountdownLabel,
-    secondsLeft: bonusTimerSecondsLeft,
-    showTimer: showBonusTimer,
-  } = bonusTimerView;
   const responsiveLayoutState = getResponsiveLayoutState(viewportWidth, isInlineMode);
   const {
     deviceTier,
@@ -2489,6 +3053,7 @@ export const GameApp = () => {
   const {
     layoutTestId,
     isHomeScreen,
+    isCommunityScreen: isCommunityHubScreen,
     isShopScreen,
     isQuestScreen,
     isStatsScreen,
@@ -2498,8 +3063,16 @@ export const GameApp = () => {
     showChallengeBackdrop,
     showSuccessOverlay,
     isDailyComplete,
-    showPaidDailyRetryCta,
   } = appViewState;
+  const showVirtualKeyboard =
+    isChallengeScreen &&
+    deviceTier === 'mobile' &&
+    !showOutcomeOverlay &&
+    !isHelpOpen &&
+    !isSettingsOpen &&
+    !buyDialog &&
+    !retryDialog &&
+    !heartPurchaseDialogOpen;
   const heartState = getHeartState({
     hearts: profile.hearts,
     infiniteHeartsExpiryTs: profile.infiniteHeartsExpiryTs,
@@ -2509,7 +3082,6 @@ export const GameApp = () => {
   const {
     hasInfiniteHearts,
     currentLives,
-    canUseLifeForChallenge,
     lifeStatusText,
     heartsNotFull,
   } = heartState;
@@ -2524,9 +3096,12 @@ export const GameApp = () => {
   const completionQuote = buildCompletionQuote(puzzle);
   const outcomeOverlayView = getOutcomeOverlayView({
     communityJoinRecorded,
+    completionPointsGained,
+    completionRatingDelta,
     completionResult,
     completionSolveSeconds,
     deviceTier,
+    failureRatingDelta,
     isComplete,
     joiningCommunity,
   });
@@ -2534,8 +3109,9 @@ export const GameApp = () => {
     communityJoinLabel,
     completionSolveLabel,
     homePanelClass,
-    outcomeSubtitle,
-    outcomeTitle,
+    pointsGainedLabel,
+    ratingDeltaLabel,
+    ratingDeltaTone,
   } = outcomeOverlayView;
   const {
     claimedQuestIdSet,
@@ -2572,8 +3148,11 @@ export const GameApp = () => {
     input.focus({ preventScroll: true });
   };
 
-  const handleTileSelection = (tileIndex: number) => {
-    const currentPuzzle = puzzleRef.current ?? puzzle;
+	  const handleTileSelection = (tileIndex: number) => {
+	    if (continuePromptActive) {
+	      return;
+	    }
+	    const currentPuzzle = puzzleRef.current ?? puzzle;
     const nextTileIndex = isGuessableTileAtIndex(currentPuzzle, tileIndex)
       ? tileIndex
       : findNextGuessableTileIndex(currentPuzzle, tileIndex);
@@ -2584,12 +3163,34 @@ export const GameApp = () => {
     focusInlineInputProxy();
   };
 
-	  const handleInlineInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-	    const input = event.currentTarget.value.toUpperCase();
-	    const lettersOnly = input.replace(/[^A-Z]/g, '');
+	  const handleVirtualLetterPress = (letter: string) => {
+	    if (busy || continuePromptActive || isGameOver || isComplete) {
+      return;
+    }
+    const currentPuzzle = puzzleRef.current ?? puzzle;
+    const tileIndex =
+      selectedTile !== null && isGuessableTileAtIndex(currentPuzzle, selectedTile)
+        ? selectedTile
+        : (puzzleNavigableTileIndices[0] ?? null);
+    if (tileIndex === null) {
+      showToast('No open letter tiles.');
+      return;
+    }
+    setSelectedTileIndex(tileIndex);
+    focusInlineInputProxy();
+    enqueueGuess(letter, tileIndex);
+  };
+
+  const handleVirtualArrowPress = (key: VirtualArrowKey) => {
+    moveSelectedTileByArrow(key);
+  };
+
+  const handleInlineInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget.value.toUpperCase();
+    const lettersOnly = input.replace(/[^A-Z]/g, '');
     const letter = lettersOnly.charAt(lettersOnly.length - 1);
     event.currentTarget.value = '';
-    if (!letter || busy || isGameOver || isComplete) {
+	    if (!letter || busy || continuePromptActive || isGameOver || isComplete) {
       return;
     }
     const tileIndex = selectedTile;
@@ -2600,15 +3201,16 @@ export const GameApp = () => {
     const tile = currentPuzzle.tiles[tileIndex];
     if (!tile || !tile.isLetter || tile.isLocked || tile.displayChar !== '_') {
       return;
-	    }
-	    enqueueGuess(letter, tileIndex);
-	  };
+    }
+    enqueueGuess(letter, tileIndex);
+  };
 
   const moveSelectedTileByArrow = (key: string): boolean => {
     if (
       !['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(key) ||
-      busy ||
-      isGameOver ||
+	      busy ||
+	      continuePromptActive ||
+	      isGameOver ||
       isComplete ||
       puzzleNavigableTileIndices.length === 0
     ) {
@@ -2886,29 +3488,6 @@ export const GameApp = () => {
             </div>
           )}
 
-          {showBonusTimer && (
-            <aside
-              data-testid="bonus-timer"
-              aria-label={`Bonus Timer, ${bonusTimerSecondsLeft} seconds left`}
-              className={cn(
-                'pointer-events-none absolute right-2 z-30 rounded-md border border-amber-300/70 bg-zinc-950/70 px-2 py-1 text-right shadow-[0_8px_18px_rgba(0,0,0,0.28)] backdrop-blur-sm',
-                isInlineMode
-                  ? 'top-[104px] w-[82px]'
-                  : 'top-[112px] w-[96px]'
-              )}
-            >
-              <div className="text-[8px] font-black uppercase leading-none tracking-[0.04em] text-amber-200">
-                Bonus Timer
-              </div>
-              <div
-                data-testid="bonus-timer-countdown"
-                className="mt-0.5 font-mono text-[16px] font-black leading-none text-white"
-              >
-                {bonusTimerCountdownLabel}
-              </div>
-            </aside>
-          )}
-
           {isChallengeScreen && !showOutcomeOverlay && (
             <ChallengePuzzleGrid
               viewportRef={viewportRef}
@@ -2917,10 +3496,10 @@ export const GameApp = () => {
               puzzleScale={puzzleScale}
               puzzleTokenLines={puzzleTokenLines}
               isInlineMode={isInlineMode}
-              gameState={gameState}
-              busy={busy}
-              isComplete={isComplete}
-              isGameOver={isGameOver}
+	              gameState={gameState}
+	              busy={busy || continuePromptActive}
+	              isComplete={isComplete}
+	              isGameOver={isGameOver || continuePromptActive}
               pendingGuessByTile={pendingGuessByTile}
               puzzleMarkClass={puzzleMarkClass}
               puzzleTileUnderlineWidthClass={puzzleTileUnderlineWidthClass}
@@ -2931,11 +3510,115 @@ export const GameApp = () => {
               handleTileSelection={handleTileSelection}
               renderPunctuationTile={renderPunctuationTile}
               getLetterTileClass={letterTileClass}
-              getLetterTileState={letterTileState}
-            />
-          )}
+	              getLetterTileState={letterTileState}
+	            />
+	          )}
 
-          {isChallengeScreen && showOutcomeOverlay && (
+	          {isChallengeScreen && !showOutcomeOverlay && continuePromptActive && (
+	            <div className="absolute inset-0 z-50">
+	              <div
+	                data-testid="continue-prompt-backdrop"
+	                className="absolute inset-0 bg-black/45 backdrop-blur-[3px]"
+	              />
+	              <section
+	                data-testid="continue-prompt"
+	                role="dialog"
+	                aria-modal="true"
+	                aria-labelledby="continue-prompt-title"
+	                className="pointer-events-auto absolute inset-0 flex items-center justify-center px-4 py-6"
+	              >
+	                <div className="w-[min(92vw,390px)] rounded-2xl border border-amber-200/80 bg-zinc-950/92 px-4 py-4 text-center shadow-[0_22px_54px_rgba(0,0,0,0.52)] ring-1 ring-white/10 sm:px-5 sm:py-5">
+	                  {continueCancelConfirmOpen ? (
+	                    <>
+	                      <p
+	                        id="continue-prompt-title"
+	                        className="text-[18px] font-black uppercase leading-tight tracking-[0.04em] text-white sm:text-[22px]"
+	                      >
+	                        End this run?
+	                      </p>
+	                      <p className="mx-auto mt-2 max-w-[300px] text-[12px] font-bold leading-snug text-white/72 sm:text-[13px]">
+	                        Your current guesses will stay saved as a failed attempt.
+	                      </p>
+	                      <div className="mt-5 grid grid-cols-2 gap-3">
+	                        <button
+	                          type="button"
+	                          data-testid="continue-prompt-keep-playing"
+	                          className="btn-3d btn-neutral min-h-[44px] rounded-xl px-3 text-[11px] font-black uppercase tracking-[0.04em] sm:min-h-[48px] sm:text-[12px]"
+	                          onClick={(event) => {
+	                            event.preventDefault();
+	                            event.stopPropagation();
+	                            setContinueCancelConfirmOpen(false);
+	                          }}
+	                          disabled={busy}
+	                        >
+	                          Keep Playing
+	                        </button>
+	                        <button
+	                          type="button"
+	                          data-testid="continue-prompt-confirm-cancel"
+	                          className="btn-3d btn-retry min-h-[44px] rounded-xl px-3 text-[11px] font-black uppercase tracking-[0.04em] sm:min-h-[48px] sm:text-[12px]"
+	                          onClick={(event) => {
+	                            event.preventDefault();
+	                            event.stopPropagation();
+	                            finalizeContinuePrompt();
+	                          }}
+	                          disabled={busy}
+	                        >
+	                          End Run
+	                        </button>
+	                      </div>
+	                    </>
+	                  ) : (
+	                    <>
+		                      <p
+		                        id="continue-prompt-title"
+		                        className="text-[18px] font-black uppercase leading-tight tracking-[0.04em] text-white sm:text-[22px]"
+		                      >
+		                        Try Again?
+		                      </p>
+		                      <p className="mx-auto mt-2 max-w-[310px] text-[12px] font-bold leading-snug text-white/72 sm:text-[13px]">
+		                        Keep your current board and take one more shot.
+		                      </p>
+		                      <button
+		                        type="button"
+		                        data-testid="continue-prompt-button"
+		                        className="btn-3d btn-primary mt-5 flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl px-4 text-[13px] font-black uppercase tracking-[0.04em] sm:min-h-[52px] sm:text-[14px]"
+		                        onClick={(event) => {
+		                          event.preventDefault();
+		                          event.stopPropagation();
+		                          void retry();
+		                        }}
+		                        disabled={busy}
+		                      >
+		                        <span>Continue for</span>
+		                        <span className="inline-flex items-center gap-1.5">
+		                          <span>{continuePromptPointCost}</span>
+		                          <HudSprite icon="coin" decorative className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+		                        </span>
+		                      </button>
+		                      <div className="mt-3 flex justify-center">
+		                        <button
+		                          type="button"
+		                          data-testid="continue-prompt-cancel"
+		                          className="btn-3d btn-neutral min-h-[36px] rounded-lg px-5 text-[10px] font-black uppercase tracking-[0.04em]"
+		                          onClick={(event) => {
+		                            event.preventDefault();
+		                            event.stopPropagation();
+		                            setContinueCancelConfirmOpen(true);
+	                          }}
+	                          disabled={busy}
+	                        >
+	                          Cancel
+	                        </button>
+	                      </div>
+	                    </>
+	                  )}
+	                </div>
+	              </section>
+	            </div>
+	          )}
+
+	          {isChallengeScreen && showOutcomeOverlay && (
             <OutcomeOverlay
               showSuccessOverlay={showSuccessOverlay}
               setConfettiCanvasNode={setConfettiCanvasNode}
@@ -2947,19 +3630,19 @@ export const GameApp = () => {
               criticalOutcomeAvatarCount={criticalOutcomeAvatarCount}
               busy={busy}
               share={share}
+              nextChallenge={handleOutcomeNextChallenge}
               isDailyComplete={isDailyComplete}
               retry={retry}
-              openHome={openHome}
-              showPaidDailyRetryCta={showPaidDailyRetryCta}
-              nextDailyRetryCost={nextDailyRetryCost}
-              subredditName={subredditName}
+	              openHome={openHome}
+	              subredditName={subredditName}
               joiningCommunity={joiningCommunity}
               communityJoinRecorded={communityJoinRecorded}
               communityJoinLabel={communityJoinLabel}
               handleJoinCommunity={handleJoinCommunity}
-              outcomeTitle={outcomeTitle}
-              outcomeSubtitle={outcomeSubtitle}
               completionSolveLabel={completionSolveLabel}
+              pointsGainedLabel={pointsGainedLabel}
+              ratingDeltaLabel={ratingDeltaLabel}
+              ratingDeltaTone={ratingDeltaTone}
               completionQuote={completionQuote}
               puzzleAuthor={puzzle.author}
               hasClaimableQuest={hasClaimableQuest}
@@ -3013,13 +3696,13 @@ export const GameApp = () => {
                                   <PowerupSprite
                                     powerup={perk.powerup}
                                     decorative
-                                    className="h-[16px] w-[16px]"
+                                    className="h-[12px] w-[12px]"
                                   />
                                 ) : (
                                   <HudSprite
                                     icon={perk.sprite}
                                     decorative
-                                    className="h-[16px] w-[16px]"
+                                    className="h-[12px] w-[12px]"
                                   />
                                 )}
                                 <span className={`ml-1 ${bundleRewardValueTextClass}`}>x{perk.value}</span>
@@ -3048,7 +3731,7 @@ export const GameApp = () => {
                               data-testid={`powerup-use-${item}`}
                               className={`btn-3d btn-neutral btn-round flex items-center justify-center leading-none ${powerupButtonSizeClass}`}
                               onClick={() => handleQuickPowerupTap(item)}
-                              disabled={busy || guessBusy || isGameOver || isComplete}
+	                              disabled={busy || guessBusy || continuePromptActive || isGameOver || isComplete}
                               title={`${powerupLabel[item]} (${count})`}
                               aria-label={`${powerupLabel[item]} (${count})`}
                             >
@@ -3068,7 +3751,7 @@ export const GameApp = () => {
                             <button
                               data-testid={`powerup-buy-${item}`}
                               className={`btn-3d btn-static btn-primary btn-powerup-add btn-round absolute right-0 bottom-[8px] translate-x-[20%] translate-y-[20%] font-extrabold leading-none ${inlineTight ? 'h-[16px] w-[16px] text-[11px]' : deviceTier === 'desktop' ? 'h-[20px] w-[20px] text-[13px]' : 'h-[18px] w-[18px] text-[12px]'}`}
-                              disabled={busy || guessBusy || isGameOver || isComplete}
+	                              disabled={busy || guessBusy || continuePromptActive || isGameOver || isComplete}
                               onClick={() => openBuyDialog(item)}
                               title={`Buy ${powerupLabel[item]}`}
                               aria-label={`Buy ${powerupLabel[item]}`}
@@ -3085,6 +3768,15 @@ export const GameApp = () => {
             </section>
           )}
 
+          {showVirtualKeyboard && (
+            <VirtualKeyboardOverlay
+	              disabled={busy || continuePromptActive || isGameOver || isComplete}
+              deviceTier={deviceTier}
+              onLetterPress={handleVirtualLetterPress}
+              onArrowPress={handleVirtualArrowPress}
+            />
+          )}
+
           {isHomeScreen && (
             <HomeScreen
               deviceTier={deviceTier}
@@ -3098,17 +3790,17 @@ export const GameApp = () => {
               onPlayEndless={handleHomePlayEndless}
               homePanelClass={homePanelClass}
               endlessCatalogAvailable={endlessCatalogAvailable}
-              endlessPublishedLevelCount={
-                endlessCatalogStatus?.publishedLevelCount ?? 0
-              }
-              endlessActiveCatalogVersion={
-                endlessCatalogStatus?.activeCatalogVersion ?? null
-              }
+              endlessCategoryFilter={endlessCategoryFilter}
+              onEndlessCategoryFilterChange={handleEndlessCategoryFilterChange}
+              endlessSort={endlessSort}
+              onEndlessSortChange={handleEndlessSortChange}
+              endlessCaughtUpMessage={endlessCaughtUpMessage}
+              onEndlessCaughtUpHome={handleEndlessCaughtUpHome}
             />
           )}
 
           {isShopScreen && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<LoadingScreen />}>
               <LazyShopScreen
                 shopProducts={shopProducts}
                 shopError={shopError}
@@ -3119,8 +3811,19 @@ export const GameApp = () => {
             </Suspense>
           )}
 
+          {isCommunityHubScreen && (
+            <Suspense fallback={<LoadingScreen />}>
+              <LazyCommunityScreen
+                deviceTier={deviceTier}
+                isModerator={isModerator}
+                notifications={communityNotifications}
+                onSubmitted={() => void refreshBootstrapState()}
+              />
+            </Suspense>
+          )}
+
           {isQuestScreen && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<LoadingScreen />}>
               <LazyQuestScreen
                 questTab={questTab}
                 onTabChange={setQuestTab}
@@ -3141,7 +3844,7 @@ export const GameApp = () => {
           )}
 
           {isStatsScreen && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<LoadingScreen />}>
               <LazyStatsScreen
                 statsTab={statsTab}
                 onTabChange={setStatsTab}
@@ -3157,7 +3860,7 @@ export const GameApp = () => {
           )}
 
           {isLeaderboardScreen && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<LoadingScreen />}>
               <LazyLeaderboardScreen
                 leaderboardTab={leaderboardTab}
                 onTabChange={setLeaderboardTab}
@@ -3172,12 +3875,15 @@ export const GameApp = () => {
             <BottomNav
               isShopScreen={isShopScreen}
               isHomeScreen={isHomeScreen}
+              isCommunityScreen={isCommunityHubScreen}
               isQuestScreen={isQuestScreen}
               isStatsScreen={isStatsScreen}
               isLeaderboardScreen={isLeaderboardScreen}
               hasClaimableQuest={hasClaimableQuest}
+              communityNotificationCount={communityNotificationCount}
               onOpenShop={openShop}
               onOpenHome={openHome}
+              onOpenCommunity={openCommunity}
               onOpenQuest={openQuest}
               onOpenStats={openStats}
               onOpenLeaderboard={openLeaderboard}
@@ -3192,16 +3898,16 @@ export const GameApp = () => {
         <input
           ref={inlineInputRef}
           data-testid="inline-input-proxy"
-          inputMode="text"
+          inputMode="none"
           autoCapitalize="characters"
           autoCorrect="off"
           autoComplete="off"
           spellCheck={false}
-	          className="pointer-events-none absolute -left-[9999px] top-0 h-px w-px opacity-0"
-	          onChange={handleInlineInputChange}
-	          onKeyDown={handleInlineInputKeyDown}
-	          disabled={busy || isGameOver || isComplete}
-	        />
+          className="pointer-events-none absolute -left-[9999px] top-0 h-px w-px opacity-0"
+          onChange={handleInlineInputChange}
+          onKeyDown={handleInlineInputKeyDown}
+	          disabled={busy || continuePromptActive || isGameOver || isComplete}
+        />
       )}
 
       {isHelpOpen && (
@@ -3244,14 +3950,6 @@ export const GameApp = () => {
           onConfirm={confirmBuy}
         />
       )}
-      {retryDialog && (
-        <RetryDialog
-          retryDialog={retryDialog}
-          busy={busy}
-          onCancel={() => setRetryDialog(null)}
-          onConfirm={() => void handlePurchaseDailyRetry()}
-        />
-      )}
       {heartPurchaseDialogOpen && profile && (
         <HeartPurchaseDialog
           coins={profile.coins}
@@ -3265,6 +3963,7 @@ export const GameApp = () => {
           }
           onRefill={() => void handleCoinHeartRefill()}
           onTopUp={() => void handleCoinHeartTopUp()}
+          onOpenShopPackages={openHeartShopPackages}
           onCancel={() => setHeartPurchaseDialogOpen(false)}
         />
       )}

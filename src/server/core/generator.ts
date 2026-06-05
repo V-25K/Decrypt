@@ -1,4 +1,5 @@
 import { context, reddit, redis } from '@devvit/web/server';
+import { dedupSignatureLookback } from '../../shared/puzzle-limits';
 import {
   aiChallengeTypePool,
   generatePuzzlePhraseBatch,
@@ -53,8 +54,19 @@ import type { ChallengeType, PuzzlePrivate, PuzzlePublic } from '../../shared/ga
 import { createValidationPipeline } from './validation-pipeline';
 import { validatePuzzle } from './validation';
 import { filterCandidateBatch } from './candidate-filter';
+import { solverThresholdForDifficulty } from './solver-thresholds';
 
 const challengePostEntry = 'default' as const;
+const defaultPreviewTitle = 'Can you decrypt this?';
+
+type DailyPostData = {
+  levelId: string;
+  dateKey: string;
+  mode: 'daily';
+  previewTitle: string;
+  creatorUsername?: string;
+  creatorAvatarUrl?: string;
+};
 
 const previousLevelId = (levelId: string): string | null => {
   const match = levelId.match(/^(.*?)(\d+)$/);
@@ -359,14 +371,14 @@ const describeLockAge = (token: string | null | undefined): string => {
   return `${ageMs}ms`;
 };
 
-const pause = async (ms: number): Promise<void> =>
-  await new Promise((resolve) => setTimeout(resolve, ms));
+const pause = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 const loadCommittedPublishedPostId = async (
   levelId: string
 ): Promise<{ postId: string; dateKey: string } | null> => {
   const existingPostId = await getPuzzlePublishedPostId(levelId);
-  if (existingPostId) {
+  if (existingPostId && !existingPostId.startsWith('community:')) {
     const receipt = await getPuzzlePublicationReceipt(levelId);
     return {
       postId: existingPostId,
@@ -376,6 +388,9 @@ const loadCommittedPublishedPostId = async (
 
   const publicationReceipt = await getPuzzlePublicationReceipt(levelId);
   if (!publicationReceipt) {
+    return null;
+  }
+  if (publicationReceipt.postId.startsWith('community:')) {
     return null;
   }
 
@@ -523,6 +538,18 @@ const formatDailyTitle = (levelId: string): string => {
   return `Daily Cipher #${Number(match[1])}`;
 };
 
+const buildDailyPostData = async (
+  levelId: string,
+  dateKey: string
+): Promise<DailyPostData> => {
+  return {
+    levelId,
+    dateKey,
+    mode: 'daily',
+    previewTitle: defaultPreviewTitle,
+  };
+};
+
 const buildDailyChallengeTypeQueue = async (
   dateKey: string
 ): Promise<ChallengeType[]> => {
@@ -642,16 +669,7 @@ const buildPuzzleWithSolverSeedRetries = (
 };
 
 const requiredSolveRatioForDifficulty = (difficulty: number): number => {
-  if (difficulty <= 3) {
-    return 0.9;
-  }
-  if (difficulty <= 7) {
-    return 0.8;
-  }
-  if (difficulty >= 9) {
-    return 0.65;
-  }
-  return 0.7;
+  return solverThresholdForDifficulty(difficulty, 'manual-stabilization');
 };
 
 const stabilizeManualPuzzleReveals = (
@@ -1030,13 +1048,16 @@ export const generatePuzzleForDate = async (
           continue;
         }
 
-        const recentSignatureEntries = await getRecentUsedSignatureEntries(1200);
+        const recentSignatureEntries = await getRecentUsedSignatureEntries(
+          dedupSignatureLookback
+        );
         const filtered = filterCandidateBatch({
           candidates: fetchedBatch.candidates,
           preferredType: basePreferredType,
           difficulty,
           pipeline,
           recentSignatureEntries,
+          allowChallengeTypeFallback: batchAttempt === retries - 1,
         });
         const pendingPoolReservationCandidates = new Map(
           filtered.decisions
@@ -1215,6 +1236,9 @@ export const publishDailyPost = async (params: {
   dateKey: string;
   runAs?: PublishRunAs;
   forceNewPost?: boolean;
+  title?: string;
+  postData?: DailyPostData;
+  textFallbackText?: string;
 }): Promise<string> => {
   console.log('[publishDailyPost] Starting', {
     levelId: params.levelId,
@@ -1259,8 +1283,11 @@ export const publishDailyPost = async (params: {
     if (!subredditName) {
       throw new Error('subredditName is required');
     }
-    const title = formatDailyTitle(params.levelId);
+    const title = params.title ?? formatDailyTitle(params.levelId);
     const runAs = params.runAs ?? 'APP';
+    const postData =
+      params.postData ??
+      (await buildDailyPostData(params.levelId, params.dateKey));
 
     console.log('[publishDailyPost] About to call reddit.submitCustomPost', {
       levelId: params.levelId,
@@ -1269,11 +1296,7 @@ export const publishDailyPost = async (params: {
       runAs,
       title,
       entry: challengePostEntry,
-      postData: {
-        levelId: params.levelId,
-        dateKey: params.dateKey,
-        mode: 'daily',
-      },
+      postData,
     });
 
     console.log('[publishDailyPost] submitting custom post', {
@@ -1295,13 +1318,9 @@ export const publishDailyPost = async (params: {
         title,
         entry: challengePostEntry,
         ...(runAs === 'USER' ? { runAs } : {}),
-        postData: {
-          levelId: params.levelId,
-          dateKey: params.dateKey,
-          mode: 'daily',
-        },
+        postData,
         textFallback: {
-          text: `${title}. Open the interactive post to play.`,
+          text: params.textFallbackText ?? `${title}. Open the interactive post to play.`,
         },
       });
 
@@ -1309,11 +1328,7 @@ export const publishDailyPost = async (params: {
         postId: post?.id,
         postUrl: post?.url,
         hasPost: !!post,
-        postDataSent: {
-          levelId: params.levelId,
-          dateKey: params.dateKey,
-          mode: 'daily',
-        },
+        postDataSent: postData,
         postKeys: post ? Object.keys(post) : [],
       });
 
@@ -1641,7 +1656,7 @@ export const injectManualPuzzle = async (params: {
 
   // Duplicate check using pipeline
   let signatureOwnerToken = `pending:${crypto.randomUUID()}`;
-  const dup = await pipeline.duplicate(text, signatureOwnerToken);
+  const dup = await pipeline.duplicate(text);
   if (dup.duplicate) {
     throw new Error(`Injected puzzle quote ${dup.reason ?? 'duplicate'}.`);
   }

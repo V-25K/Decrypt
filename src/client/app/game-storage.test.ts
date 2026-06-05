@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   getStorageKey,
+  consumeExpandedChallengeModeIntent,
   migrateSessionStorageForUser,
   persistCorrectGuessIndices,
   persistOutcomeState,
   readCorrectGuessIndices,
   readOutcomeState,
+  setExpandedChallengeModeIntent,
   type PersistedOutcomeState,
 } from './game-storage';
 
@@ -17,6 +19,8 @@ const makeOutcomeState = (
   isGameOver: false,
   completion: null,
   solveSeconds: 42,
+  ratingDelta: null,
+  pointsGained: null,
   savedAt: 123456,
   ...overrides,
 });
@@ -24,6 +28,7 @@ const makeOutcomeState = (
 describe('game storage', () => {
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   it('namespaces persisted outcome state by user', () => {
@@ -65,5 +70,67 @@ describe('game storage', () => {
 
     expect(readOutcomeState('user-a')).toEqual(scopedOutcome);
     expect(sessionStorage.getItem('decrypt-challenge-outcome-v1')).toBeNull();
+  });
+
+  it('passes the expanded challenge mode intent once', () => {
+    setExpandedChallengeModeIntent('endless', 'PROVERB', 'latest');
+
+    expect(consumeExpandedChallengeModeIntent()).toEqual({
+      mode: 'endless',
+      categoryFilter: 'PROVERB',
+      endlessSort: 'latest',
+      dailyArchive: false,
+      excludeLevelId: null,
+      ignorePostLevel: false,
+    });
+    expect(consumeExpandedChallengeModeIntent()).toBeNull();
+  });
+
+  it('passes daily archive expanded intent once', () => {
+    setExpandedChallengeModeIntent('daily', null, 'random', true, 'lvl_current');
+
+    expect(consumeExpandedChallengeModeIntent()).toEqual({
+      mode: 'daily',
+      categoryFilter: null,
+      endlessSort: 'random',
+      dailyArchive: true,
+      excludeLevelId: 'lvl_current',
+      ignorePostLevel: false,
+    });
+  });
+
+  it('passes daily expanded intent that ignores the post level once', () => {
+    setExpandedChallengeModeIntent(
+      'daily',
+      null,
+      'random',
+      false,
+      'lvl_removed',
+      true
+    );
+
+    expect(consumeExpandedChallengeModeIntent()).toEqual({
+      mode: 'daily',
+      categoryFilter: null,
+      endlessSort: 'random',
+      dailyArchive: false,
+      excludeLevelId: 'lvl_removed',
+      ignorePostLevel: true,
+    });
+  });
+
+  it('falls back to local storage for expanded challenge intents', () => {
+    setExpandedChallengeModeIntent('daily', null, 'random', true, 'lvl_current');
+    sessionStorage.clear();
+
+    expect(consumeExpandedChallengeModeIntent()).toEqual({
+      mode: 'daily',
+      categoryFilter: null,
+      endlessSort: 'random',
+      dailyArchive: true,
+      excludeLevelId: 'lvl_current',
+      ignorePostLevel: false,
+    });
+    expect(consumeExpandedChallengeModeIntent()).toBeNull();
   });
 });

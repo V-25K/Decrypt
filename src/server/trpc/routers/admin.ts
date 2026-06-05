@@ -1,4 +1,13 @@
 import {
+  adminCommunityApproveInputSchema,
+  adminCommunityRejectInputSchema,
+  adminCommunityRequestChangesInputSchema,
+  adminCommunityRemoveInputSchema,
+  communityActionResponseSchema,
+  communitySubmissionListInputSchema,
+  communitySubmissionListResponseSchema,
+} from '../../../shared/community';
+import {
   adminActionResponseSchema,
   adminDifficultyCalibrationResponseSchema,
   adminInjectInputSchema,
@@ -18,6 +27,13 @@ import {
   preflightManualChallengeForPublish,
   injectManualChallengeWithAdjustment,
 } from '../../core/admin';
+import {
+  approveCommunitySubmission,
+  listCommunitySubmissionsForReview,
+  rejectCommunitySubmission,
+  removeCommunityPuzzle,
+  requestCommunitySubmissionChanges,
+} from '../../core/community';
 import { getGlobalDailyCalibrationSnapshot } from '../../core/difficulty-calibration';
 import { getMetricsSnapshot } from '../../core/metrics';
 import { router } from '../base';
@@ -142,6 +158,107 @@ export const adminRouter = router({
           message: result.error ?? 'Failed to retry publishing',
           levelId: input.levelId,
           postId: null,
+        });
+      }
+    }),
+  listCommunitySubmissions: adminProcedure
+    .input(communitySubmissionListInputSchema)
+    .query(async ({ input }) =>
+      communitySubmissionListResponseSchema.parse({
+        submissions: await listCommunitySubmissionsForReview({
+          status: input.status,
+          limit: input.limit,
+        }),
+      })
+    ),
+  approveCommunitySubmission: adminProcedure
+    .input(adminCommunityApproveInputSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const submission = await approveCommunitySubmission(input.submissionId);
+        return communityActionResponseSchema.parse({
+          success: true,
+          message: submission.levelId
+            ? `Approved as ${submission.levelId}.`
+            : 'Submission approved.',
+          submission,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Approval failed.';
+        console.error('[admin] approveCommunitySubmission failed:', error);
+        return communityActionResponseSchema.parse({
+          success: false,
+          message: reason,
+          submission: null,
+        });
+      }
+    }),
+  rejectCommunitySubmission: adminProcedure
+    .input(adminCommunityRejectInputSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const submission = await rejectCommunitySubmission({
+          submissionId: input.submissionId,
+          reason: input.reason,
+        });
+        return communityActionResponseSchema.parse({
+          success: true,
+          message: 'Submission rejected.',
+          submission,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Rejection failed.';
+        console.error('[admin] rejectCommunitySubmission failed:', error);
+        return communityActionResponseSchema.parse({
+          success: false,
+          message: reason,
+          submission: null,
+        });
+      }
+    }),
+  requestCommunitySubmissionChanges: adminProcedure
+    .input(adminCommunityRequestChangesInputSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const submission = await requestCommunitySubmissionChanges({
+          submissionId: input.submissionId,
+          reason: input.reason,
+        });
+        return communityActionResponseSchema.parse({
+          success: true,
+          message: 'Changes requested from creator.',
+          submission,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Request changes failed.';
+        console.error('[admin] requestCommunitySubmissionChanges failed:', error);
+        return communityActionResponseSchema.parse({
+          success: false,
+          message: reason,
+          submission: null,
+        });
+      }
+    }),
+  removeCommunityPuzzle: adminProcedure
+    .input(adminCommunityRemoveInputSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const submission = await removeCommunityPuzzle({
+          submissionId: input.submissionId,
+          reason: input.reason,
+        });
+        return communityActionResponseSchema.parse({
+          success: true,
+          message: 'Community puzzle removed.',
+          submission,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Removal failed.';
+        console.error('[admin] removeCommunityPuzzle failed:', error);
+        return communityActionResponseSchema.parse({
+          success: false,
+          message: reason,
+          submission: null,
         });
       }
     }),

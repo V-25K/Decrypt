@@ -10,6 +10,9 @@ const shareCompletionReceiptSchema = z.object({
   heartsRemaining: z.number().int().nonnegative(),
   usedPowerups: z.number().int().nonnegative(),
   score: z.number().int().nonnegative().optional(),
+  ratingDelta: z.number().int().optional(),
+  ratingAfter: z.number().int().nonnegative().optional(),
+  globalScoreAfter: z.number().int().nonnegative().optional(),
   completedAtTs: z.number().int().nonnegative(),
 });
 
@@ -24,6 +27,9 @@ export const saveShareCompletionReceipt = async (params: {
   heartsRemaining: number;
   usedPowerups: number;
   score: number;
+  ratingDelta?: number | null;
+  ratingAfter?: number | null;
+  globalScoreAfter?: number | null;
 }): Promise<void> => {
   const receipt: ShareCompletionReceipt = {
     levelId: params.levelId,
@@ -33,6 +39,14 @@ export const saveShareCompletionReceipt = async (params: {
     heartsRemaining: params.heartsRemaining,
     usedPowerups: params.usedPowerups,
     score: params.score,
+    ratingDelta:
+      typeof params.ratingDelta === 'number' ? params.ratingDelta : undefined,
+    ratingAfter:
+      typeof params.ratingAfter === 'number' ? params.ratingAfter : undefined,
+    globalScoreAfter:
+      typeof params.globalScoreAfter === 'number'
+        ? params.globalScoreAfter
+        : undefined,
     completedAtTs: Date.now(),
   };
   await redis.hSet(keyShareCompletionReceipt(params.userId, params.levelId), {
@@ -43,6 +57,9 @@ export const saveShareCompletionReceipt = async (params: {
     heartsRemaining: `${receipt.heartsRemaining}`,
     usedPowerups: `${receipt.usedPowerups}`,
     score: `${receipt.score ?? ''}`,
+    ratingDelta: `${receipt.ratingDelta ?? ''}`,
+    ratingAfter: `${receipt.ratingAfter ?? ''}`,
+    globalScoreAfter: `${receipt.globalScoreAfter ?? ''}`,
     completedAtTs: `${receipt.completedAtTs}`,
   });
 };
@@ -72,18 +89,24 @@ export const getShareCompletionReceipt = async (
   const heartsRemaining = numberFromHash(hash, 'heartsRemaining');
   const usedPowerups = numberFromHash(hash, 'usedPowerups');
   const score = numberFromHash(hash, 'score');
+  const ratingDelta = numberFromHash(hash, 'ratingDelta');
+  const ratingAfter = numberFromHash(hash, 'ratingAfter');
+  const globalScoreAfter = numberFromHash(hash, 'globalScoreAfter');
   const completedAtTs = numberFromHash(hash, 'completedAtTs');
 
-  const parsed = shareCompletionReceiptSchema.safeParse({
-    levelId: hash.levelId ?? levelId,
-    dateKey: hash.dateKey ?? '',
-    solveSeconds,
-    mistakes,
-    heartsRemaining,
-    usedPowerups,
-    score,
-    completedAtTs,
-  });
+	  const parsed = shareCompletionReceiptSchema.safeParse({
+	    levelId: hash.levelId ?? levelId,
+	    dateKey: hash.dateKey ?? '',
+	    solveSeconds,
+	    mistakes,
+	    heartsRemaining,
+	    usedPowerups,
+	    score: score ?? undefined,
+	    ratingDelta: ratingDelta ?? undefined,
+	    ratingAfter: ratingAfter ?? undefined,
+	    globalScoreAfter: globalScoreAfter ?? undefined,
+	    completedAtTs,
+	  });
   return parsed.success ? parsed.data : null;
 };
 

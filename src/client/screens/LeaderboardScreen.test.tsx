@@ -3,9 +3,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LeaderboardScreen } from './LeaderboardScreen';
 
-const { getDailyPageQuery, getAllTimeLevelsPageQuery } = vi.hoisted(() => ({
+const { getDailyPageQuery, getGlobalPageQuery } = vi.hoisted(() => ({
   getDailyPageQuery: vi.fn(),
-  getAllTimeLevelsPageQuery: vi.fn(),
+  getGlobalPageQuery: vi.fn(),
 }));
 
 vi.mock('../trpc', () => ({
@@ -14,8 +14,8 @@ vi.mock('../trpc', () => ({
       getDailyPage: {
         query: getDailyPageQuery,
       },
-      getAllTimeLevelsPage: {
-        query: getAllTimeLevelsPageQuery,
+      getGlobalPage: {
+        query: getGlobalPageQuery,
       },
     },
   },
@@ -53,13 +53,15 @@ const dailyPageTwo = {
 
 const allTimePageOne = {
   entries: [
-    {
-      userId: 't2_bravo',
-      username: 'bravo',
-      score: 12,
-      levelsCompleted: 12,
-      snoovatarUrl: null,
-    },
+	    {
+	      userId: 't2_bravo',
+	      username: 'bravo',
+	      score: 712,
+	      rating: 712,
+	      globalScore: 2400,
+	      challengesCompleted: 12,
+	      snoovatarUrl: null,
+	    },
   ],
   hasNextPage: true,
   hasPreviousPage: false,
@@ -135,7 +137,7 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   getDailyPageQuery.mockReset();
-  getAllTimeLevelsPageQuery.mockReset();
+  getGlobalPageQuery.mockReset();
 });
 
 afterEach(() => {
@@ -163,29 +165,31 @@ describe('LeaderboardScreen', () => {
     await waitFor(() => getDailyPageQuery.mock.calls.length === 2);
 
     expect(getDailyPageQuery).toHaveBeenNthCalledWith(2, { page: 2, pageSize: 50 });
-    expect(getAllTimeLevelsPageQuery).not.toHaveBeenCalled();
+    expect(getGlobalPageQuery).not.toHaveBeenCalled();
   });
 
-  it('loads the endless last page through getAllTimeLevelsPage', async () => {
-    getAllTimeLevelsPageQuery
+  it('loads the global last page through getGlobalPage', async () => {
+    getGlobalPageQuery
       .mockResolvedValueOnce(allTimePageOne)
       .mockResolvedValueOnce(allTimeLastPage);
 
     await renderLeaderboard({
-      leaderboardTab: 'endless',
+      leaderboardTab: 'global',
     });
 
-    await waitFor(() => getAllTimeLevelsPageQuery.mock.calls.length === 1);
+    await waitFor(() => getGlobalPageQuery.mock.calls.length === 1);
 
     await act(async () => {
       getButton('Last').click();
       await Promise.resolve();
     });
 
-    await waitFor(() => getAllTimeLevelsPageQuery.mock.calls.length === 2);
+    await waitFor(() => getGlobalPageQuery.mock.calls.length === 2);
 
-    expect(getAllTimeLevelsPageQuery).toHaveBeenNthCalledWith(1, { page: 1, pageSize: 50 });
-    expect(getAllTimeLevelsPageQuery).toHaveBeenNthCalledWith(2, { page: 4, pageSize: 50 });
-    expect(getDailyPageQuery).not.toHaveBeenCalled();
-  });
+	    expect(getGlobalPageQuery).toHaveBeenNthCalledWith(1, { page: 1, pageSize: 50 });
+	    expect(getGlobalPageQuery).toHaveBeenNthCalledWith(2, { page: 4, pageSize: 50 });
+	    expect(getDailyPageQuery).not.toHaveBeenCalled();
+	    expect(container.textContent ?? '').toContain('Total Points');
+	    expect(container.textContent ?? '').toContain('2,400');
+	  });
 });

@@ -9,6 +9,9 @@ import {
 import { normalizePadlockChains } from './puzzle';
 import {
   keyDailyPointer,
+  keyCommunityRemovedLevels,
+  keyCommunitySubmission,
+  keyCommunitySubmissionsRemoved,
   keyLevelIdCounter,
   keyPublishedAutoDailyPuzzlesByDate,
   keyPublishedAutoDailyPuzzlesByDateInitialized,
@@ -290,7 +293,7 @@ export const savePuzzle = async (params: {
         member: allocatedLevelId,
         score: puzzlePrivate.createdAt,
       });
-      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED') {
+      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED' || puzzlePrivate.source === 'COMMUNITY') {
         await tx.zAdd(keyPuzzlesByDate(puzzlePrivate.dateKey), {
           member: allocatedLevelId,
           score: puzzlePrivate.createdAt,
@@ -299,7 +302,7 @@ export const savePuzzle = async (params: {
       await tx.hSet(keyUsedStrings, {
         [params.normalizedSignature]: allocatedLevelId,
       });
-      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED') {
+      if (puzzlePrivate.source === 'AUTO_DAILY' || puzzlePrivate.source === 'MANUAL_INJECTED' || puzzlePrivate.source === 'COMMUNITY') {
         await tx.zAdd(keyUsedSignatureRecent, {
           member: params.normalizedSignature,
           score: puzzlePrivate.createdAt,
@@ -336,6 +339,62 @@ export const savePuzzle = async (params: {
   throw new Error('Failed to save puzzle after transaction retries.');
 };
 
+export const replacePuzzleDataInPlace = async (params: {
+  levelId: string;
+  puzzlePrivate: PuzzlePrivate;
+  puzzlePublic: PuzzlePublic;
+  normalizedSignature: string;
+  tokenSignature?: string | null;
+  previousNormalizedSignature?: string | null;
+}): Promise<void> => {
+  const puzzlePrivate: PuzzlePrivate = {
+    ...params.puzzlePrivate,
+    levelId: params.levelId,
+  };
+  const puzzlePublic: PuzzlePublic = {
+    ...params.puzzlePublic,
+    levelId: params.levelId,
+  };
+  await redis.set(keyPuzzlePrivate(params.levelId), JSON.stringify(puzzlePrivate));
+  await redis.set(keyPuzzlePublic(params.levelId), JSON.stringify(puzzlePublic));
+  await redis.set(keyPuzzleMapping(params.levelId), JSON.stringify(puzzlePrivate.mapping));
+  await redis.zAdd(keyPuzzlesIndex, {
+    member: params.levelId,
+    score: puzzlePrivate.createdAt,
+  });
+  if (
+    puzzlePrivate.source === 'AUTO_DAILY' ||
+    puzzlePrivate.source === 'MANUAL_INJECTED' ||
+    puzzlePrivate.source === 'COMMUNITY'
+  ) {
+    await redis.zAdd(keyPuzzlesByDate(puzzlePrivate.dateKey), {
+      member: params.levelId,
+      score: puzzlePrivate.createdAt,
+    });
+    await redis.zAdd(keyUsedSignatureRecent, {
+      member: params.normalizedSignature,
+      score: puzzlePrivate.createdAt,
+    });
+  }
+  const previousSignature = params.previousNormalizedSignature;
+  if (previousSignature && previousSignature !== params.normalizedSignature) {
+    const existingPreviousOwner = await redis.hGet(keyUsedStrings, previousSignature);
+    if (existingPreviousOwner === params.levelId) {
+      await redis.hDel(keyUsedStrings, [previousSignature]);
+      await redis.hDel(keyUsedSignatureMeta, [previousSignature]);
+      await redis.zRem(keyUsedSignatureRecent, [previousSignature]);
+    }
+  }
+  await redis.hSet(keyUsedStrings, {
+    [params.normalizedSignature]: params.levelId,
+  });
+  if (typeof params.tokenSignature === 'string' && params.tokenSignature.length > 0) {
+    await redis.hSet(keyUsedSignatureMeta, {
+      [params.normalizedSignature]: params.tokenSignature,
+    });
+  }
+};
+
 export const getPuzzlePublishedPostId = async (
   levelId: string
 ): Promise<string | null> => {
@@ -344,6 +403,11 @@ export const getPuzzlePublishedPostId = async (
 };
 
 export const isPuzzlePublishedVisible = async (levelId: string): Promise<boolean> => {
+  const removedFromPlay = await isPuzzleRemovedFromPlay(levelId);
+  if (removedFromPlay) {
+    return false;
+  }
+
   const [dailyPointer, publishedPostId, publicationReceipt] = await Promise.all([
     getDailyPointer(),
     getPuzzlePublishedPostId(levelId),
@@ -355,6 +419,29 @@ export const isPuzzlePublishedVisible = async (levelId: string): Promise<boolean
     publishedPostId !== null ||
     publicationReceipt !== null
   );
+};
+
+export const isPuzzleRemovedFromPlay = async (
+  levelId: string
+): Promise<boolean> => {
+  const removedSubmissionId = await redis.hGet(keyCommunityRemovedLevels, levelId);
+  if (removedSubmissionId) {
+    return true;
+  }
+
+  const removedEntries = await redis.zRange(keyCommunitySubmissionsRemoved, 0, -1, {
+    by: 'rank',
+  });
+  for (const entry of removedEntries) {
+    const hash = await redis.hGetAll(keyCommunitySubmission(entry.member));
+    if (hash.levelId === levelId && hash.status === 'removed') {
+      await redis.hSet(keyCommunityRemovedLevels, {
+        [levelId]: entry.member,
+      });
+      return true;
+    }
+  }
+  return false;
 };
 
 export const setPuzzlePublishedPostId = async (

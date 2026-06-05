@@ -20,7 +20,7 @@ describe('Manual Challenge Validation and Feedback', () => {
   describe('validateManualChallenge', () => {
     it('should validate warmup text for warmup difficulty', async () => {
       const result: ManualChallengeValidationResult = await validateManualChallenge({
-        text: 'TO BE OR NOT TO BE',
+        text: 'TO BE OR NOT TO BE AGAIN',
         difficulty: 2,
       });
 
@@ -70,7 +70,7 @@ describe('Manual Challenge Validation and Feedback', () => {
 
     it('returns the achievable range even when the preferred tier is outside it', async () => {
       const result: ManualChallengeValidationResult = await validateManualChallenge({
-        text: 'TO BE OR NOT TO BE',
+        text: 'TO BE OR NOT TO BE AGAIN',
         difficulty: 9,
       });
 
@@ -94,7 +94,7 @@ describe('Manual Challenge Validation and Feedback', () => {
   describe('Helper Functions', () => {
     it('should infer natural difficulty tier from the best-fit text profile', async () => {
       const easyResult = await validateManualChallenge({
-        text: 'TO BE OR NOT TO BE',
+        text: 'TO BE OR NOT TO BE AGAIN',
         difficulty: 2,
       });
       expect(['warmup', 'medium']).toContain(easyResult.naturalDifficulty);
@@ -106,20 +106,21 @@ describe('Manual Challenge Validation and Feedback', () => {
       expect(['hard', 'expert']).toContain(hardResult.naturalDifficulty);
     });
 
-    it('should generate suggestions for text that fits no supported tier', async () => {
-      const result = await validateManualChallenge({
-        text: 'WHY JOT FLUX VEX BRIM',
-        difficulty: 1,
-      });
+	    it('should generate suggestions for text that fits no supported tier', async () => {
+	      const result = await validateManualChallenge({
+	        text: 'ABCDEFG HIJKL MNOPQ RSTUV WXYZ',
+	        difficulty: 1,
+	      });
 
-      expect(result.suggestions.length).toBeGreaterThan(0);
-    });
+	      expect(result.valid).toBe(false);
+	      expect(result.suggestions.length).toBeGreaterThan(0);
+	    });
   });
 
   describe('injectManualChallengeWithAdjustment', () => {
     it('rejects invalid authors before attempting injection work', async () => {
       const result: ManualChallengeResult = await injectManualChallengeWithAdjustment({
-        text: 'TO BE OR NOT TO BE',
+        text: 'TO BE OR NOT TO BE AGAIN',
         author: '!!!',
         targetDifficulty: 5,
         challengeType: 'QUOTE',

@@ -33,10 +33,11 @@ export type HeartPurchaseResult = RouterOutputs['profile']['purchaseCoinRefill']
 export type AppScreen =
   | 'challenge'
   | 'home'
+  | 'community'
   | 'shop'
   | 'quest'
   | 'stats'
   | 'leaderboard';
-export type LeaderboardTab = 'daily' | 'endless';
-export type StatsTab = 'daily' | 'endless';
+export type LeaderboardTab = 'daily' | 'global';
+export type StatsTab = 'daily' | 'global';
 export type HomeTab = 'daily' | 'endless';

@@ -7,6 +7,7 @@ vi.mock('../../core/leaderboard', () => ({
   getLevelTop: vi.fn(),
   getAllTimeTopLevels: vi.fn(),
   getAllTimeTopLogic: vi.fn(),
+  getGlobalTop: vi.fn(),
   getUserRankSummary: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock('../../core/paginated-leaderboard-service', () => ({
     getLevelLeaderboardPage: vi.fn(),
     getAllTimeLevelsLeaderboardPage: vi.fn(),
     getAllTimeLogicLeaderboardPage: vi.fn(),
+    getGlobalLeaderboardPage: vi.fn(),
   },
 }));
 

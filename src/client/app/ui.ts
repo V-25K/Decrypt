@@ -8,6 +8,6 @@ export const tabButtonClass = (isActive: boolean) =>
 
 export const navItemClass = (isActive: boolean) =>
   cn(
-    'nav-item-btn btn-3d flex h-11 w-11 shrink-0 items-center justify-center rounded-xl p-0',
+    'nav-item-btn btn-3d flex h-12 min-w-[46px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1',
     isActive ? 'btn-secondary nav-item-selected btn-pressed' : 'btn-neutral'
   );

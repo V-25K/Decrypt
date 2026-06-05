@@ -2,13 +2,17 @@ import { Hono } from 'hono';
 import type { UiResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
-import { clearSubredditGameData } from '../core/playtest-reset';
 import {
   formatModeratorRerollError,
   publishLastGeneratedChallenge,
   rerollAndPublish,
 } from '../core/admin';
 import { hasAdminAccess } from '../core/admin-auth';
+import {
+  challengeTypeDisplayOrder,
+  challengeTypeMetadata,
+  challengeTypeSelectionHelpText,
+} from '../../shared/game';
 
 export const menu = new Hono();
 
@@ -58,26 +62,31 @@ menu.post('/mod-clear-subreddit-data', async (c) => {
   if (deny) {
     return c.json<UiResponse>(deny, 200);
   }
-  try {
-    const result = await clearSubredditGameData();
-    return c.json<UiResponse>(
-      {
-        showToast:
-          `Cleared subreddit game data for ${result.knownUsers} player(s), ` +
-          `${result.sessions} session(s), and ${result.deletedKeys} key(s).`,
+  return c.json<UiResponse>(
+    {
+      showForm: {
+        name: 'mod_clear_subreddit_data_form',
+        form: {
+          title: 'Clear Subreddit Game Data',
+          description:
+            'This permanently clears Decrypt player progress, sessions, puzzle keys, and related subreddit data. Type CLEAR to continue.',
+          acceptLabel: 'Clear Data',
+          cancelLabel: 'Cancel',
+          fields: [
+            {
+              type: 'string',
+              name: 'confirmation',
+              label: 'Confirmation',
+              required: true,
+              placeholder: 'CLEAR',
+              helpText: 'This action cannot be undone.',
+            },
+          ],
+        },
       },
-      200
-    );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Error clearing subreddit game data: ${reason}`);
-    return c.json<UiResponse>(
-      {
-        showToast: `Failed to clear subreddit game data: ${reason}`,
-      },
-      200
-    );
-  }
+    },
+    200
+  );
 });
 
 menu.post('/mod-reroll', async (c) => {
@@ -176,17 +185,11 @@ menu.post('/mod-inject', async (c) => {
               required: true,
               multiSelect: false,
               defaultValue: ['QUOTE'],
-              options: [
-                { label: 'Quote', value: 'QUOTE' },
-                { label: 'Saying', value: 'SAYING' },
-                { label: 'Proverb', value: 'PROVERB' },
-                { label: 'Speech', value: 'SPEECH_LINE' },
-                { label: 'Book / Literature', value: 'BOOK_LINE' },
-                { label: 'Movie', value: 'MOVIE_LINE' },
-                { label: 'TV', value: 'TV_LINE' },
-                { label: 'Anime', value: 'ANIME_LINE' },
-                { label: 'Lyric', value: 'LYRIC_LINE' },
-              ],
+              options: challengeTypeDisplayOrder.map((value) => ({
+                label: challengeTypeMetadata[value].label,
+                value,
+              })),
+              helpText: challengeTypeSelectionHelpText,
             },
           ],
         },

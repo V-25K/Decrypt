@@ -1,3 +1,4 @@
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { coinHeartRefillCost, coinHeartTopUpCost } from '../app/constants';
 import { HudSprite } from './HudSprite';
 
@@ -10,6 +11,7 @@ type HeartPurchaseDialogProps = {
   limitResetTs: number;
   onRefill: () => void;
   onTopUp: () => void;
+  onOpenShopPackages: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onCancel: () => void;
 };
 
@@ -32,6 +34,7 @@ export const HeartPurchaseDialog = ({
   limitResetTs,
   onRefill,
   onTopUp,
+  onOpenShopPackages,
   onCancel,
 }: HeartPurchaseDialogProps) => (
   <div
@@ -84,6 +87,14 @@ export const HeartPurchaseDialog = ({
           <p className="mt-1">Resets in {formatTimeUntil(limitResetTs)}</p>
         </div>
       )}
+      <button
+        data-testid="heart-purchase-shop-packages"
+        className="btn-3d btn-primary mb-2 w-full rounded border text-xs font-black uppercase tracking-[0.03em]"
+        onClick={onOpenShopPackages}
+        disabled={busy}
+      >
+        Shop heart packs
+      </button>
       <button
         data-testid="heart-purchase-cancel"
         className="btn-3d btn-neutral w-full rounded border text-xs font-bold"

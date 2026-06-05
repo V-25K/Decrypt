@@ -24,6 +24,7 @@ export const keyAIPoolDifficultyCursor = (tier: string, challengeType: string) =
 export const keyPuzzleStaged = 'decrypt:puzzle:staged';
 export const keyPuzzlePublishedPost = (levelId: string) =>
   `decrypt:puzzle:${levelId}:published_post`;
+export const keyDailyPostCreateLock = 'decrypt:lock:daily_post_create';
 export const keyPuzzleMapping = (levelId: string) =>
   `decrypt:puzzle:${levelId}:mapping`;
 export const keyPuzzlePublicationReceipt = (levelId: string) =>
@@ -69,6 +70,9 @@ export const keyUserEndlessLevelScores = (userId: string) =>
 export const keyUserFailedLevels = (userId: string) =>
   `decrypt:user:${userId}:failed_levels`;
 
+export const keyUserContinuedLevels = (userId: string) =>
+  `decrypt:user:${userId}:continued_levels`;
+
 export const keyUserDailyRetryCounts = (userId: string) =>
   `decrypt:user:${userId}:daily_retry_counts`;
 
@@ -99,6 +103,16 @@ export const keyDailyRankAwarded = (dateKey: string) =>
 export const keyAllTimeLevelsLeaderboard = 'decrypt:leaderboard:alltime:levels';
 
 export const keyAllTimeLogicLeaderboard = 'decrypt:leaderboard:alltime:logic';
+
+export const keyGlobalRatingLeaderboard = 'decrypt:leaderboard:global:rating';
+
+export const keyGlobalScoreLeaderboard = 'decrypt:leaderboard:global:score';
+
+export const keyUserGlobalLevelScores = (userId: string) =>
+  `decrypt:user:${userId}:global:level_scores`;
+
+export const keyUserRatingOutcomes = (userId: string) =>
+  `decrypt:user:${userId}:rating_outcomes`;
 
 export const keyLevelPlayers = (levelId: string) =>
   `decrypt:level:${levelId}:players`;
@@ -161,3 +175,42 @@ export const keyUserCoinHeartPurchases = (userId: string, dateKey: string) =>
 
 export const keyUserEndlessCursor = (userId: string) =>
   `decrypt:user:${userId}:endless:cursor`;
+
+export const keyCommunitySubmission = (submissionId: string) =>
+  `decrypt:community:submission:${submissionId}`;
+
+export const keyCommunitySubmissionsPending =
+  'decrypt:community:submissions:pending';
+
+export const keyCommunitySubmissionsApproved =
+  'decrypt:community:submissions:approved';
+
+export const keyCommunitySubmissionsRejected =
+  'decrypt:community:submissions:rejected';
+
+export const keyCommunitySubmissionsRemoved =
+  'decrypt:community:submissions:removed';
+
+export const keyCommunitySubmissionsByLevel =
+  'decrypt:community:submissions:by_level';
+
+export const keyCommunityRemovedLevels =
+  'decrypt:community:removed_levels';
+
+export const keyCommunitySubmissionsByAuthor = (userId: string) =>
+  `decrypt:community:by_author:${userId}`;
+
+export const keyCommunityPendingSignatures =
+  'decrypt:community:pending_signatures';
+
+export const keyCommunityCreatorStats = (userId: string) =>
+  `decrypt:community:creator:${userId}`;
+
+export const keyUserEndlessPlayed = (userId: string) =>
+  `decrypt:user:${userId}:endless:played`;
+
+export const keyCommunityPuzzlePlays = (levelId: string) =>
+  `decrypt:community:plays:${levelId}`;
+
+export const keyCommunityApprovalLock = (submissionId: string) =>
+  `decrypt:community:approval_lock:${submissionId}`;

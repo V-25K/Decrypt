@@ -7,9 +7,11 @@ import {
   type UserProfile,
   userProfileSchema,
 } from '../../shared/game';
+import { startingGlobalRating } from '../../shared/rating';
 import {
   keyKnownUsersIndex,
   keyUserCompleted,
+  keyUserContinuedLevels,
   keyUserDailyDataDates,
   keyUserDailyRetryCounts,
   keyUserEndlessCursor,
@@ -116,6 +118,13 @@ export const defaultUserProfile = (): UserProfile =>
     endlessModeClears: 0,
     dailySolveTimeTotalSec: 0,
     endlessSolveTimeTotalSec: 0,
+    globalRating: startingGlobalRating,
+    globalScore: 0,
+    ratingGames: 0,
+    ratingWins: 0,
+    ratingLosses: 0,
+    globalWinStreak: 0,
+    bestGlobalRank: 0,
     bestOverallRank: 0,
     audioEnabled: true,
     communityJoinRecorded: false,
@@ -236,6 +245,13 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
     endlessModeClears: numberFromHash(hash, 'endlessModeClears', 0),
     dailySolveTimeTotalSec: numberFromHash(hash, 'dailySolveTimeTotalSec', 0),
     endlessSolveTimeTotalSec: numberFromHash(hash, 'endlessSolveTimeTotalSec', 0),
+    globalRating: numberFromHash(hash, 'globalRating', startingGlobalRating),
+    globalScore: numberFromHash(hash, 'globalScore', 0),
+    ratingGames: numberFromHash(hash, 'ratingGames', 0),
+    ratingWins: numberFromHash(hash, 'ratingWins', 0),
+    ratingLosses: numberFromHash(hash, 'ratingLosses', 0),
+    globalWinStreak: numberFromHash(hash, 'globalWinStreak', 0),
+    bestGlobalRank: numberFromHash(hash, 'bestGlobalRank', 0),
     bestOverallRank: numberFromHash(hash, 'bestOverallRank', 0),
     audioEnabled: stringFromHash(hash, 'audioEnabled', '1') === '1',
     communityJoinRecorded: stringFromHash(hash, 'communityJoinRecorded', '0') === '1',
@@ -294,6 +310,13 @@ export const saveUserProfile = async (
     endlessModeClears: `${normalizedProfile.endlessModeClears}`,
     dailySolveTimeTotalSec: `${normalizedProfile.dailySolveTimeTotalSec}`,
     endlessSolveTimeTotalSec: `${normalizedProfile.endlessSolveTimeTotalSec}`,
+    globalRating: `${normalizedProfile.globalRating}`,
+    globalScore: `${normalizedProfile.globalScore}`,
+    ratingGames: `${normalizedProfile.ratingGames}`,
+    ratingWins: `${normalizedProfile.ratingWins}`,
+    ratingLosses: `${normalizedProfile.ratingLosses}`,
+    globalWinStreak: `${normalizedProfile.globalWinStreak}`,
+    bestGlobalRank: `${normalizedProfile.bestGlobalRank}`,
     bestOverallRank: `${normalizedProfile.bestOverallRank}`,
     audioEnabled: normalizedProfile.audioEnabled ? '1' : '0',
     communityJoinRecorded: normalizedProfile.communityJoinRecorded ? '1' : '0',
@@ -403,11 +426,35 @@ export const hasFailedLevel = async (
   return raw !== undefined && raw !== null;
 };
 
+export const hasContinuedLevel = async (
+  userId: string,
+  levelId: string
+): Promise<boolean> => {
+  const raw = await redis.hGet(keyUserContinuedLevels(userId), levelId);
+  return raw !== undefined && raw !== null;
+};
+
 export const markLevelFailed = async (
   userId: string,
   levelId: string
 ): Promise<void> => {
   await redis.hSet(keyUserFailedLevels(userId), {
+    [levelId]: `${Date.now()}`,
+  });
+};
+
+export const unmarkLevelFailed = async (
+  userId: string,
+  levelId: string
+): Promise<void> => {
+  await redis.hDel(keyUserFailedLevels(userId), [levelId]);
+};
+
+export const markLevelContinued = async (
+  userId: string,
+  levelId: string
+): Promise<void> => {
+  await redis.hSet(keyUserContinuedLevels(userId), {
     [levelId]: `${Date.now()}`,
   });
 };

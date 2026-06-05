@@ -231,7 +231,7 @@ describe('generatePuzzlePhrase', () => {
     expect(body?.generationConfig?.temperature).toBe(0.65);
   });
 
-  it('uses flexible prompt guidance instead of forcing the old hard length bands', async () => {
+  it('treats prompt length as readability guidance instead of difficulty', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify(
@@ -258,10 +258,11 @@ describe('generatePuzzlePhrase', () => {
     const body = request?.body ? JSON.parse(String(request.body)) : null;
     const instruction = body?.contents?.[0]?.parts?.[0]?.text ?? '';
 
-    expect(instruction).toContain('usually 28-48 total characters');
-    expect(instruction).toContain('Anything within 20-');
-    expect(instruction).toContain('Do not force hard or expert lines to be long');
-    expect(instruction).toContain('"length_policy":"soft_recommendation_not_hard_gate"');
+    expect(instruction).toContain('Prefer 32-105 total characters for readability');
+    expect(instruction).toContain('anything within 24-');
+    expect(instruction).toContain('Do not use raw letter count or total character count as difficulty signals');
+    expect(instruction).toContain('"length_policy":"playability_bound_not_difficulty_signal"');
+    expect(instruction).not.toContain('recommended_letter_count_range');
   });
 
   it('passes Gemini safety settings derived from the requested safety mode', async () => {
@@ -339,7 +340,7 @@ describe('generatePuzzlePhrase', () => {
         JSON.stringify(
           geminiResponseWithText(
             JSON.stringify({
-              target_string: 'NEVER KILL THE VIBE TONIGHT',
+              target_string: 'NEVER SHIT THE VIBE TONIGHT',
               author: 'TEST AUTHOR',
               challenge_type: 'MOVIE_LINE',
             })

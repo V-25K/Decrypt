@@ -10,6 +10,7 @@ import {
   remainingBudget,
   ObstructionCosts,
   BLIND_TILE_COST,
+  estimateDifficultyFromObstructions,
   PADLOCK_CHAIN_COST,
   PADLOCK_KEY_EASY_DISCOUNT,
   PREFILL_REMOVAL_COST,
@@ -297,13 +298,13 @@ describe('obstruction budget system', () => {
     });
 
     // Easier/helper-rich text now earns more obstruction room instead of less.
-    expect(budget.total).toBe(18);
+    expect(budget.total).toBe(24);
     expect(budget.spent).toBe(0);
   });
 
-  it('computes budget for medium tier with moderate crypto hardness', () => {
-    const budget = computeObstructionBudget({
-      tier: 'medium',
+	  it('computes budget for medium tier with moderate crypto hardness', () => {
+	    const budget = computeObstructionBudget({
+	      tier: 'medium',
       difficulty: 5,
       cipherType: 'random',
       phraseUniqueLetters: 12,
@@ -312,9 +313,32 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.5,
     });
 
-    expect(budget.total).toBe(59);
-    expect(budget.spent).toBe(0);
-  });
+	    expect(budget.total).toBe(59);
+	    expect(budget.spent).toBe(0);
+	  });
+
+	  it('does not use total letter count when computing obstruction budget', () => {
+	    const baseContext = {
+	      tier: 'medium' as const,
+	      difficulty: 5,
+	      cipherType: 'random' as const,
+	      phraseUniqueLetters: 12,
+	      phraseOneLetterWords: 0,
+	      phraseSuffixCount: 1,
+	      cryptoHardness: 0.5,
+	      uniqueWordCount: 7,
+	    };
+	    const shortBudget = computeObstructionBudget({
+	      ...baseContext,
+	      totalLetters: 28,
+	    });
+	    const longBudget = computeObstructionBudget({
+	      ...baseContext,
+	      totalLetters: 120,
+	    });
+
+	    expect(longBudget.total).toBe(shortBudget.total);
+	  });
 
   it('computes budget for hard tier with high crypto hardness', () => {
     const budget = computeObstructionBudget({
@@ -327,7 +351,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.8,
     });
 
-    expect(budget.total).toBe(105);
+    expect(budget.total).toBe(95);
     expect(budget.spent).toBe(0);
   });
 
@@ -342,7 +366,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.9,
     });
 
-    expect(budget.total).toBe(21);
+    expect(budget.total).toBe(27);
     expect(budget.spent).toBe(0);
   });
 
@@ -357,16 +381,16 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.4,
     });
 
-    expect(budget.total).toBe(55);
+    expect(budget.total).toBe(59);
     expect(budget.spent).toBe(0);
 
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(8);
-    expect(remainingBudget(budget)).toBe(47);
+    expect(remainingBudget(budget)).toBe(51);
 
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(26);
-    expect(remainingBudget(budget)).toBe(29);
+    expect(remainingBudget(budget)).toBe(33);
   });
 
   it('does not exceed total budget when spending', () => {
@@ -380,13 +404,13 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.2,
     });
 
-    expect(budget.total).toBe(13);
+    expect(budget.total).toBe(19);
 
     spendBudget(budget, 10);
     expect(budget.spent).toBe(10);
 
     spendBudget(budget, 10);
-    expect(budget.spent).toBe(13); // Clamped to total
+    expect(budget.spent).toBe(19); // Clamped to total
     expect(remainingBudget(budget)).toBe(0);
   });
 
@@ -435,25 +459,25 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.6,
     });
 
-    expect(budget.total).toBe(105);
+    expect(budget.total).toBe(100);
 
     // Add 2 padlocks
     spendBudget(budget, PADLOCK_CHAIN_COST);
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(36);
-    expect(remainingBudget(budget)).toBe(69);
+    expect(remainingBudget(budget)).toBe(64);
 
     // Add 3 blind tiles
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(60);
-    expect(remainingBudget(budget)).toBe(45);
+    expect(remainingBudget(budget)).toBe(40);
 
     // Add another padlock and confirm remaining budget still tracks correctly
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(78);
-    expect(remainingBudget(budget)).toBe(27);
+    expect(remainingBudget(budget)).toBe(22);
   });
 
   it('computes non-zero spent budget for already-obstructed puzzles', () => {
@@ -500,5 +524,99 @@ describe('obstruction budget system', () => {
     });
 
     expect(easierTextBudget.total).toBeGreaterThan(harderTextBudget.total);
+  });
+});
+
+describe('board-aware difficulty estimate', () => {
+  const longPhrase =
+    'THE SIGNAL RETURNS WHEN THE PATTERN REPEATS AND THE LETTERS START HELPING EACH OTHER AGAIN';
+
+  const buildLongPuzzle = () =>
+    buildPuzzle({
+      levelId: 'lvl_board_aware',
+      dateKey: '2026-06-04',
+      text: longPhrase,
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: false,
+    }).puzzlePrivate;
+
+  const indicesForLetters = (puzzle: ReturnType<typeof buildLongPuzzle>, letters: string[]) => {
+    const allowed = new Set(letters);
+    return puzzle.tiles
+      .filter((tile) => tile.isLetter && allowed.has(tile.char))
+      .map((tile) => tile.index);
+  };
+
+  const firstLetterIndicesExcluding = (
+    puzzle: ReturnType<typeof buildLongPuzzle>,
+    excluded: Set<number>,
+    limit: number
+  ) =>
+    puzzle.tiles
+      .filter((tile) => tile.isLetter && !excluded.has(tile.index))
+      .map((tile) => tile.index)
+      .slice(0, limit);
+
+  it('does not label a long clue-rich board as hard just because it is long', () => {
+    const puzzle = buildLongPuzzle();
+    const prefilledIndices = indicesForLetters(puzzle, ['E', 'T']);
+    const estimated = estimateDifficultyFromObstructions({
+      ...puzzle,
+      prefilledIndices,
+      revealedIndices: prefilledIndices,
+      revealed_indices: prefilledIndices,
+      blindIndices: [],
+      lockIndices: [],
+      padlockChains: [],
+    });
+
+    expect(longPhrase.length).toBeGreaterThan(80);
+    expect(estimated).toBeLessThanOrEqual(5);
+  });
+
+  it('raises the same long phrase when the board has real blind and lock pressure', () => {
+    const puzzle = buildLongPuzzle();
+    const easyPrefills = indicesForLetters(puzzle, ['E', 'T']);
+    const easyEstimate = estimateDifficultyFromObstructions({
+      ...puzzle,
+      prefilledIndices: easyPrefills,
+      revealedIndices: easyPrefills,
+      revealed_indices: easyPrefills,
+      blindIndices: [],
+      lockIndices: [],
+      padlockChains: [],
+    });
+    const excluded = new Set(easyPrefills);
+    const lockIndices = firstLetterIndicesExcluding(puzzle, excluded, 22);
+    for (const index of lockIndices) {
+      excluded.add(index);
+    }
+    const blindIndices = firstLetterIndicesExcluding(puzzle, excluded, 8);
+    const obstructedEstimate = estimateDifficultyFromObstructions({
+      ...puzzle,
+      prefilledIndices: [],
+      revealedIndices: [],
+      revealed_indices: [],
+      blindIndices,
+      lockIndices,
+      padlockChains: [
+        {
+          chainId: 1,
+          keyIndices: [blindIndices[0] ?? 0],
+          lockedIndices: lockIndices.slice(0, 11),
+        },
+        {
+          chainId: 2,
+          keyIndices: [blindIndices[1] ?? 1],
+          lockedIndices: lockIndices.slice(11),
+        },
+      ],
+    });
+
+    expect(obstructedEstimate).toBeGreaterThanOrEqual(easyEstimate + 2);
+    expect(obstructedEstimate).toBeGreaterThanOrEqual(6);
   });
 });

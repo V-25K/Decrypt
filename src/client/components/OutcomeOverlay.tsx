@@ -3,6 +3,7 @@ import { cn } from '../utils';
 import { ReplayIcon, ShareIcon } from './Icons';
 import { UiSprite } from './UiSprite';
 import type { OutcomeCrowdBubble } from '../app/outcome-crowd';
+import { truncateOutcomeQuote } from '../app/outcome-quote';
 
 type OutcomeOverlayProps = {
   showSuccessOverlay: boolean;
@@ -15,19 +16,19 @@ type OutcomeOverlayProps = {
   criticalOutcomeAvatarCount: number;
   busy: boolean;
   share: () => Promise<void>;
+  nextChallenge: (event?: MouseEvent<HTMLButtonElement>) => void;
   isDailyComplete: boolean;
   retry: () => Promise<void>;
   openHome: () => void;
-  showPaidDailyRetryCta: boolean;
-  nextDailyRetryCost: number;
   subredditName: string | null;
   joiningCommunity: boolean;
   communityJoinRecorded: boolean;
   communityJoinLabel: string;
   handleJoinCommunity: () => Promise<void>;
-  outcomeTitle: string;
-  outcomeSubtitle: string;
   completionSolveLabel: string;
+  pointsGainedLabel: string | null;
+  ratingDeltaLabel: string | null;
+  ratingDeltaTone: 'negative' | 'neutral' | 'positive';
   completionQuote: string;
   puzzleAuthor: string;
   hasClaimableQuest: boolean;
@@ -45,24 +46,32 @@ export const OutcomeOverlay = memo(({
   criticalOutcomeAvatarCount,
   busy,
   share,
+  nextChallenge,
   isDailyComplete,
   retry,
   openHome,
-  showPaidDailyRetryCta,
-  nextDailyRetryCost,
   subredditName,
   joiningCommunity,
   communityJoinRecorded,
   communityJoinLabel,
   handleJoinCommunity,
-  outcomeTitle,
-  outcomeSubtitle,
   completionSolveLabel,
+  pointsGainedLabel,
+  ratingDeltaLabel,
+  ratingDeltaTone,
   completionQuote,
   puzzleAuthor,
   hasClaimableQuest,
   openQuest,
 }: OutcomeOverlayProps) => {
+  const displayedCompletionQuote = truncateOutcomeQuote(completionQuote);
+  const ratingDeltaValueClass =
+    ratingDeltaTone === 'positive'
+      ? 'text-emerald-100'
+      : ratingDeltaTone === 'negative'
+        ? 'text-rose-100'
+        : 'text-white';
+
   return (
     <section
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -159,14 +168,14 @@ export const OutcomeOverlay = memo(({
                     void share();
                   }}
                   disabled={busy}
-                  aria-label="Share as comment"
-                  title="Share as comment"
+                  aria-label="Share score as yourself"
+                  title="Share score as yourself"
                 >
                   <ShareIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
                 </button>
               )}
 
-              {!isDailyComplete && (
+              {showSuccessOverlay && !isDailyComplete && (
                 <button
                   type="button"
                   data-testid="overlay-play-again"
@@ -183,7 +192,6 @@ export const OutcomeOverlay = memo(({
                   <ReplayIcon className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6" />
                 </button>
               )}
-
               <button
                 type="button"
                 data-testid="overlay-go-home"
@@ -203,8 +211,22 @@ export const OutcomeOverlay = memo(({
                   className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6"
                 />
               </button>
+              <button
+                type="button"
+                data-testid="overlay-next-challenge"
+                className="btn-3d btn-primary flex h-11 items-center justify-center rounded-2xl px-4 text-[11px] font-black uppercase tracking-[0.04em] sm:h-12 sm:px-5 sm:text-[12px] md:h-14 md:px-6 md:text-[13px]"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  nextChallenge(event);
+                }}
+                disabled={busy}
+                aria-label="Next challenge"
+                title="Next challenge"
+              >
+                Next
+              </button>
             </div>
-
             {subredditName && (
               <div className="pointer-events-auto flex justify-end">
                 <button
@@ -274,61 +296,75 @@ export const OutcomeOverlay = memo(({
           </div>
         )}
 
-        <div className="mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col justify-center overflow-y-auto bg-transparent px-3 pb-20 pt-16 sm:px-4 sm:pb-24 sm:pt-20">
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col justify-center overflow-hidden bg-transparent px-3 pb-20 pt-16 sm:px-4 sm:pb-24 sm:pt-20">
           <div className="mx-auto flex w-full max-w-[500px] flex-col items-center text-center">
-            <header className="shrink-0" data-testid="outcome-overlay-header">
-              <h2 className="text-white text-[clamp(24px,5vw,36px)] font-black uppercase tracking-[0.05em]">
-                {outcomeTitle}
-              </h2>
-              {outcomeSubtitle.length > 0 && (
-                <p className="mt-1 text-sm font-semibold uppercase tracking-[0.04em] text-white/85">
-                  {outcomeSubtitle}
-                </p>
-              )}
-            </header>
-
-            {showPaidDailyRetryCta && !isDailyComplete && (
-              <button
-                type="button"
-                data-testid="overlay-paid-daily-retry"
-                className="btn-3d btn-primary mt-6 rounded-xl px-5 py-2 text-sm font-black uppercase tracking-[0.04em]"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void retry();
-                }}
-                disabled={busy}
-              >
-                Retry for {nextDailyRetryCost} coins
-              </button>
-            )}
-
-            {showSuccessOverlay && (
-              <div className="relative mt-10 w-full max-w-[500px] shrink-0 sm:mt-12">
-                <div
-                  data-testid="outcome-time-pill"
-                  className="absolute bottom-[calc(100%-1px)] left-1/2 flex -translate-x-1/2 translate-y-0 items-center gap-2 rounded-t-2xl border-x border-t border-white bg-transparent px-4 py-1.5"
-                >
-                  <span className="text-[11px] font-black uppercase tracking-[0.03em] text-white sm:text-[12px]">
-                    Time:
-                  </span>
-                  <span className="text-[clamp(17px,3.4vw,24px)] leading-none font-black tabular-nums text-white">
-                    {completionSolveLabel}
-                  </span>
-                </div>
+            {(showSuccessOverlay ||
+              displayedCompletionQuote.length > 0 ||
+              ratingDeltaLabel ||
+              pointsGainedLabel) && (
+              <div className="relative w-full max-w-[500px] shrink-0">
+                {showSuccessOverlay && (
+                  <div
+                    data-testid="outcome-time-pill"
+                    className="absolute bottom-[calc(100%-1px)] left-1/2 flex -translate-x-1/2 translate-y-0 items-center gap-2 rounded-t-2xl border-x border-t border-white bg-transparent px-4 py-1.5"
+                  >
+                    <span className="text-[11px] font-black uppercase tracking-[0.03em] text-white sm:text-[12px]">
+                      Time:
+                    </span>
+                    <span className="text-[clamp(17px,3.4vw,24px)] leading-none font-black tabular-nums text-white">
+                      {completionSolveLabel}
+                    </span>
+                  </div>
+                )}
 
                 <section
                   data-testid="outcome-overlay-quote"
-                  className="rounded-2xl border border-white bg-transparent px-3 py-3 text-center sm:px-5 sm:py-4"
+                  className="max-h-[44vh] overflow-hidden rounded-2xl border border-white bg-transparent px-3 py-3 text-center sm:max-h-[46vh] sm:px-5 sm:py-4"
                 >
                   <p className="text-4xl font-black leading-none text-white/85">"</p>
-                  <p className="mt-1 text-[clamp(16px,2.8vw,28px)] font-black leading-snug text-white">
-                    {completionQuote}
+                  <p className="outcome-quote-text mt-1 text-[clamp(12px,2.3vw,24px)] font-black leading-snug text-white">
+                    {displayedCompletionQuote}
                   </p>
                   <p className="outcome-quote-author mt-2 text-[clamp(14px,2.3vw,20px)] font-semibold text-white">
-                    {puzzleAuthor}
+                    ~ {puzzleAuthor}
                   </p>
                 </section>
+                {(ratingDeltaLabel || pointsGainedLabel) && (
+                  <div
+                    data-testid="outcome-rating-pill"
+                    className="absolute left-1/2 top-[calc(100%-1px)] flex -translate-x-1/2 translate-y-0 items-center gap-3 rounded-b-2xl border-x border-b border-white bg-transparent px-3 py-1"
+                  >
+                    {ratingDeltaLabel && (
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="text-[9px] font-black uppercase tracking-[0.03em] text-white sm:text-[10px]">
+                          Rating:
+                        </span>
+                        <span
+                          data-testid="outcome-rating-delta"
+                          className={cn(
+                            'text-[13px] leading-none font-black tabular-nums sm:text-[15px]',
+                            ratingDeltaValueClass
+                          )}
+                        >
+                          {ratingDeltaLabel}
+                        </span>
+                      </span>
+                    )}
+                    {pointsGainedLabel && (
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="text-[9px] font-black uppercase tracking-[0.03em] text-white sm:text-[10px]">
+                          Points:
+                        </span>
+                        <span
+                          data-testid="outcome-points-gained"
+                          className="text-[13px] leading-none font-black tabular-nums text-white sm:text-[15px]"
+                        >
+                          {pointsGainedLabel}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

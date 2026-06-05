@@ -201,6 +201,48 @@ describe('scheduler routes', () => {
     expect(reportFailureMock).not.toHaveBeenCalled();
   });
 
+  it('reads published receipts for a window in parallel', async () => {
+    vi.setSystemTime(new Date('2026-03-07T12:15:00Z'));
+    getDailyAutomationEnabledMock.mockResolvedValue(true);
+    countPublishedAutoDailyPuzzlesForDateMock.mockResolvedValue(1);
+    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0101', 'lvl_0102']);
+    const receiptResolvers: Array<() => void> = [];
+    getPuzzlePublicationReceiptMock.mockImplementation(
+      async (levelId: string) =>
+        await new Promise((resolve) => {
+          receiptResolvers.push(() =>
+            resolve({
+              postId: `t3_${levelId}`,
+              dateKey: '2026-03-07',
+              publishedAt: Date.parse('2026-03-07T12:05:00Z'),
+            })
+          );
+        })
+    );
+
+    const responsePromise = schedulerRoutes.request(
+      'http://localhost/publish-daily',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getPuzzlePublicationReceiptMock).toHaveBeenCalledTimes(2);
+    expect(receiptResolvers).toHaveLength(2);
+    for (const resolveReceipt of receiptResolvers) {
+      resolveReceipt();
+    }
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(publishStagedPuzzleMock).not.toHaveBeenCalled();
+    expect(generatePuzzleForDateMock).not.toHaveBeenCalled();
+  });
+
   it('stages tomorrow puzzles directly during generate-daily', async () => {
     getDailyAutomationEnabledMock.mockResolvedValue(true);
     stagePuzzleForTomorrowMock.mockResolvedValue({
@@ -343,9 +385,40 @@ describe('scheduler routes', () => {
           'Daily watchdog detected 1/2 published AUTO_DAILY puzzles for 2026-03-07.',
       },
     });
-    expect(runJobMock).toHaveBeenCalledWith({
-      name: 'decrypt-publish-daily-0000',
-      runAt: expect.any(Date),
+    expect(publishStagedPuzzleMock).toHaveBeenCalledTimes(1);
+    expect(runJobMock).not.toHaveBeenCalled();
+  });
+
+  it('verify-daily reports recovery publish failures without relying on cron windows', async () => {
+    getDailyAutomationEnabledMock.mockResolvedValue(true);
+    countPublishedAutoDailyPuzzlesForDateMock.mockResolvedValue(1);
+    const recoveryError = new Error('publish recovery failed');
+    publishStagedPuzzleMock.mockRejectedValue(recoveryError);
+
+    const response = await schedulerRoutes.request(
+      'http://localhost/verify-daily',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(publishStagedPuzzleMock).toHaveBeenCalledTimes(1);
+    expect(runJobMock).not.toHaveBeenCalled();
+    expect(reportFailureMock).toHaveBeenCalledWith({
+      source: 'scheduler.verify-daily.recovery',
+      dateKey: '2026-03-07',
+      error: recoveryError,
+    });
+    expect(reportFailureMock).toHaveBeenCalledWith({
+      source: 'scheduler.verify-daily',
+      dateKey: '2026-03-07',
+      error: {
+        reason:
+          'Daily watchdog detected 1/2 published AUTO_DAILY puzzles for 2026-03-07.',
+      },
     });
   });
 });

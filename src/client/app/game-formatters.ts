@@ -7,6 +7,7 @@ import {
   type QuestDefinition,
   type QuestReward,
 } from '../../shared/quests';
+import { challengeTypeMetadata, challengeTypeSchema } from '../../shared/game';
 import type { Inventory, PowerupType, QuestProgress } from './types';
 
 export const questCards: QuestDefinition[] = questCatalog;
@@ -130,27 +131,8 @@ export const formatChallengeType = (value: string | undefined): string => {
   if (normalized.length === 0) {
     return 'Quote';
   }
-  switch (normalized) {
-    case 'LYRIC_LINE':
-      return 'Lyric';
-    case 'MOVIE_LINE':
-      return 'Movie';
-    case 'ANIME_LINE':
-      return 'Anime';
-    case 'SPEECH_LINE':
-      return 'Speech';
-    case 'BOOK_LINE':
-      return 'Book';
-    case 'TV_LINE':
-      return 'TV';
-    case 'SAYING':
-      return 'Saying';
-    case 'PROVERB':
-      return 'Proverb';
-    case 'QUOTE':
-    default:
-      return 'Quote';
-  }
+  const parsed = challengeTypeSchema.safeParse(normalized);
+  return parsed.success ? challengeTypeMetadata[parsed.data].shortLabel : 'Quote';
 };
 
 export const formatDifficultyLabel = (value: number | undefined): string => {

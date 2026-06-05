@@ -16,6 +16,7 @@ export type AppViewStateParams = {
 export type AppViewState = {
   layoutTestId: string;
   isHomeScreen: boolean;
+  isCommunityScreen: boolean;
   isShopScreen: boolean;
   isQuestScreen: boolean;
   isStatsScreen: boolean;
@@ -38,12 +39,14 @@ export const getAppViewState = ({
   requiresPaidRetry,
 }: AppViewStateParams): AppViewState => {
   const isHomeScreen = activeScreen === 'home';
+  const isCommunityScreen = activeScreen === 'community';
   const isShopScreen = activeScreen === 'shop';
   const isQuestScreen = activeScreen === 'quest';
   const isStatsScreen = activeScreen === 'stats';
   const isLeaderboardScreen = activeScreen === 'leaderboard';
   const isHubScreen =
     isHomeScreen ||
+    isCommunityScreen ||
     isShopScreen ||
     isQuestScreen ||
     isStatsScreen ||
@@ -53,6 +56,7 @@ export const getAppViewState = ({
   return {
     layoutTestId: isInlineMode ? 'layout-inline' : 'layout-expanded-stacked',
     isHomeScreen,
+    isCommunityScreen,
     isShopScreen,
     isQuestScreen,
     isStatsScreen,

@@ -103,7 +103,7 @@ describe('adjustPuzzleDifficulty', () => {
     
     const result = await adjustPuzzleDifficulty({
       basePuzzle: basePuzzle.puzzlePrivate,
-      targetDifficulty: 6, // Same tier (medium)
+      targetDifficulty: 5, // Same tier (medium)
       budget,
       maxIterations: 5,
       rng,

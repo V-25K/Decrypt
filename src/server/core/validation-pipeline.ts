@@ -13,6 +13,7 @@
  */
 
 import type { PuzzlePrivate } from '../../shared/game.ts';
+import { dedupSignatureLookback } from '../../shared/puzzle-limits.ts';
 import type { HardnessBoundsByTier } from './content.ts';
 import {
   validateQuoteForPhase1,
@@ -69,10 +70,8 @@ export type ValidationPipeline = {
    * Duplicate detection: Check if text is too similar to recent challenges
    * Checks: normalized signature, token signature, endless reservations
    */
-  duplicate: (
-    text: string,
-    levelId?: string
-  ) => Promise<DuplicateCheckResult>;
+  // Self-exclusion needs signature history to store owner level IDs first.
+  duplicate: (text: string) => Promise<DuplicateCheckResult>;
 };
 
 /**
@@ -94,7 +93,7 @@ export type ValidationPipeline = {
  * }
  * 
  * // Duplicate check
- * const dup = await pipeline.duplicate(text, levelId);
+ * const dup = await pipeline.duplicate(text);
  * if (dup.duplicate) {
  *   console.error('Duplicate detected:', dup.reason);
  *   return;
@@ -123,10 +122,7 @@ export const createValidationPipeline = (
       return validatePuzzle(puzzle);
     },
 
-    duplicate: async (
-      text: string,
-      _levelId?: string
-    ): Promise<DuplicateCheckResult> => {
+    duplicate: async (text: string): Promise<DuplicateCheckResult> => {
       const normalizedSignature = normalizeContent(text);
       const tokenSignature = contentTokenSignature(text);
 
@@ -139,8 +135,9 @@ export const createValidationPipeline = (
         };
       }
 
-      // Check against recent challenges
-      const recentSignatureEntries = await getRecentUsedSignatureEntries(1200);
+      const recentSignatureEntries = await getRecentUsedSignatureEntries(
+        dedupSignatureLookback
+      );
       const nearDuplicate = isNearDuplicateSignature({
         candidateNormalizedSignature: normalizedSignature,
         candidateTokenSignature: tokenSignature,

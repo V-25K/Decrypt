@@ -87,9 +87,9 @@ afterEach(() => {
 
 describe('difficulty calibration math', () => {
   it('computes Bayesian smoothed win rate', () => {
-    expect(smoothedWinRate(0, 0)).toBe(0.6);
-    expect(smoothedWinRate(30, 30)).toBeCloseTo(0.9, 6);
-    expect(smoothedWinRate(0, 30)).toBeCloseTo(0.15, 6);
+    expect(smoothedWinRate(0, 0)).toBeCloseTo(0.666667, 6);
+    expect(smoothedWinRate(30, 30)).toBeCloseTo(0.944444, 6);
+    expect(smoothedWinRate(0, 30)).toBeCloseTo(0.111111, 6);
   });
 
   it('maps observed tiers at threshold boundaries', () => {
@@ -266,6 +266,39 @@ describe('difficulty calibration aggregation', () => {
     expect(snapshot.harderCount).toBe(0);
     expect(snapshot.easierCount).toBe(5);
     expect(snapshot.biasTierShift).toBe(-1);
+  });
+
+  it('responds when half of eligible levels agree on a bias direction', async () => {
+    redisGetMock.mockResolvedValue(null);
+    redisSetMock.mockResolvedValue(true);
+    const levelIds = ['lvl_0025', 'lvl_0026', 'lvl_0027', 'lvl_0028', 'lvl_0029', 'lvl_0030'];
+    const puzzlesByLevel = Object.fromEntries([
+      ['lvl_0025', makePuzzle({ levelId: 'lvl_0025', difficulty: 9, source: 'AUTO_DAILY' })],
+      ['lvl_0026', makePuzzle({ levelId: 'lvl_0026', difficulty: 9, source: 'AUTO_DAILY' })],
+      ['lvl_0027', makePuzzle({ levelId: 'lvl_0027', difficulty: 9, source: 'AUTO_DAILY' })],
+      ['lvl_0028', makePuzzle({ levelId: 'lvl_0028', difficulty: 5, source: 'AUTO_DAILY' })],
+      ['lvl_0029', makePuzzle({ levelId: 'lvl_0029', difficulty: 5, source: 'AUTO_DAILY' })],
+      ['lvl_0030', makePuzzle({ levelId: 'lvl_0030', difficulty: 5, source: 'AUTO_DAILY' })],
+    ]);
+    const telemetryByLevel = Object.fromEntries([
+      ['lvl_0025', makeTelemetry({ plays: 30, wins: 30 })],
+      ['lvl_0026', makeTelemetry({ plays: 30, wins: 30 })],
+      ['lvl_0027', makeTelemetry({ plays: 30, wins: 30 })],
+      ['lvl_0028', makeTelemetry({ plays: 30, wins: 15 })],
+      ['lvl_0029', makeTelemetry({ plays: 30, wins: 15 })],
+      ['lvl_0030', makeTelemetry({ plays: 30, wins: 15 })],
+    ]);
+
+    getAllLevelIdsMock.mockResolvedValue(levelIds);
+    getPuzzlePrivateMock.mockImplementation(async (levelId: string) => puzzlesByLevel[levelId] ?? null);
+    getQualifiedLevelTelemetryMock.mockImplementation(
+      async (levelId: string) => telemetryByLevel[levelId] ?? makeTelemetry()
+    );
+
+    const snapshot = await getGlobalDailyCalibrationSnapshot();
+    expect(snapshot.eligibleLevels).toBe(6);
+    expect(snapshot.harderCount).toBe(3);
+    expect(snapshot.biasTierShift).toBe(1);
   });
 
   it('falls back to default hardness bounds when data is sparse', async () => {

@@ -7,12 +7,16 @@ type BuildCompleteOutcomeStateParams = {
   levelId: string;
   completion: CompletionResult | null;
   solveSeconds: number | null;
+  ratingDelta?: number | null;
+  pointsGained?: number | null;
   savedAt?: number;
 };
 
 export const buildPersistedCompleteOutcomeState = ({
   levelId,
   completion,
+  ratingDelta,
+  pointsGained,
   solveSeconds,
   savedAt = Date.now(),
 }: BuildCompleteOutcomeStateParams): PersistedOutcomeState => ({
@@ -21,18 +25,23 @@ export const buildPersistedCompleteOutcomeState = ({
   isGameOver: false,
   completion,
   solveSeconds,
+  ratingDelta: ratingDelta ?? completion?.ratingDelta ?? null,
+  pointsGained: pointsGained ?? completion?.score ?? null,
   savedAt,
 });
 
 export const buildPersistedGameOverOutcomeState = (
   levelId: string,
-  savedAt = Date.now()
+  savedAt = Date.now(),
+  ratingDelta: number | null = null
 ): PersistedOutcomeState => ({
   levelId,
   isComplete: false,
   isGameOver: true,
   completion: null,
   solveSeconds: null,
+  ratingDelta,
+  pointsGained: null,
   savedAt,
 });
 

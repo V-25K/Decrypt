@@ -9,7 +9,10 @@ export const LoadingScreen = ({ className }: LoadingScreenProps) => {
     <section
       aria-live="polite"
       data-testid="loading-screen"
-      className={cn('loading-shell flex h-full w-full items-center justify-center px-5 py-6', className)}
+      className={cn(
+        'loading-shell flex min-h-full flex-1 items-center justify-center px-5 py-6',
+        className
+      )}
     >
       <img
         data-testid="loading-glass"

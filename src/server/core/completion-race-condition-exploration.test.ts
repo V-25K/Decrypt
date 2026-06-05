@@ -17,6 +17,7 @@ const {
   getUserProfileMock,
   getInventoryMock,
   getDailyRetryCountMock,
+  hasContinuedLevelMock,
   hasFailedLevelMock,
   markLevelCompletedMock,
   saveInventoryMock,
@@ -53,8 +54,9 @@ const {
   getPuzzlePrivateMock: vi.fn(),
   getUserProfileMock: vi.fn(),
   getInventoryMock: vi.fn(),
-  getDailyRetryCountMock: vi.fn(),
-  hasFailedLevelMock: vi.fn(),
+	  getDailyRetryCountMock: vi.fn(),
+	  hasContinuedLevelMock: vi.fn(),
+	  hasFailedLevelMock: vi.fn(),
   markLevelCompletedMock: vi.fn(),
   saveInventoryMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
@@ -97,18 +99,21 @@ vi.mock('./puzzle-store', () => ({
   getDailyPointer: vi.fn(),
   getPuzzlePrivate: getPuzzlePrivateMock,
   getPuzzlePublic: vi.fn(),
+  isPuzzleRemovedFromPlay: vi.fn(async () => false),
 }));
 
 vi.mock('./state', () => ({
   getCompletedLevels: vi.fn(),
   getDailyRetryCount: getDailyRetryCountMock,
   getInventory: getInventoryMock,
-  getUserProfile: getUserProfileMock,
-  hasFailedLevel: hasFailedLevelMock,
-  incrementDailyRetryCount: vi.fn(),
-  markLevelCompleted: markLevelCompletedMock,
-  markLevelFailed: vi.fn(),
-  registerKnownUser: vi.fn(),
+	  getUserProfile: getUserProfileMock,
+	  hasContinuedLevel: hasContinuedLevelMock,
+	  hasFailedLevel: hasFailedLevelMock,
+	  incrementDailyRetryCount: vi.fn(),
+	  markLevelCompleted: markLevelCompletedMock,
+	  markLevelFailed: vi.fn(),
+	  unmarkLevelFailed: vi.fn(),
+	  registerKnownUser: vi.fn(),
   saveInventory: saveInventoryMock,
   saveUserProfile: saveUserProfileMock,
   incrementUserEndlessCursor: incrementUserEndlessCursorMock,
@@ -127,9 +132,16 @@ vi.mock('./gameplay', () => ({
 
 vi.mock('./leaderboard', () => ({
   computeScore: computeScoreMock,
-  getUserRankSummary: getUserRankSummaryMock,
-  incrementAllTimeLogic: incrementAllTimeLogicMock,
-  recordAllTimeLevelScore: recordAllTimeLevelScoreMock,
+	  getUserRankSummary: getUserRankSummaryMock,
+	  incrementAllTimeLogic: incrementAllTimeLogicMock,
+	  recordGlobalLoss: vi.fn(),
+	  recordGlobalWin: vi.fn(async ({ profile }) => ({
+	    profile,
+	    ratingDelta: 0,
+	    ratingAfter: profile.globalRating,
+	    globalScoreDelta: 0,
+	  })),
+	  recordAllTimeLevelScore: recordAllTimeLevelScoreMock,
   recordDailyScore: recordDailyScoreMock,
 }));
 
@@ -271,9 +283,10 @@ describe('Completion Race Condition Bug Condition - Exploration Test', () => {
     getSessionStateMock.mockResolvedValue(sessionFixture());
     getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
     getUserProfileMock.mockResolvedValue(profileFixture());
-    getInventoryMock.mockResolvedValue(inventoryFixture());
-    getDailyRetryCountMock.mockResolvedValue(0);
-    hasFailedLevelMock.mockResolvedValue(false);
+	    getInventoryMock.mockResolvedValue(inventoryFixture());
+	    getDailyRetryCountMock.mockResolvedValue(0);
+	    hasContinuedLevelMock.mockResolvedValue(false);
+	    hasFailedLevelMock.mockResolvedValue(false);
     computeScoreMock.mockReturnValue(120);
     getUserRankSummaryMock.mockResolvedValue({ currentRank: 1 });
     

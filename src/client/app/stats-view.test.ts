@@ -32,6 +32,13 @@ const profile = (overrides: Partial<Profile> = {}): Profile => ({
   endlessModeClears: 0,
   dailySolveTimeTotalSec: 0,
   endlessSolveTimeTotalSec: 0,
+  globalRating: 500,
+  globalScore: 0,
+  ratingGames: 0,
+  ratingWins: 0,
+  ratingLosses: 0,
+  globalWinStreak: 0,
+  bestGlobalRank: 0,
   bestOverallRank: 0,
   audioEnabled: true,
   communityJoinRewardClaimed: false,
@@ -42,6 +49,7 @@ const profile = (overrides: Partial<Profile> = {}): Profile => ({
 
 const rankSummary = (overrides: Partial<RankSummary> = {}): RankSummary => ({
   dailyRank: 3,
+  globalRank: 7,
   endlessRank: 7,
   currentRank: 3,
   bestOverallRank: 2,
@@ -77,31 +85,41 @@ describe('getStatsView', () => {
       { label: 'First Try Wins', value: '2' },
       { label: 'Quest Completed', value: '9' },
       { label: 'Current Rank', value: '#3' },
-      { label: 'All-Time Best Ranking', value: '#2' },
+      { label: 'Best Overall Rank', value: '#2' },
     ]);
   });
 
-  it('builds endless stat cards and endless leaderboard rank', () => {
+  it('builds global stat cards and global leaderboard rank', () => {
     const view = getStatsView({
-      leaderboardTab: 'endless',
+      leaderboardTab: 'global',
       profile: profile({
         endlessModeClears: 2,
+        dailyModeClears: 1,
+        dailySolveTimeTotalSec: 95,
         endlessSolveTimeTotalSec: 185,
-        endlessCurrentStreak: 5,
-        endlessFlawlessWins: 4,
-        endlessSpeedWins: 1,
-        endlessChallengesPlayed: 8,
-        endlessFirstTryWins: 3,
+        globalRating: 712,
+        globalScore: 2100,
+        ratingGames: 10,
+        ratingWins: 8,
+        ratingLosses: 2,
+        globalWinStreak: 5,
+        totalLevelsCompleted: 3,
+        bestGlobalRank: 6,
         bestOverallRank: 6,
       }),
       rankSummary: rankSummary({ bestOverallRank: null }),
-      statsTab: 'endless',
+      statsTab: 'global',
     });
 
     expect(view.activeLeaderboardRank).toBe(7);
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Rating', value: '712' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Total Points', value: '2,100' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Rated Games', value: '10' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Win Rate', value: '80%' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Challenges Cleared', value: '3' });
     expect(view.visibleStatsCards).toContainEqual({ label: 'Avg Solve Time', value: '01:33' });
     expect(view.visibleStatsCards).toContainEqual({ label: 'Current Rank', value: '#7' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'All-Time Best Ranking', value: '#6' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Best Global Rank', value: '#6' });
   });
 
   it('shows unranked labels when rank data is absent', () => {
@@ -115,8 +133,30 @@ describe('getStatsView', () => {
     expect(view.activeLeaderboardRank).toBeNull();
     expect(view.visibleStatsCards).toContainEqual({ label: 'Current Rank', value: '--' });
     expect(view.visibleStatsCards).toContainEqual({
-      label: 'All-Time Best Ranking',
+      label: 'Best Overall Rank',
       value: '--',
     });
+  });
+
+  it('falls back safely when legacy profiles omit global rating fields', () => {
+    const view = getStatsView({
+      leaderboardTab: 'global',
+      profile: profile({
+        globalRating: undefined,
+        globalScore: undefined,
+        ratingGames: undefined,
+        ratingWins: undefined,
+        ratingLosses: undefined,
+        globalWinStreak: undefined,
+        bestGlobalRank: undefined,
+      }),
+      rankSummary: null,
+      statsTab: 'global',
+    });
+
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Rating', value: '500' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Total Points', value: '0' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Win Rate', value: '--' });
+    expect(view.visibleStatsCards).toContainEqual({ label: 'Best Global Rank', value: '--' });
   });
 });

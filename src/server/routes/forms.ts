@@ -5,6 +5,7 @@ import {
   ManualChallengePreflightFailedError,
   preflightManualChallengeForPublish,
 } from '../core/admin';
+import { clearSubredditGameData } from '../core/playtest-reset';
 import {
   difficultyToTier,
   looksLikeAllowedAuthor,
@@ -12,7 +13,13 @@ import {
   sanitizeAuthor,
   sanitizePhrase,
 } from '../core/content';
-import { challengeTypeSchema, type ChallengeType } from '../../shared/game';
+import {
+  challengeTypeDisplayOrder,
+  challengeTypeMetadata,
+  challengeTypeSchema,
+  challengeTypeSelectionHelpText,
+  type ChallengeType,
+} from '../../shared/game';
 import { context } from '@devvit/web/server';
 import { hasAdminAccess } from '../core/admin-auth';
 
@@ -27,6 +34,10 @@ type ModInjectReviewFormRequest = {
   author?: unknown;
   difficulty?: unknown;
   challengeType?: unknown;
+};
+
+type ModClearSubredditDataFormRequest = {
+  confirmation?: unknown;
 };
 
 type ManualPublishFailure = {
@@ -73,11 +84,16 @@ const buildValidationHint = (params: {
     return 'Quote already used or too similar.';
   }
   if (isFairBuildFailureReason(primaryReason)) {
-    return `Quote fits ${formatTier(params.naturalDifficulty)}, but the current board build is unfair. Try again.`;
+    return `The game engine couldn't generate a solvable ${formatTier(
+      params.naturalDifficulty
+    )} board for this quote. Try a shorter quote or another tier.`;
   }
   if (isBuildabilityVerificationReason(primaryReason)) {
     const traceId = extractTraceId(primaryReason);
-    return `Quote looks ${formatTier(params.naturalDifficulty)}, but preview build failed. Try again${traceId ? `. Ref ${traceId}` : ''}.`;
+    if (traceId) {
+      console.error(`Manual puzzle preview build failed. Trace ${traceId}.`);
+    }
+    return `The game engine couldn't preview this quote. Try again, or use a shorter quote.`;
   }
   if (isTargetTierMismatchReason(primaryReason)) {
     return `Selected ${formatTier(params.targetTier ?? params.naturalDifficulty)} doesn't fit. Best fit: ${formatTier(
@@ -140,17 +156,10 @@ const difficultyBandToValue: Record<string, number> = {
   challenging: 8,
 };
 
-const challengeTypeOptions = [
-  { label: 'Quote', value: 'QUOTE' },
-  { label: 'Saying', value: 'SAYING' },
-  { label: 'Proverb', value: 'PROVERB' },
-  { label: 'Speech', value: 'SPEECH_LINE' },
-  { label: 'Book / Literature', value: 'BOOK_LINE' },
-  { label: 'Movie', value: 'MOVIE_LINE' },
-  { label: 'TV', value: 'TV_LINE' },
-  { label: 'Anime', value: 'ANIME_LINE' },
-  { label: 'Lyric', value: 'LYRIC_LINE' },
-] as const;
+const challengeTypeOptions = challengeTypeDisplayOrder.map((value) => ({
+  label: challengeTypeMetadata[value].label,
+  value,
+}));
 
 const representativeDifficultyByTier = {
   warmup: 2,
@@ -255,16 +264,31 @@ const buildReviewSummary = (params: {
     params.validation.naturalDifficulty
   );
   const profile = params.validation.textProfile;
+  const cryptoHardness = profile.cryptoHardness.toFixed(2);
+  const hardnessCue =
+    profile.cryptoHardness >= 0.72 || profile.uniqueLetterCount >= 19
+      ? 'high letter variety'
+      : profile.cryptoHardness <= 0.4 || profile.uniqueLetterCount <= 11
+        ? 'clue-friendly repetition'
+        : 'balanced letter mix';
   return [
     `"${params.text}"`,
     '',
     `Detected difficulty: ${formatTier(recommendedTier)}`,
     `Achievable range: ${formatTierRange(params.validation.achievableTierRange)}`,
-    `Crypto hardness: ${profile.cryptoHardness.toFixed(2)} / 1.00`,
+    `Crypto hardness: ${cryptoHardness} - ${hardnessCue}`,
     `Unique letters: ${profile.uniqueLetterCount}`,
     `Total letters: ${profile.totalLetters ?? 0}`,
     `Word count: ${profile.wordCount ?? 0}`,
   ].join('\n');
+};
+
+const formatQuoteExcerpt = (text: string): string => {
+  const compact = text.trim().replace(/\s+/g, ' ');
+  if (compact.length <= 30) {
+    return compact;
+  }
+  return `${compact.slice(0, 27)}...`;
 };
 
 const buildReviewFormResponse = (params: {
@@ -310,7 +334,6 @@ const buildReviewFormResponse = (params: {
             type: 'paragraph',
             name: 'text',
             label: 'Manual puzzle text',
-            required: true,
             defaultValue: params.text,
             disabled: true,
             helpText: 'To change the quote, go back to step 1 and analyze the new text.',
@@ -344,6 +367,7 @@ const buildReviewFormResponse = (params: {
             multiSelect: false,
             defaultValue: [params.challengeType],
             options: [...challengeTypeOptions],
+            helpText: challengeTypeSelectionHelpText,
           },
         ],
       },
@@ -616,7 +640,11 @@ forms.post('/mod-inject-review-submit', async (c) => {
     }
     return c.json<UiResponse>(
       {
-        showToast: `Manual puzzle published as ${formatTier(difficultyToTier(result.difficulty ?? difficulty))} (${result.difficulty ?? difficulty}/10): ${result.levelId}`,
+        showToast: `${formatTier(difficultyToTier(result.difficulty ?? difficulty))} puzzle published${
+          difficultyToTier(result.difficulty ?? difficulty) !== difficultyToTier(difficulty)
+            ? ` (adjusted from ${formatTier(difficultyToTier(difficulty))})`
+            : ''
+        } - "${formatQuoteExcerpt(text)}"`,
       },
       200
     );
@@ -638,6 +666,44 @@ forms.post('/mod-inject-review-submit', async (c) => {
           : publishFailure
           ? `Puzzle saved as ${publishFailure.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
           : `Failed to publish manual puzzle: ${reason}`,
+      },
+      200
+    );
+  }
+});
+
+forms.post('/mod-clear-subreddit-data-submit', async (c) => {
+  const allowed = await hasAdminAccess({
+    subredditName: context.subredditName,
+    username: context.username,
+  });
+  if (!allowed) {
+    return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
+  }
+  try {
+    const body = await c.req.json<ModClearSubredditDataFormRequest>();
+    const confirmation = firstValue(body.confirmation);
+    if (confirmation !== 'CLEAR') {
+      return c.json<UiResponse>(
+        { showToast: 'Type CLEAR to confirm clearing subreddit game data.' },
+        200
+      );
+    }
+    const result = await clearSubredditGameData();
+    return c.json<UiResponse>(
+      {
+        showToast:
+          `Cleared subreddit game data for ${result.knownUsers} player(s), ` +
+          `${result.sessions} session(s), and ${result.deletedKeys} key(s).`,
+      },
+      200
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Error clearing subreddit game data: ${reason}`);
+    return c.json<UiResponse>(
+      {
+        showToast: `Failed to clear subreddit game data: ${reason}`,
       },
       200
     );

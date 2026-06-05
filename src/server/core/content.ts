@@ -1,6 +1,12 @@
+import {
+  maxPuzzleTotalLength as sharedMaxPuzzleTotalLength,
+  minPlayablePuzzleTotalLength as sharedMinPlayablePuzzleTotalLength,
+} from '../../shared/puzzle-limits';
+import { commonWordRank, topCommonWords } from './common-word-ranks';
+
 export const maxPuzzleWordLength = 12;
-export const maxPuzzleTotalLength = 50;
-export const minPlayablePuzzleTotalLength = 12;
+export const maxPuzzleTotalLength = sharedMaxPuzzleTotalLength;
+export const minPlayablePuzzleTotalLength = sharedMinPlayablePuzzleTotalLength;
 export const maxPuzzleAuthorLength = 28;
 const maxAlphabetLetters = 26;
 const absoluteEntropyMax = Math.log2(maxAlphabetLetters);
@@ -20,10 +26,6 @@ const bannedExactWords = [
   'SHIT',
   'BITCH',
   'ASSHOLE',
-  'BASTARD',
-  'SLUR',
-  'HATE',
-  'KILL',
   'SUICIDE',
   'RAPE',
 ];
@@ -371,6 +373,23 @@ const countLetters = (text: string): number =>
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
+const wordPatternSignature = (word: string): string => {
+  const seen = new Map<string, number>();
+  let next = 0;
+  const signature: string[] = [];
+  for (const char of word) {
+    const existing = seen.get(char);
+    if (existing !== undefined) {
+      signature.push(String.fromCharCode(65 + existing));
+      continue;
+    }
+    seen.set(char, next);
+    signature.push(String.fromCharCode(65 + next));
+    next += 1;
+  }
+  return signature.join('');
+};
+
 export type PhraseDifficultyProfile = {
   totalLength: number;
   totalLetters: number;
@@ -386,6 +405,14 @@ export type PhraseDifficultyProfile = {
   twoLetterWordCount: number;
   commonSuffixCount: number;
   commonBigramRatio: number;
+  lexiconCoverageRatio: number;
+  topCommonWordRatio: number;
+  rareWordRatio: number;
+  anchorWordCount: number;
+  shortWordAnchorCount: number;
+  commonPatternCount: number;
+  repeatedPatternScore: number;
+  anchorDensity: number;
   cryptoHardness: number;
 };
 
@@ -419,10 +446,31 @@ export const computePhraseDifficultyProfile = (
   const averageWordLength = wordCount > 0 ? totalLetters / wordCount : 0;
   const oneLetterWordCount = words.filter((word) => word.length === 1).length;
   const twoLetterWordCount = words.filter((word) => word.length === 2).length;
+  const knownWordCount = words.filter((word) => commonWordRank.has(word)).length;
+  const topCommonWordCount = words.filter((word) => topCommonWords.has(word)).length;
+  const rareWordCount = words.filter((word) => {
+    const rank = commonWordRank.get(word);
+    return rank === undefined || rank > 450;
+  }).length;
   const commonSuffixCount = words.filter((word) =>
     word.length >= minimumSuffixWordLength &&
     commonDifficultySuffixes.some((suffix) => word.endsWith(suffix))
   ).length;
+  const shortWordAnchorCount = words.filter(
+    (word) => word.length <= 3 && topCommonWords.has(word)
+  ).length;
+  const patternFrequency = new Map<string, number>();
+  for (const word of words) {
+    if (word.length < 3) {
+      continue;
+    }
+    const pattern = `${word.length}:${wordPatternSignature(word)}`;
+    patternFrequency.set(pattern, (patternFrequency.get(pattern) ?? 0) + 1);
+  }
+  const repeatedPatternCount = [...patternFrequency.values()].reduce(
+    (sum, count) => sum + Math.max(0, count - 1),
+    0
+  );
   const bigramFrequency = new Map<string, number>();
   let totalBigrams = 0;
   let commonBigramCount = 0;
@@ -451,6 +499,17 @@ export const computePhraseDifficultyProfile = (
   const bigramEntropy = bigramEntropyMax > 0 ? rawBigramEntropy / bigramEntropyMax : 0;
   const normalizedBigramEntropy = clamp01(bigramEntropy);
   const commonBigramRatio = totalBigrams > 0 ? commonBigramCount / totalBigrams : 0;
+  const lexiconCoverageRatio = wordCount > 0 ? knownWordCount / wordCount : 0;
+  const topCommonWordRatio = wordCount > 0 ? topCommonWordCount / wordCount : 0;
+  const rareWordRatio = wordCount > 0 ? rareWordCount / wordCount : 0;
+  const commonPatternCount =
+    shortWordAnchorCount + commonSuffixCount + Math.round(commonBigramRatio * Math.max(1, wordCount));
+  const repeatedPatternScore = wordCount > 0 ? repeatedPatternCount / wordCount : 0;
+  const anchorWordCount = Math.min(
+    wordCount,
+    shortWordAnchorCount + commonSuffixCount + repeatedPatternCount
+  );
+  const anchorDensity = wordCount > 0 ? anchorWordCount / wordCount : 0;
 
   const uniquenessCoverage =
     totalLetters > 0 ? uniqueLetterCount / Math.min(maxAlphabetLetters, totalLetters) : 0;
@@ -483,6 +542,14 @@ export const computePhraseDifficultyProfile = (
     twoLetterWordCount,
     commonSuffixCount,
     commonBigramRatio,
+    lexiconCoverageRatio,
+    topCommonWordRatio,
+    rareWordRatio,
+    anchorWordCount,
+    shortWordAnchorCount,
+    commonPatternCount,
+    repeatedPatternScore,
+    anchorDensity,
     cryptoHardness,
   };
 };
@@ -556,14 +623,6 @@ const resolveHardnessBounds = (
 
 export type QuotePromptProfile = {
   tier: DifficultyTier;
-  lengthBounds: {
-    min: number;
-    max: number;
-  };
-  letterBounds: {
-    min: number;
-    max: number;
-  };
   wordCountBounds: {
     min: number;
     max: number;
@@ -599,44 +658,36 @@ export const quotePromptProfileForDifficulty = (
   const tier = difficultyToTier(difficulty);
   const hardnessBounds = resolveHardnessBounds(tier, hardnessBoundsByTier);
   if (tier === 'warmup') {
-    return {
-      tier,
-      lengthBounds: { min: 15, max: 25 },
-      letterBounds: { min: 12, max: 20 },
-      wordCountBounds: { min: 3, max: 5 },
-      recommendedMinUniqueWords: 3,
-      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
+	    return {
+	      tier,
+	      wordCountBounds: { min: 3, max: 7 },
+	      recommendedMinUniqueWords: 3,
+	      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
       cryptoHardnessBounds: { ...hardnessBounds.cryptoHardnessBounds },
     };
   }
   if (tier === 'medium') {
-    return {
-      tier,
-      lengthBounds: { min: 26, max: 40 },
-      letterBounds: { min: 18, max: 32 },
-      wordCountBounds: { min: 5, max: 8 },
-      recommendedMinUniqueWords: 4,
-      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
+	    return {
+	      tier,
+	      wordCountBounds: { min: 5, max: 12 },
+	      recommendedMinUniqueWords: 4,
+	      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
       cryptoHardnessBounds: { ...hardnessBounds.cryptoHardnessBounds },
     };
   }
   if (tier === 'hard') {
-    return {
-      tier,
-      lengthBounds: { min: 41, max: 50 },
-      letterBounds: { min: 24, max: 40 },
-      wordCountBounds: { min: 7, max: 10 },
-      recommendedMinUniqueWords: 5,
-      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
+	    return {
+	      tier,
+	      wordCountBounds: { min: 7, max: 18 },
+	      recommendedMinUniqueWords: 5,
+	      uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
       cryptoHardnessBounds: { ...hardnessBounds.cryptoHardnessBounds },
     };
   }
-  return {
-    tier,
-    lengthBounds: { min: 41, max: maxPuzzleTotalLength },
-    letterBounds: { min: 28, max: 44 },
-    wordCountBounds: { min: 8, max: 12 },
-    recommendedMinUniqueWords: 6,
+	  return {
+	    tier,
+	    wordCountBounds: { min: 10, max: 24 },
+	    recommendedMinUniqueWords: 6,
     uniqueLetterBounds: { ...hardnessBounds.uniqueLetterBounds },
     cryptoHardnessBounds: { ...hardnessBounds.cryptoHardnessBounds },
   };
@@ -647,15 +698,15 @@ export const quotePassesTierLength = (
   tier: DifficultyTier
 ): boolean => {
   if (tier === 'warmup') {
-    return text.length >= 15 && text.length <= 25;
+    return text.length >= 15 && text.length <= 35;
   }
   if (tier === 'medium') {
-    return text.length >= 26 && text.length <= 40;
+    return text.length >= 26 && text.length <= 70;
   }
   if (tier === 'hard') {
-    return text.length >= 41 && text.length <= 50;
+    return text.length >= 41 && text.length <= 105;
   }
-  return text.length >= 41 && text.length <= maxPuzzleTotalLength;
+  return text.length >= 60 && text.length <= maxPuzzleTotalLength;
 };
 
 export const quotePassesTierHardness = (
@@ -737,28 +788,6 @@ export const scorePhraseDifficultyAgainstTier = (
     hardnessBoundsByTier
   );
   const rawIssues: Array<{ penalty: number; message: string }> = [];
-  const lengthPenalty = softRangePenalty(
-    profile.totalLength,
-    promptProfile.lengthBounds,
-    { belowScale: 14, aboveScale: 18, belowWeight: 1, aboveWeight: 0.55 }
-  );
-  pushIssueIfMeaningful(
-    rawIssues,
-    lengthPenalty,
-    `Quote is outside the usual ${tier} presentation length.`
-  );
-
-  const letterPenalty = softRangePenalty(
-    profile.totalLetters,
-    promptProfile.letterBounds,
-    { belowScale: 8, aboveScale: 12, belowWeight: 1, aboveWeight: 0.3 }
-  );
-  pushIssueIfMeaningful(
-    rawIssues,
-    letterPenalty,
-    `Quote does not have the usual letter volume for ${tier}.`
-  );
-
   const uniqueWordPenalty = softRangePenalty(
     profile.uniqueWordCount,
     {
@@ -808,8 +837,6 @@ export const scorePhraseDifficultyAgainstTier = (
   );
 
   const score =
-    lengthPenalty * 0.8 +
-    letterPenalty * 1 +
     uniqueWordPenalty * 1.1 +
     uniqueLetterPenalty * 1.2 +
     hardnessPenalty * 1.5 +

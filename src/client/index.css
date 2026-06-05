@@ -44,7 +44,7 @@ body,
 }
 
 .loading-shell {
-  background: #111111;
+  background: transparent;
 }
 
 .loading-glass-mark {
@@ -790,6 +790,31 @@ body,
   background: transparent;
 }
 
+.challenge-live .puzzle-readability-backdrop {
+  position: relative;
+  isolation: isolate;
+}
+
+.challenge-live .puzzle-readability-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: -10px -12px -10px;
+  z-index: -1;
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.18) 12%, rgba(0, 0, 0, 0.18) 88%, rgba(0, 0, 0, 0)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.16) 18%, rgba(0, 0, 0, 0.16) 82%, rgba(0, 0, 0, 0));
+  filter: blur(14px);
+  pointer-events: none;
+}
+
+.challenge-live .tile-btn,
+.challenge-live .puzzle-punctuation-mark {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.78),
+    0 0 8px rgba(0, 0, 0, 0.46);
+}
+
 .challenge-live .tile-btn:hover:not(:disabled),
 .challenge-live .tile-btn:active:not(:disabled) {
   transform: none;
@@ -994,7 +1019,15 @@ body,
 .outcome-quote-author {
   background: transparent;
   box-shadow: none;
+  text-align: right;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
+}
+
+.outcome-quote-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 @keyframes quest-blink {

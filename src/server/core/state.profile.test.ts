@@ -13,8 +13,13 @@ describe('defaultUserProfile', () => {
     expect(profile.dailyChallengesPlayed).toBe(0);
     expect(profile.endlessChallengesPlayed).toBe(0);
     expect(profile.dailyFirstTryWins).toBe(0);
-    expect(profile.endlessFirstTryWins).toBe(0);
-    expect(profile.bestOverallRank).toBe(0);
+	    expect(profile.endlessFirstTryWins).toBe(0);
+	    expect(profile.globalRating).toBe(500);
+	    expect(profile.globalScore).toBe(0);
+	    expect(profile.ratingGames).toBe(0);
+	    expect(profile.globalWinStreak).toBe(0);
+	    expect(profile.bestGlobalRank).toBe(0);
+	    expect(profile.bestOverallRank).toBe(0);
     expect(profile.communityJoinRewardClaimed).toBe(false);
   });
 });

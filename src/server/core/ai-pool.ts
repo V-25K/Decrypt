@@ -1,5 +1,6 @@
 import { redis } from '@devvit/web/server';
 import { z } from 'zod';
+import { dedupSignatureLookback } from '../../shared/puzzle-limits';
 import {
   normalizeContent,
   difficultyToTier,
@@ -63,7 +64,7 @@ type AIPoolCandidate = {
   createdAt: number;
 };
 
-const aiPoolTargetSizePerBucket = 4;
+const aiPoolTargetSizePerBucket = 6;
 const aiPoolCandidateTtlMs = 72 * 60 * 60 * 1000;
 const aiPoolBatchFillSize = 3;
 const aiPoolCleanupConcurrency = 10;
@@ -372,7 +373,9 @@ const fillBucket = async (params: {
   });
 
   const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
-  const recentSignatureEntries = await getRecentUsedSignatureEntries(1200);
+  const recentSignatureEntries = await getRecentUsedSignatureEntries(
+    dedupSignatureLookback
+  );
   const filtered = filterCandidateBatch({
     candidates: batch.candidates,
     preferredType: params.challengeType,
