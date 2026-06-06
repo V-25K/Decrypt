@@ -14,10 +14,10 @@ export type CompletionConfettiApi = {
   setConfettiCanvasNode: RefCallback<HTMLCanvasElement>;
 };
 
-export const canUseCanvasConfetti = (): boolean =>
+const canUseCanvasConfetti = (): boolean =>
   typeof navigator === 'undefined' || !/jsdom/i.test(navigator.userAgent);
 
-export const canInitializeConfettiCanvas = (_canvas: HTMLCanvasElement): boolean => {
+const canInitializeConfettiCanvas = (_canvas: HTMLCanvasElement): boolean => {
   if (
     typeof navigator !== 'undefined' &&
     typeof navigator.userAgent === 'string' &&

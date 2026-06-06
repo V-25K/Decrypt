@@ -28,6 +28,7 @@ import {
   updateQuestProgressOnPurchase,
   updateQuestProgressOnRefund,
 } from '../core/quests';
+import { numberFromHash } from '../core/hash';
 
 type PaymentOrderProduct = {
   sku: string;
@@ -114,19 +115,6 @@ const defaultPaymentInventorySnapshot = (): Inventory => ({
   shield: 0,
   rocket: 0,
 });
-
-const numberFromHash = (
-  hash: Record<string, string>,
-  field: string,
-  fallback: number
-): number => {
-  const raw = hash[field];
-  if (raw === undefined) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
 
 const parseStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) {

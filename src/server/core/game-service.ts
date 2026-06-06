@@ -61,7 +61,6 @@ import {
   qualifiesForFastSolveBonus,
   flawlessBonusCoins,
   getDailyRetryScoreFactor,
-  heartsPerRun,
   minSolveSeconds,
   sessionInactivityThresholdMs,
 } from './constants';
@@ -109,6 +108,7 @@ import {
   keyUserDailyRetryCounts,
   keyUserProfile,
 } from './keys';
+import { recordShadowDifficultyOutcomeSafely } from './difficulty-shadow-rating';
 
 const assertUserId = (): string => {
   const userId = context.userId;
@@ -1155,6 +1155,18 @@ export const submitGuessForSession = async (params: {
 	            targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
 	          })
 	        : Promise.resolve(),
+	      nextSession.guessCount >= 1
+	        ? recordShadowDifficultyOutcomeSafely({
+	            userId,
+	            levelId: params.levelId,
+	            puzzle,
+	            outcome: 'failure',
+	            mistakes: nextSession.mistakesMade,
+	            usedPowerups: nextSession.usedPowerups,
+	            retryCount: retryCountForTelemetry,
+	            targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+	          })
+	        : Promise.resolve(),
 	    ]);
 	  }
   const afterPadlockStatus = checkPadlockStatus(
@@ -1524,6 +1536,21 @@ export const completeSessionForLevel = async (params: {
     if (hasMeaningfulInteraction) {
       await runCompletionStep('record_qualified_win', async () => {
         await recordQualifiedLevelWin(params.levelId, userId, {
+          solveSeconds,
+          mistakes: trackedSession.mistakesMade,
+          usedPowerups: trackedSession.usedPowerups,
+          retryCount: dailyRetryCount,
+          targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+        });
+      });
+    }
+    if (hasMeaningfulInteraction) {
+      await runCompletionStep('record_shadow_difficulty_win', async () => {
+        await recordShadowDifficultyOutcomeSafely({
+          userId,
+          levelId: params.levelId,
+          puzzle,
+          outcome: 'win',
           solveSeconds,
           mistakes: trackedSession.mistakesMade,
           usedPowerups: trackedSession.usedPowerups,
@@ -1960,4 +1987,3 @@ export const trackShareQuest = async (params: {
   });
 };
 
-export const getRuntimeHeartsPerRun = () => heartsPerRun;

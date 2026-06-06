@@ -22,7 +22,13 @@ import {
   PuzzlePublishInProgressError,
   publishAndActivateDailyPost,
 } from './generator';
-import type { ChallengeType, DifficultyBreakdown, PuzzlePrivate, PuzzlePublic } from '../../shared/game';
+import type {
+  ChallengeEvaluationSummary,
+  ChallengeType,
+  DifficultyBreakdown,
+  PuzzlePrivate,
+  PuzzlePublic,
+} from '../../shared/game';
 import {
   containsDisallowedContent,
   computePhraseDifficultyProfile,
@@ -45,20 +51,12 @@ import {
   type PuzzleDifficultyContext,
 } from './puzzle';
 import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
-import { buildDifficultyBreakdown } from './difficulty-model';
+import { buildChallengeEvaluation } from './challenge-evaluation';
 import { getDecryptSettings } from './config';
 import { deriveSeed, mulberry32 } from './rng';
 import { formatDateKey } from './serde';
 import { trackDifficultyAdjustment } from './metrics';
 import { createValidationPipeline } from './validation-pipeline';
-
-// Manual Challenge Types
-export type ManualChallengeRequest = {
-  text: string;
-  author: string;
-  targetDifficulty?: number;
-  challengeType: ChallengeType;
-};
 
 export type ManualChallengeFeedback = {
   textProfile: PhraseDifficultyProfile;
@@ -69,6 +67,7 @@ export type ManualChallengeFeedback = {
   adjustmentsMade: string[];
   suggestions?: string[];
   difficultyExplanation?: DifficultyBreakdown;
+  challengeEvaluationSummary?: ChallengeEvaluationSummary;
 };
 
 export type ManualChallengeResult = {
@@ -89,6 +88,33 @@ export type ManualChallengeValidationResult = {
   reasons: string[];
   suggestions: string[];
   difficultyExplanation?: DifficultyBreakdown;
+  challengeEvaluationSummary?: ChallengeEvaluationSummary;
+};
+
+const buildChallengeEvaluationSummarySafely = (params: {
+  puzzle: PuzzlePrivate;
+  targetDifficulty: number;
+  targetTier: DifficultyTier;
+  optimizerSummary: Parameters<typeof buildChallengeEvaluation>[0]['optimizerSummary'];
+}): {
+  difficultyExplanation?: DifficultyBreakdown;
+  challengeEvaluationSummary?: ChallengeEvaluationSummary;
+} => {
+  try {
+    const evaluation = buildChallengeEvaluation(params);
+    return {
+      difficultyExplanation: evaluation.difficultyBreakdown,
+      challengeEvaluationSummary: evaluation.summary,
+    };
+  } catch (error) {
+    console.warn('[challenge-evaluation] optional admin summary skipped', {
+      levelId: params.puzzle.levelId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return {
+      difficultyExplanation: params.puzzle.difficultyBreakdown,
+    };
+  }
 };
 
 export class ManualPuzzlePublishFailedError extends Error {
@@ -1063,6 +1089,18 @@ export const preflightManualChallengeForPublish = async (params: {
       isAchievable,
       targetProbeFailure,
     });
+    const challengeEvaluation = buildChallengeEvaluationSummarySafely({
+      puzzle: baseBuilt.puzzlePrivate,
+      targetDifficulty: selectedDifficulty,
+      targetTier: selectedTier,
+      optimizerSummary: {
+        mode: 'preview',
+        candidatesEvaluated: 0,
+        searchDepth: 0,
+        selectedScore: null,
+        reasons: ['Manual preflight preview only; no layout was saved.'],
+      },
+    });
     return {
       valid: isAchievable,
       textProfile: profile,
@@ -1081,7 +1119,10 @@ export const preflightManualChallengeForPublish = async (params: {
             ]
           : [],
       suggestions: isAchievable ? [] : generateSuggestions(profile, selectedDifficulty, naturalTier),
-      difficultyExplanation: baseBuilt.puzzlePrivate.difficultyBreakdown,
+      difficultyExplanation:
+        challengeEvaluation.difficultyExplanation ??
+        baseBuilt.puzzlePrivate.difficultyBreakdown,
+      challengeEvaluationSummary: challengeEvaluation.challengeEvaluationSummary,
     };
   } catch (error) {
     console.error(`${tracePrefix} preview build failed`, {
@@ -1375,6 +1416,18 @@ export const injectManualChallengeWithAdjustment = async (params: {
           difficultyToTier(basePuzzle.puzzlePrivate.difficulty) === targetTier &&
           basePhase2.valid
         ) {
+          const challengeEvaluation = buildChallengeEvaluationSummarySafely({
+            puzzle: basePuzzle.puzzlePrivate,
+            targetDifficulty: selectedDifficulty,
+            targetTier,
+            optimizerSummary: {
+              mode: 'manual_no_adjustment',
+              candidatesEvaluated: 0,
+              searchDepth: 0,
+              selectedScore: null,
+              reasons: ['Base puzzle already matched the requested tier.'],
+            },
+          });
           latestFeedback = {
             textProfile: profile,
             naturalDifficulty: naturalTier,
@@ -1383,8 +1436,9 @@ export const injectManualChallengeWithAdjustment = async (params: {
             budgetTotal: 0,
             adjustmentsMade: [],
             difficultyExplanation:
-              basePuzzle.puzzlePrivate.difficultyBreakdown ??
-              buildDifficultyBreakdown(basePuzzle.puzzlePrivate),
+              challengeEvaluation.difficultyExplanation ??
+              basePuzzle.puzzlePrivate.difficultyBreakdown,
+            challengeEvaluationSummary: challengeEvaluation.challengeEvaluationSummary,
           };
           return {
             puzzlePrivate: basePuzzle.puzzlePrivate,
@@ -1431,6 +1485,22 @@ export const injectManualChallengeWithAdjustment = async (params: {
           budgetTotal: adjusted.budgetTotal,
         });
 
+        const challengeEvaluation =
+          adjusted.puzzle
+            ? buildChallengeEvaluationSummarySafely({
+                puzzle: adjusted.puzzle,
+                targetDifficulty: selectedDifficulty,
+                targetTier,
+                optimizerSummary: adjusted.optimizerSummary ?? {
+                  mode: 'fallback',
+                  candidatesEvaluated: 0,
+                  searchDepth: 0,
+                  selectedScore: null,
+                  reasons: ['Adjustment completed without optimizer metadata.'],
+                },
+              })
+            : null;
+
         latestFeedback = {
           textProfile: profile,
           naturalDifficulty: naturalTier,
@@ -1438,9 +1508,8 @@ export const injectManualChallengeWithAdjustment = async (params: {
           budgetUsed: adjusted.budgetUsed,
           budgetTotal: adjusted.budgetTotal,
           adjustmentsMade: adjusted.adjustmentLog,
-          difficultyExplanation: adjusted.puzzle
-            ? buildDifficultyBreakdown(adjusted.puzzle)
-            : undefined,
+          difficultyExplanation: challengeEvaluation?.difficultyExplanation,
+          challengeEvaluationSummary: challengeEvaluation?.challengeEvaluationSummary,
           suggestions:
             !adjusted.success || !adjusted.puzzle
               ? generateSuggestions(profile, selectedDifficulty, naturalTier)

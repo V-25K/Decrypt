@@ -1,6 +1,7 @@
 import { context, reddit, redis } from '@devvit/web/server';
 import { z } from 'zod';
 import type {
+  ChallengeEvaluationSummary,
   ChallengeType,
   DifficultyBreakdown,
   EndlessSort,
@@ -46,6 +47,7 @@ import {
 } from './content';
 import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
 import { buildDifficultyBreakdown, difficultyModelVersion } from './difficulty-model';
+import { buildChallengeEvaluation } from './challenge-evaluation';
 import { getDecryptSettings } from './config';
 import {
   getPuzzleMapping,
@@ -95,21 +97,31 @@ type CommunityPreviewResult = {
   sanitizedAttribution: string;
   normalizedSig: string;
   tokenSig: string;
-		  suggestedDifficulty: {
-		    tier: DifficultyTier;
-		    label: string;
-		    estimatedDifficulty: number;
-		    uniqueLetterCount: number;
-		    cryptoHardness: number;
-		    confidence?: number;
-		    anchorDensity?: number;
-		    solverSolvedRatio?: number;
-		  };
-	  reasons: string[];
-	  suggestions: string[];
-	  puzzlePreview: PuzzlePublic | null;
-	  difficultyExplanation?: DifficultyBreakdown;
-	};
+  suggestedDifficulty: {
+    tier: DifficultyTier;
+    label: string;
+    estimatedDifficulty: number;
+    uniqueLetterCount: number;
+    cryptoHardness: number;
+    confidence?: number;
+    anchorDensity?: number;
+    solverSolvedRatio?: number;
+  };
+  reasons: string[];
+  suggestions: string[];
+  puzzlePreview: PuzzlePublic | null;
+  difficultyExplanation?: DifficultyBreakdown;
+  challengeEvaluationSummary?: ChallengeEvaluationSummary;
+  manualLayoutGuidance?: ManualLayoutGuidance;
+};
+
+type ManualLayoutGuidance = {
+  status: 'aligned' | 'too_easy' | 'too_hard' | 'unfair';
+  targetTier: DifficultyTier;
+  estimatedTier: DifficultyTier;
+  messages: string[];
+  suggestedActions: string[];
+};
 
 type CommunityNotificationSummary = {
   creatorChangesRequestedCount: number;
@@ -291,7 +303,7 @@ const saveSubmission = async (submission: CommunitySubmission): Promise<void> =>
   });
 };
 
-export const getCommunitySubmission = async (
+const getCommunitySubmission = async (
   submissionId: string
 ): Promise<CommunitySubmission | null> => {
   const hash = await redis.hGetAll(keyCommunitySubmission(submissionId));
@@ -854,12 +866,17 @@ const buildEphemeralPuzzlePreview = async (params: {
   category: ChallengeType;
   targetDifficulty: number;
   hardnessBoundsByTier?: Partial<HardnessBoundsByTier>;
-}): Promise<{ puzzle: PuzzlePublic | null; reasons: string[] }> => {
+}): Promise<{
+  puzzle: PuzzlePublic | null;
+  puzzlePrivate: PuzzlePrivate | null;
+  reasons: string[];
+}> => {
   const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
   const phase1 = pipeline.phase1(params.text, params.targetDifficulty);
   if (!phase1.valid) {
     return {
       puzzle: null,
+      puzzlePrivate: null,
       reasons: [buildCommunityTierFitMessage(params.targetDifficulty)],
     };
   }
@@ -884,16 +901,19 @@ const buildEphemeralPuzzlePreview = async (params: {
     if (!phase2.valid) {
       return {
         puzzle: null,
+        puzzlePrivate: null,
         reasons: phase2.reasons,
       };
     }
     return {
       puzzle: built.puzzlePublic,
+      puzzlePrivate: built.puzzlePrivate,
       reasons: [],
     };
   } catch (error) {
     return {
       puzzle: null,
+      puzzlePrivate: null,
       reasons: [
         error instanceof Error
           ? `Could not build a fair preview: ${error.message}`
@@ -901,6 +921,101 @@ const buildEphemeralPuzzlePreview = async (params: {
       ],
     };
   }
+};
+
+const tierRank = (tier: DifficultyTier): number => {
+  if (tier === 'warmup') {
+    return 0;
+  }
+  if (tier === 'medium') {
+    return 1;
+  }
+  if (tier === 'hard') {
+    return 2;
+  }
+  return 3;
+};
+
+const buildManualLayoutGuidance = (params: {
+  targetTier: DifficultyTier;
+  estimatedTier: DifficultyTier;
+  difficultyExplanation: DifficultyBreakdown | null;
+  puzzlePrivate: PuzzlePrivate | null;
+}): ManualLayoutGuidance => {
+  const fairness = params.difficultyExplanation?.fairnessSummary;
+  const fairnessFailed =
+    fairness !== undefined && (!fairness.solvable || fairness.blindGuessRequired);
+  const blindCount = params.puzzlePrivate?.blindIndices.length ?? 0;
+  const padlockCount = params.puzzlePrivate?.padlockChains.length ?? 0;
+  const prefilledCount = params.puzzlePrivate?.prefilledIndices.length ?? 0;
+  const anchorCoverage =
+    params.difficultyExplanation?.humanFeatures.revealedAnchorCoverage ?? 0;
+  const suggestedActions: string[] = [];
+
+  if (anchorCoverage < 0.35) {
+    suggestedActions.push('Add one revealed anchor word or common short word.');
+  }
+  if (blindCount > 0) {
+    suggestedActions.push('Remove one blind tile.');
+  }
+  if (padlockCount > 0) {
+    suggestedActions.push('Remove one padlock.');
+  }
+
+  if (fairnessFailed) {
+    return {
+      status: 'unfair',
+      targetTier: params.targetTier,
+      estimatedTier: params.estimatedTier,
+      messages: ['This layout is not fair enough to publish as-is.'],
+      suggestedActions:
+        suggestedActions.length > 0
+          ? suggestedActions
+          : ['Add a starter reveal before publishing.'],
+    };
+  }
+
+  const targetRank = tierRank(params.targetTier);
+  const estimatedRank = tierRank(params.estimatedTier);
+  if (estimatedRank > targetRank) {
+    return {
+      status: 'too_hard',
+      targetTier: params.targetTier,
+      estimatedTier: params.estimatedTier,
+      messages: [
+        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
+      ],
+      suggestedActions: [
+        ...(suggestedActions.length > 0
+          ? suggestedActions
+          : ['Add one revealed anchor word.']),
+        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+      ],
+    };
+  }
+  if (estimatedRank < targetRank) {
+    return {
+      status: 'too_easy',
+      targetTier: params.targetTier,
+      estimatedTier: params.estimatedTier,
+      messages: [
+        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
+      ],
+      suggestedActions: [
+        ...(prefilledCount > 1 ? ['Remove one prefilled starter letter.'] : []),
+        'Add one blind tile or padlock only if the preview remains fair.',
+        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+      ],
+    };
+  }
+
+  return {
+    status: 'aligned',
+    targetTier: params.targetTier,
+    estimatedTier: params.estimatedTier,
+    messages: ['Manual layout matches the target tier.'],
+    suggestedActions: [],
+  };
 };
 
 export const previewCommunitySubmission = async (
@@ -941,59 +1056,87 @@ export const previewCommunitySubmission = async (
             targetDifficulty: input.targetDifficulty,
             hardnessBoundsByTier,
           })
-        : { puzzle: null, reasons: [] };
+        : { puzzle: null, puzzlePrivate: null, reasons: [] };
   const allReasons = [...reasons, ...duplicateFailures, ...preview.reasons];
-	  const difficultyExplanation =
-	    input.creationMode === 'manual' && manualPreview?.puzzlePrivate?.difficultyBreakdown
-	      ? manualPreview.puzzlePrivate.difficultyBreakdown
-	      : null;
-	  const estimatedDifficulty =
-	    input.creationMode === 'manual' && manualPreview?.puzzlePrivate
-	      ? manualPreview.puzzlePrivate.difficulty
-	      : input.targetDifficulty;
+  const previewPrivate = preview.puzzlePrivate;
+  const estimatedDifficulty =
+    input.creationMode === 'manual' && previewPrivate
+      ? previewPrivate.difficulty
+      : input.targetDifficulty;
   const suggestedTier =
     input.creationMode === 'manual'
       ? difficultyToTier(estimatedDifficulty)
       : inferSuggestedTier(sanitizedText, hardnessBoundsByTier);
-		return {
-		  valid: allReasons.length === 0,
-	  sanitizedTitle,
-	  sanitizedText,
+  const challengeEvaluation =
+    previewPrivate === null
+      ? null
+      : buildChallengeEvaluation({
+          puzzle: previewPrivate,
+          targetDifficulty: estimatedDifficulty,
+          targetTier: suggestedTier,
+          optimizerSummary: {
+            mode: 'preview',
+            candidatesEvaluated: 0,
+            searchDepth: 0,
+            selectedScore: null,
+            reasons: ['Community preview only; no layout was saved or mutated.'],
+          },
+        });
+  const difficultyExplanation =
+    challengeEvaluation?.difficultyBreakdown ??
+    previewPrivate?.difficultyBreakdown ??
+    null;
+  const manualLayoutGuidance =
+    input.creationMode === 'manual'
+      ? buildManualLayoutGuidance({
+          targetTier: difficultyToTier(input.targetDifficulty),
+          estimatedTier: suggestedTier,
+          difficultyExplanation,
+          puzzlePrivate: previewPrivate,
+        })
+      : undefined;
+
+  return {
+    valid: allReasons.length === 0,
+    sanitizedTitle,
+    sanitizedText,
     sanitizedAttribution,
     normalizedSig,
     tokenSig,
-	    suggestedDifficulty: {
-	      tier: suggestedTier,
-	      label:
-	        input.creationMode === 'manual'
-	          ? `${suggestedTier} layout difficulty estimate`
-	          : `${suggestedTier} text difficulty estimate`,
-		      estimatedDifficulty,
-		      uniqueLetterCount: profile.uniqueLetterCount,
-		      cryptoHardness: profile.cryptoHardness,
-		      confidence: difficultyExplanation?.difficultyConfidence,
-		      anchorDensity: difficultyExplanation?.humanFeatures.anchorDensity,
-		      solverSolvedRatio: difficultyExplanation?.fairnessSummary.solvedRatio,
-		    },
-	    reasons: allReasons,
-	    suggestions:
-	      allReasons.length === 0
-	        ? [
-	            ...(difficultyExplanation?.humanFeatures.revealedAnchorCoverage !== undefined &&
-	            difficultyExplanation.humanFeatures.revealedAnchorCoverage < 0.35
-	              ? ['Add one revealed anchor word or a common short word to make the solve path clearer.']
-	              : []),
-	            ...(difficultyExplanation?.humanFeatures.anchorDensity !== undefined &&
-	            difficultyExplanation.humanFeatures.anchorDensity < 0.15
-	              ? ['This text has few natural anchors. Remove one blind tile or reveal a common letter if it feels too hard.']
-	              : []),
-	          ]
-	        : [
-	            `Try a clear, attributed line between ${communityMinLength} and ${communityMaxLength} characters.`,
-	          ],
-	    puzzlePreview: preview.puzzle,
-	    difficultyExplanation: difficultyExplanation ?? undefined,
-	  };
+    suggestedDifficulty: {
+      tier: suggestedTier,
+      label:
+        input.creationMode === 'manual'
+          ? `${suggestedTier} layout difficulty estimate`
+          : `${suggestedTier} text difficulty estimate`,
+      estimatedDifficulty,
+      uniqueLetterCount: profile.uniqueLetterCount,
+      cryptoHardness: profile.cryptoHardness,
+      confidence: difficultyExplanation?.difficultyConfidence,
+      anchorDensity: difficultyExplanation?.humanFeatures.anchorDensity,
+      solverSolvedRatio: difficultyExplanation?.fairnessSummary.solvedRatio,
+    },
+    reasons: allReasons,
+    suggestions:
+      allReasons.length === 0
+        ? [
+            ...(difficultyExplanation?.humanFeatures.revealedAnchorCoverage !== undefined &&
+            difficultyExplanation.humanFeatures.revealedAnchorCoverage < 0.35
+              ? ['Add one revealed anchor word or a common short word to make the solve path clearer.']
+              : []),
+            ...(difficultyExplanation?.humanFeatures.anchorDensity !== undefined &&
+            difficultyExplanation.humanFeatures.anchorDensity < 0.15
+              ? ['This text has few natural anchors. Remove one blind tile or reveal a common letter if it feels too hard.']
+              : []),
+          ]
+        : [
+            `Try a clear, attributed line between ${communityMinLength} and ${communityMaxLength} characters.`,
+          ],
+    puzzlePreview: preview.puzzle,
+    difficultyExplanation: difficultyExplanation ?? undefined,
+    challengeEvaluationSummary: challengeEvaluation?.summary,
+    manualLayoutGuidance,
+  };
 };
 
 export const submitCommunitySubmission = async (
@@ -1491,18 +1634,31 @@ export const approveCommunitySubmission = async (
   }
 };
 
+const getCommunitySubmissionForStatus = async (params: {
+  submissionId: string;
+  status: CommunitySubmission['status'];
+  statusError: string;
+}): Promise<CommunitySubmission> => {
+  const submission = await getCommunitySubmission(params.submissionId);
+  if (!submission) {
+    throw new Error('Submission not found.');
+  }
+  if (submission.status !== params.status) {
+    throw new Error(params.statusError);
+  }
+  return submission;
+};
+
 export const rejectCommunitySubmission = async (params: {
   submissionId: string;
   reason: string;
 }): Promise<CommunitySubmission> => {
   const reviewer = assertUserId();
-  const submission = await getCommunitySubmission(params.submissionId);
-  if (!submission) {
-    throw new Error('Submission not found.');
-  }
-  if (submission.status !== 'pending') {
-    throw new Error('Only pending submissions can be rejected.');
-  }
+  const submission = await getCommunitySubmissionForStatus({
+    submissionId: params.submissionId,
+    status: 'pending',
+    statusError: 'Only pending submissions can be rejected.',
+  });
   const reviewedAt = Date.now();
   const next: CommunitySubmission = {
     ...submission,
@@ -1529,13 +1685,11 @@ export const requestCommunitySubmissionChanges = async (params: {
   reason: string;
 }): Promise<CommunitySubmission> => {
   const reviewer = assertUserId();
-  const submission = await getCommunitySubmission(params.submissionId);
-  if (!submission) {
-    throw new Error('Submission not found.');
-  }
-  if (submission.status !== 'approved') {
-    throw new Error('Only approved submissions can be sent back for changes.');
-  }
+  const submission = await getCommunitySubmissionForStatus({
+    submissionId: params.submissionId,
+    status: 'approved',
+    statusError: 'Only approved submissions can be sent back for changes.',
+  });
   const reviewedAt = Date.now();
   const next: CommunitySubmission = {
     ...submission,
@@ -1640,13 +1794,11 @@ export const removeCommunityPuzzle = async (params: {
   reason?: string;
 }): Promise<CommunitySubmission> => {
   const reviewer = assertUserId();
-  const submission = await getCommunitySubmission(params.submissionId);
-  if (!submission) {
-    throw new Error('Submission not found.');
-  }
-  if (submission.status !== 'approved') {
-    throw new Error('Only approved submissions can be removed.');
-  }
+  const submission = await getCommunitySubmissionForStatus({
+    submissionId: params.submissionId,
+    status: 'approved',
+    statusError: 'Only approved submissions can be removed.',
+  });
   const removedAt = Date.now();
   const next: CommunitySubmission = {
     ...submission,

@@ -414,13 +414,6 @@ export const recordDailyScore = async (params: {
   await expireDailyLeaderboardKeys(params.dateKey, statsKey);
 };
 
-export const incrementAllTimeLevels = async (
-  userId: string,
-  amount: number
-): Promise<void> => {
-  await redis.zIncrBy(keyAllTimeLevelsLeaderboard, userId, amount);
-};
-
 export const recordAllTimeLevelScore = async (params: {
   userId: string;
   levelId: string;

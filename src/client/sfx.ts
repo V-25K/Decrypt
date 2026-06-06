@@ -210,6 +210,8 @@ const decodeAsset = async (asset: SfxAssetKind): Promise<AudioBuffer | null> => 
     }
 
     try {
+      // Asset paths are selected from the fixed sfxAssetPath table above.
+      // fallow-ignore-next-line security-sink
       const response = await fetch(sfxAssetPath[asset]);
       if (!response.ok) {
         return null;

@@ -60,7 +60,7 @@ export const retainOrAdvanceSelectedTileIndex = (
     ? state.selectedTileIndex
     : findNextGuessableTileIndex(puzzle, state.selectedTileIndex);
 
-export const retainOrClearSelectedTileIndex = (
+const retainOrClearSelectedTileIndex = (
   state: ImmutableGameState,
   puzzle: Puzzle | null,
   options: ResetSelectionOptions = {}

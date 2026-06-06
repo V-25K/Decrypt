@@ -8,6 +8,8 @@ const {
   getQualifiedLevelTelemetryMock,
   redisGetMock,
   redisSetMock,
+  redisZAddMock,
+  redisZRangeMock,
 } =
   vi.hoisted(() => ({
     getAllLevelIdsMock: vi.fn(),
@@ -15,12 +17,16 @@ const {
     getQualifiedLevelTelemetryMock: vi.fn(),
     redisGetMock: vi.fn(),
     redisSetMock: vi.fn(),
+    redisZAddMock: vi.fn(),
+    redisZRangeMock: vi.fn(),
   }));
 
 vi.mock('@devvit/web/server', () => ({
   redis: {
     get: redisGetMock,
     set: redisSetMock,
+    zAdd: redisZAddMock,
+    zRange: redisZRangeMock,
   },
 }));
 
@@ -35,15 +41,20 @@ vi.mock('./engagement', () => ({
 
 import {
   applyBiasToDifficulty,
+  buildShadowCalibrationPreview,
   computeAdaptiveHardnessBounds,
   computeGlobalDailyBias,
   getGlobalDailyCalibrationSnapshot,
   observedTierFromTelemetry,
   observedTierFromSmoothedRate,
+  readDifficultyCalibrationV3Artifact,
+  runDifficultyCalibrationV3Chunk,
   smoothedWinRate,
   telemetryEaseScore,
   tierShift,
 } from './difficulty-calibration';
+import { buildChallengeEvaluation } from './challenge-evaluation';
+import { keyChallengeEvaluation } from './keys';
 
 const makePuzzle = (params: {
   levelId: string;
@@ -83,6 +94,8 @@ afterEach(() => {
   getQualifiedLevelTelemetryMock.mockReset();
   redisGetMock.mockReset();
   redisSetMock.mockReset();
+  redisZAddMock.mockReset();
+  redisZRangeMock.mockReset();
 });
 
 describe('difficulty calibration math', () => {
@@ -422,5 +435,117 @@ describe('difficulty calibration aggregation', () => {
     const snapshot = await getGlobalDailyCalibrationSnapshot();
     expect(snapshot.eligibleLevels).toBe(5);
     expect(snapshot.averageCryptoHardness).toBe(0.3);
+  });
+});
+
+describe('difficulty calibration v3 shadow artifact', () => {
+  it('ignores malformed V3 artifacts safely', async () => {
+    redisGetMock.mockResolvedValue(JSON.stringify({ difficultyCalibrationVersion: 'v2' }));
+
+    const artifact = await readDifficultyCalibrationV3Artifact();
+
+    expect(artifact).toBeNull();
+  });
+
+  it('processes recent levels in chunks and writes a resumable artifact', async () => {
+    const redisStore = new Map<string, string>();
+    redisGetMock.mockImplementation(async (key: string) => redisStore.get(key) ?? null);
+    redisSetMock.mockImplementation(async (key: string, value: string) => {
+      redisStore.set(key, value);
+      return true;
+    });
+    redisZAddMock.mockResolvedValue(undefined);
+    const levelIds = ['lvl_v3_1', 'lvl_v3_2', 'lvl_v3_3'];
+    const puzzlesByLevel = Object.fromEntries(
+      levelIds.map((levelId) => [
+        levelId,
+        makePuzzle({
+          levelId,
+          difficulty: 5,
+          source: 'AUTO_DAILY',
+          text: 'CLEAR SIGNALS MAKE FAIR PUZZLES',
+        }),
+      ])
+    );
+    getAllLevelIdsMock.mockResolvedValue(levelIds);
+    getPuzzlePrivateMock.mockImplementation(
+      async (levelId: string) => puzzlesByLevel[levelId] ?? null
+    );
+    getQualifiedLevelTelemetryMock.mockImplementation(async () =>
+      makeTelemetry({ plays: 20, wins: 12 })
+    );
+
+    const first = await runDifficultyCalibrationV3Chunk({
+      chunkSize: 2,
+    });
+    const second = await runDifficultyCalibrationV3Chunk({
+      offset: first.nextOffset ?? 0,
+      processedLevels: first.processedLevels,
+      updatedEvaluations: first.updatedEvaluations,
+      qualifiedLevels: first.qualifiedLevels,
+      shadowReadyLevels: first.shadowReadyLevels,
+      chunkSize: 2,
+    });
+
+    expect(first.complete).toBe(false);
+    expect(first.nextOffset).toBe(2);
+    expect(second.complete).toBe(true);
+    expect(second.processedLevels).toBe(3);
+    expect(second.updatedEvaluations).toBe(3);
+    expect(second.qualifiedLevels).toBe(3);
+    expect(redisZAddMock).toHaveBeenCalled();
+  });
+
+  it('reports admin-only mature shadow deltas without changing live difficulty', async () => {
+    const redisStore = new Map<string, string>();
+    const readyPuzzle = makePuzzle({
+      levelId: 'lvl_shadow_ready',
+      difficulty: 5,
+      source: 'AUTO_DAILY',
+    });
+    const sparsePuzzle = makePuzzle({
+      levelId: 'lvl_shadow_sparse',
+      difficulty: 6,
+      source: 'AUTO_DAILY',
+    });
+    const readyEvaluation = buildChallengeEvaluation({
+      puzzle: readyPuzzle,
+      shadowRatingSnapshot: {
+        itemDifficultyRating: 8.4,
+        itemUncertainty: 0.3,
+        itemPlayCount: 35,
+      },
+    });
+    const sparseEvaluation = buildChallengeEvaluation({
+      puzzle: sparsePuzzle,
+      shadowRatingSnapshot: {
+        itemDifficultyRating: 2.2,
+        itemUncertainty: 0.8,
+        itemPlayCount: 12,
+      },
+    });
+    redisStore.set(
+      keyChallengeEvaluation(readyPuzzle.levelId),
+      JSON.stringify(readyEvaluation)
+    );
+    redisStore.set(
+      keyChallengeEvaluation(sparsePuzzle.levelId),
+      JSON.stringify(sparseEvaluation)
+    );
+    redisGetMock.mockImplementation(async (key: string) => redisStore.get(key) ?? null);
+    redisZRangeMock.mockResolvedValue([
+      { member: readyPuzzle.levelId, score: 2 },
+      { member: sparsePuzzle.levelId, score: 1 },
+    ]);
+
+    const preview = await buildShadowCalibrationPreview();
+
+    expect(preview.readyLevels).toBe(1);
+    expect(preview.reviewCandidates).toHaveLength(1);
+    expect(preview.reviewCandidates[0]?.levelId).toBe(readyPuzzle.levelId);
+    expect(preview.reviewCandidates[0]?.recommendedShift).toBe(1);
+    expect(readyEvaluation.difficultyBreakdown.calibratedDifficulty).toBe(
+      readyEvaluation.difficultyBreakdown.staticDifficulty
+    );
   });
 });

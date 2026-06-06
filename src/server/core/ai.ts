@@ -290,6 +290,8 @@ export const assertGeminiApiReady = async (apiKey: string): Promise<void> => {
 
   let response: Response;
   try {
+    // Gemini host is fixed; only the API key query parameter varies.
+    // fallow-ignore-next-line security-sink
     response = await fetch(endpoint.toString(), {
       method: 'GET',
       headers: {
@@ -524,6 +526,8 @@ export const generatePuzzlePhraseBatch = async (params: {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+      // Gemini host is fixed; only the API key query parameter varies.
+      // fallow-ignore-next-line security-sink
       response = await fetch(endpoint.toString(), {
         method: 'POST',
         headers: {

@@ -8,6 +8,8 @@ import {
 } from '../../shared/game';
 import { normalizePadlockChains } from './puzzle';
 import {
+  keyChallengeEvaluation,
+  keyChallengeEvaluationIndex,
   keyDailyPointer,
   keyCommunityRemovedLevels,
   keyCommunitySubmission,
@@ -27,6 +29,10 @@ import {
   keyUsedSignatureMeta,
   keyUsedSignatureRecent,
 } from './keys';
+import {
+  buildChallengeEvaluation,
+  saveChallengeEvaluation,
+} from './challenge-evaluation';
 
 const puzzleMappingSchema = z.record(z.string(), z.number());
 const transactionCommitted = (result: unknown): boolean =>
@@ -185,6 +191,8 @@ const cleanupPuzzlePersistence = async (params: {
   dateKey?: string;
   signature?: string;
 }): Promise<void> => {
+  await redis.del(keyChallengeEvaluation(params.levelId));
+  await redis.zRem(keyChallengeEvaluationIndex, [params.levelId]);
   await redis.del(keyPuzzlePrivate(params.levelId));
   await redis.del(keyPuzzlePublic(params.levelId));
   await redis.del(keyPuzzleMapping(params.levelId));
@@ -202,6 +210,23 @@ const cleanupPuzzlePersistence = async (params: {
       await redis.hDel(keyUsedSignatureMeta, [params.signature]);
       await redis.zRem(keyUsedSignatureRecent, [params.signature]);
     }
+  }
+};
+
+const persistChallengeEvaluationSafely = async (
+  puzzlePrivate: PuzzlePrivate
+): Promise<void> => {
+  try {
+    await saveChallengeEvaluation(
+      buildChallengeEvaluation({
+        puzzle: puzzlePrivate,
+      })
+    );
+  } catch (error) {
+    console.warn('[challenge-evaluation] failed to persist evaluation', {
+      levelId: puzzlePrivate.levelId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
   }
 };
 
@@ -319,6 +344,7 @@ export const savePuzzle = async (params: {
       if (!transactionCommitted(execResult)) {
         continue;
       }
+      await persistChallengeEvaluationSafely(puzzlePrivate);
       return allocatedLevelId;
     } catch (error) {
       if (error instanceof PuzzleLevelAllocationConflictError) {
@@ -393,6 +419,7 @@ export const replacePuzzleDataInPlace = async (params: {
       [params.normalizedSignature]: params.tokenSignature,
     });
   }
+  await persistChallengeEvaluationSafely(puzzlePrivate);
 };
 
 export const getPuzzlePublishedPostId = async (
@@ -704,15 +731,4 @@ export const countPublishedAutoDailyPuzzlesForDate = async (
 
   await redis.set(keyPublishedAutoDailyPuzzlesByDateInitialized(dateKey), '1');
   return count;
-};
-
-
-export const getOldestUnplayedLevelId = async (completed: Set<string>) => {
-  const levelIds = await getAllLevelIds();
-  for (const levelId of levelIds) {
-    if (!completed.has(levelId)) {
-      return levelId;
-    }
-  }
-  return null;
 };

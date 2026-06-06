@@ -82,7 +82,7 @@ export const getOutcomeCrowdAvatarUrls = (
     return toUsernameAvatarDataUrl(formatLeaderboardName(entry));
   });
 
-export const readOutcomeCrowdViewport = (
+const readOutcomeCrowdViewport = (
   node: HTMLElement
 ): OutcomeCrowdViewport | null => {
   const bounds = node.getBoundingClientRect();

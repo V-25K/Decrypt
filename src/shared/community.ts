@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   challengeTypeSchema,
+  challengeEvaluationSummarySchema,
   difficultyBreakdownSchema,
   puzzlePublicSchema,
 } from './game';
@@ -9,9 +10,6 @@ import {
 } from './puzzle-limits';
 
 export const primaryCommunitySubreddit = 'PlayDecrypt';
-export const playtestCommunitySubreddits = ['decrypttest_dev'] as const;
-
-export const primaryCommunityUrl = `https://www.reddit.com/r/${primaryCommunitySubreddit}/`;
 
 export const isPrimaryCommunitySubreddit = (
   subredditName: string | null | undefined
@@ -19,15 +17,7 @@ export const isPrimaryCommunitySubreddit = (
   typeof subredditName === 'string' &&
   subredditName.trim().toLowerCase() === primaryCommunitySubreddit.toLowerCase();
 
-export const isPlaytestSubreddit = (
-  subredditName: string | null | undefined
-): boolean =>
-  typeof subredditName === 'string' &&
-  playtestCommunitySubreddits.some(
-    (candidate) => candidate.toLowerCase() === subredditName.trim().toLowerCase()
-  );
-
-export const communitySubmissionStatusSchema = z.enum([
+const communitySubmissionStatusSchema = z.enum([
   'pending',
   'approved',
   'changes_requested',
@@ -40,13 +30,13 @@ export type CommunitySubmissionStatus = z.infer<
   typeof communitySubmissionStatusSchema
 >;
 
-export const communityCreationModeSchema = z.enum(['auto', 'manual']);
+const communityCreationModeSchema = z.enum(['auto', 'manual']);
 
 export type CommunityCreationMode = z.infer<
   typeof communityCreationModeSchema
 >;
 
-export const communityManualPadlockSchema = z.object({
+const communityManualPadlockSchema = z.object({
   padlockId: z.number().int().positive(),
   lockedIndices: z.array(z.number().int().nonnegative()).default([]),
   keyIndices: z.array(z.number().int().nonnegative()).default([]),
@@ -86,7 +76,7 @@ export const communitySubmissionInputSchema = z.object({
 export const communitySubmissionPreviewInputSchema =
   communitySubmissionInputSchema;
 
-export const communityDifficultyEstimateSchema = z.object({
+const communityDifficultyEstimateSchema = z.object({
   tier: z.enum(['warmup', 'medium', 'hard', 'expert']),
   label: z.string().min(1),
   estimatedDifficulty: z.number().int().min(1).max(10),
@@ -109,6 +99,16 @@ export const communitySubmissionPreviewSchema = z.object({
   suggestions: z.array(z.string()),
   puzzlePreview: puzzlePublicSchema.nullable(),
   difficultyExplanation: difficultyBreakdownSchema.optional(),
+  challengeEvaluationSummary: challengeEvaluationSummarySchema.optional(),
+  manualLayoutGuidance: z
+    .object({
+      status: z.enum(['aligned', 'too_easy', 'too_hard', 'unfair']),
+      targetTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
+      estimatedTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
+      messages: z.array(z.string()),
+      suggestedActions: z.array(z.string()),
+    })
+    .optional(),
 });
 
 export const communitySubmissionSchema = z.object({

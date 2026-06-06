@@ -3,19 +3,7 @@ import { z } from 'zod';
 import { heartsPerRun, sessionTtlSeconds } from './constants';
 import { keySession, keySessionIndex } from './keys';
 import { type SessionState, sessionSchema } from '../../shared/game';
-
-const numberField = (
-  hash: Record<string, string>,
-  field: string,
-  fallback: number
-): number => {
-  const raw = hash[field];
-  if (raw === undefined) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
+import { numberFromHash } from './hash';
 
 const revealedSchema = z.array(z.number().int().nonnegative());
 
@@ -79,15 +67,15 @@ export const getSessionState = async (
   const result = sessionSchema.safeParse({
     activeLevelId: hash.activeLevelId,
     mode: hash.mode === 'endless' ? 'endless' : 'daily',
-    startTimestamp: numberField(hash, 'startTimestamp', Date.now()),
-    activeMs: numberField(hash, 'activeMs', 0),
-    lastSeenAt: numberField(hash, 'lastSeenAt', 0),
-    mistakesMade: numberField(hash, 'mistakesMade', 0),
-    shieldIsActive: numberField(hash, 'shieldIsActive', 0) === 1,
+    startTimestamp: numberFromHash(hash, 'startTimestamp', Date.now()),
+    activeMs: numberFromHash(hash, 'activeMs', 0),
+    lastSeenAt: numberFromHash(hash, 'lastSeenAt', 0),
+    mistakesMade: numberFromHash(hash, 'mistakesMade', 0),
+    shieldIsActive: numberFromHash(hash, 'shieldIsActive', 0) === 1,
     revealedIndices: parseRevealed(hash.revealedIndices),
-    usedPowerups: numberField(hash, 'usedPowerups', 0),
-    wrongGuesses: numberField(hash, 'wrongGuesses', 0),
-    guessCount: numberField(hash, 'guessCount', 0),
+    usedPowerups: numberFromHash(hash, 'usedPowerups', 0),
+    wrongGuesses: numberFromHash(hash, 'wrongGuesses', 0),
+    guessCount: numberFromHash(hash, 'guessCount', 0),
   });
   return result.success ? result.data : null;
 };

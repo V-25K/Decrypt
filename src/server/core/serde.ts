@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-export const serializeJson = (value: unknown): string => JSON.stringify(value);
-
 export const parseWithSchema = <T>(
   input: string | undefined,
   schema: z.ZodType<T>,

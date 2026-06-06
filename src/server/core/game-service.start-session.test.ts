@@ -3,6 +3,8 @@ import type { PuzzlePrivate, SessionState, UserProfile } from '../../shared/game
 
 const {
   contextMock,
+  redisGetMock,
+  redisSetMock,
   getCompletedLevelsMock,
   getFailedLevelsMock,
   getDailyRetryCountMock,
@@ -43,6 +45,8 @@ const {
     subredditName: 'decrypttest_dev',
     postData: {},
   },
+  redisGetMock: vi.fn(),
+  redisSetMock: vi.fn(),
 	  getCompletedLevelsMock: vi.fn(),
 	  getFailedLevelsMock: vi.fn(),
 	  getDailyRetryCountMock: vi.fn(),
@@ -79,6 +83,10 @@ const {
 
 vi.mock('@devvit/web/server', () => ({
   context: contextMock,
+  redis: {
+    get: redisGetMock,
+    set: redisSetMock,
+  },
 }));
 
 vi.mock('./state', () => ({
@@ -240,12 +248,16 @@ const puzzleFixture = (): PuzzlePrivate => ({
 });
 
 beforeEach(() => {
+  redisGetMock.mockResolvedValue(null);
+  redisSetMock.mockResolvedValue(true);
   getFailedLevelsMock.mockResolvedValue(new Set<string>());
   hasContinuedLevelMock.mockResolvedValue(false);
   isPuzzleRemovedFromPlayMock.mockResolvedValue(false);
 });
 
 afterEach(() => {
+  redisGetMock.mockReset();
+  redisSetMock.mockReset();
   getCompletedLevelsMock.mockReset();
   getFailedLevelsMock.mockReset();
   getDailyRetryCountMock.mockReset();

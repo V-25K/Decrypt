@@ -43,6 +43,8 @@ export const keyUsedSignatureMeta = 'decrypt:history:used_signature_meta';
 export const keyUsedSignatureRecent = 'decrypt:history:used_signature_recent';
 export const keyDifficultyCalibrationArtifact =
   'decrypt:state:difficulty_calibration_artifact';
+export const keyDifficultyCalibrationV3Artifact =
+  'decrypt:state:difficulty_calibration_v3_artifact';
 export const keyGenerationFailureLatest =
   'decrypt:state:generation_failure_latest';
 export const keyGenerationFailureNotified = (dateKey: string) =>
@@ -53,7 +55,19 @@ export const keyPuzzlePrivate = (levelId: string) =>
 
 export const keyPuzzlePublic = (levelId: string) => `decrypt:puzzle:${levelId}:public`;
 
+export const keyChallengeEvaluation = (levelId: string) =>
+  `decrypt:challenge:${levelId}:evaluation`;
+
+export const keyChallengeEvaluationIndex =
+  'decrypt:challenge:evaluation:index';
+
 export const keyUserProfile = (userId: string) => `decrypt:user:${userId}:profile`;
+
+export const keyPlayerDifficultyRating = (userId: string) =>
+  `decrypt:user:${userId}:difficulty_rating`;
+
+export const keyLevelDifficultyRating = (levelId: string) =>
+  `decrypt:level:${levelId}:difficulty_rating`;
 
 export const keyUserInventory = (userId: string) =>
   `decrypt:user:${userId}:inventory`;

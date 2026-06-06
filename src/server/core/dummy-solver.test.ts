@@ -145,6 +145,44 @@ describe('dummy solver phase2', () => {
 
     expect(result.solvable).toBe(false);
     expect(result.blindGuessRequired).toBe(true);
+    expect(result.budgetExceeded).toBe(true);
+  });
+
+  it('reports deterministic bounded ambiguity metrics', () => {
+    const generated = buildPuzzle({
+      levelId: 'lvl_2308',
+      dateKey: '2026-03-06',
+      text: 'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG',
+      author: 'UNKNOWN',
+      difficulty: 7,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+    });
+    const revealIndex = generated.puzzlePrivate.tiles.find(
+      (tile) => tile.isLetter && tile.char === 'T'
+    )?.index;
+    if (revealIndex === undefined) {
+      throw new Error('Expected a revealed T tile');
+    }
+
+    const first = runDummySolver({
+      puzzle: generated.puzzlePrivate,
+      revealedIndices: [revealIndex],
+      requiredSolveRatio: 0.65,
+      maxSearchMs: 5_000,
+    });
+    const second = runDummySolver({
+      puzzle: generated.puzzlePrivate,
+      revealedIndices: [revealIndex],
+      requiredSolveRatio: 0.65,
+      maxSearchMs: 5_000,
+    });
+
+    expect(second).toEqual(first);
+    expect(first.ambiguityScore).toBeGreaterThanOrEqual(0);
+    expect(first.ambiguityScore).toBeLessThanOrEqual(1);
+    expect(first.bestRatio).toBeGreaterThanOrEqual(first.solvedRatio);
+    expect(first.branchExpansions).toBe(first.forcedGuessCount);
   });
 
   it('uses common word-pattern inference to expand beyond starter clues', () => {

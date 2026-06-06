@@ -20,7 +20,7 @@ export const propertyTestConfig: fc.Parameters<unknown[]> = {
 /**
  * Property test configuration for performance-sensitive tests
  */
-export const fastPropertyTestConfig: fc.Parameters<unknown[]> = {
+const fastPropertyTestConfig: fc.Parameters<unknown[]> = {
   ...propertyTestConfig,
   numRuns: 50, // Fewer runs for performance tests
   timeout: 3000
@@ -29,7 +29,7 @@ export const fastPropertyTestConfig: fc.Parameters<unknown[]> = {
 /**
  * Property test configuration for comprehensive tests
  */
-export const comprehensivePropertyTestConfig: fc.Parameters<unknown[]> = {
+const comprehensivePropertyTestConfig: fc.Parameters<unknown[]> = {
   ...propertyTestConfig,
   numRuns: 200, // More runs for critical properties
   timeout: 10000
@@ -150,7 +150,7 @@ export const gameArbitraries = {
 /**
  * Utility function to create property test with standard configuration
  */
-export function createPropertyTest<T extends readonly unknown[]>(
+function createPropertyTest<T extends readonly unknown[]>(
   name: string,
   arbitraries: fc.Arbitrary<T>,
   predicate: (args: T) => boolean | Promise<boolean>,
@@ -165,7 +165,7 @@ export function createPropertyTest<T extends readonly unknown[]>(
 /**
  * Utility function to run property test with error handling
  */
-export async function runPropertyTest<T extends readonly unknown[]>(
+async function runPropertyTest<T extends readonly unknown[]>(
   property: fc.Property<T>,
   config: fc.Parameters<T> = propertyTestConfig as fc.Parameters<T>
 ): Promise<void> {
@@ -186,7 +186,7 @@ export async function runPropertyTest<T extends readonly unknown[]>(
 /**
  * Performance property test utilities
  */
-export const performanceProperties = {
+const performanceProperties = {
   /**
    * Assert that an operation completes within a time limit
    */

@@ -14,10 +14,19 @@ const defaultMaxSolverMsByProfile = {
 
 export type SolverProfile = 'standard' | 'deep';
 
-type SolverResult = {
+export type SolverResult = {
   solvable: boolean;
   solvedRatio: number;
   blindGuessRequired: boolean;
+  budgetExceeded: boolean;
+  branchExpansions: number;
+  bestRatio: number;
+  ambiguousWordCount: number;
+  meanCandidateCount: number;
+  maxCandidateCount: number;
+  unresolvedCipherCount: number;
+  forcedGuessCount: number;
+  ambiguityScore: number;
 };
 
 type CipherTile = {
@@ -886,6 +895,126 @@ const searchSolve = (params: {
   return null;
 };
 
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
+
+const round4 = (value: number): number => Number(value.toFixed(4));
+
+const collectUnresolvedWordCandidateCounts = (params: {
+  state: SolverState;
+  wordTiles: CipherTile[][];
+  solverProfile: SolverProfile;
+}): number[] => {
+  const candidateCounts: number[] = [];
+  for (const word of params.wordTiles) {
+    const unresolved = word.some(
+      (tile) => params.state.knownLetters[tile.cipherNumber] === null
+    );
+    if (unresolved) {
+      candidateCounts.push(
+        candidateWordsForWord(
+          params.state,
+          word,
+          params.solverProfile
+        ).length
+      );
+    }
+  }
+  return candidateCounts;
+};
+
+const countUnresolvedCipherNumbers = (
+  state: SolverState,
+  cipherTiles: CipherTile[]
+): number => {
+  const unresolvedCipherNumbers = new Set<number>();
+  for (const tile of cipherTiles) {
+    if (state.knownLetters[tile.cipherNumber] === null) {
+      unresolvedCipherNumbers.add(tile.cipherNumber);
+    }
+  }
+  return unresolvedCipherNumbers.size;
+};
+
+const meanCandidateCountFor = (candidateCounts: number[]): number =>
+  candidateCounts.length > 0
+    ? candidateCounts.reduce((sum, count) => sum + count, 0) / candidateCounts.length
+    : 0;
+
+const solverAmbiguityScore = (params: {
+  ambiguousWordCount: number;
+  wordCount: number;
+  meanCandidateCount: number;
+  maxCandidateCount: number;
+  unresolvedCipherCount: number;
+  branchExpansions: number;
+  budgetExceeded: boolean;
+}): number =>
+  clamp(
+    (params.ambiguousWordCount / Math.max(1, params.wordCount)) * 0.32 +
+      clamp(params.meanCandidateCount / 12, 0, 1) * 0.22 +
+      clamp(params.maxCandidateCount / 28, 0, 1) * 0.16 +
+      clamp(params.unresolvedCipherCount / 12, 0, 1) * 0.18 +
+      clamp(params.branchExpansions / 250, 0, 1) * 0.08 +
+      (params.budgetExceeded ? 0.04 : 0),
+    0,
+    1
+  );
+
+const buildSolverResult = (params: {
+  solvable: boolean;
+  solvedRatio: number;
+  blindGuessRequired: boolean;
+  state: SolverState;
+  cipherTiles: CipherTile[];
+  wordTiles: CipherTile[][];
+  solverProfile: SolverProfile;
+  context?: SolverContext;
+}): SolverResult => {
+  const candidateCounts = collectUnresolvedWordCandidateCounts({
+    state: params.state,
+    wordTiles: params.wordTiles,
+    solverProfile: params.solverProfile,
+  });
+  const ambiguousWordCount = candidateCounts.filter((count) => count > 1).length;
+  const unresolvedCipherCount = countUnresolvedCipherNumbers(
+    params.state,
+    params.cipherTiles
+  );
+  const maxCandidateCount = Math.max(0, ...candidateCounts);
+  const meanCandidateCount = meanCandidateCountFor(candidateCounts);
+  const budgetExceeded = params.context?.budgetExceeded ?? false;
+  const branchExpansions = params.context?.branchExpansions ?? 0;
+  const bestRatio = Math.max(
+    params.context?.bestRatio ?? params.solvedRatio,
+    params.solvedRatio
+  );
+  const ambiguityScore = solverAmbiguityScore({
+    ambiguousWordCount,
+    wordCount: params.wordTiles.length,
+    meanCandidateCount,
+    maxCandidateCount,
+    unresolvedCipherCount,
+    branchExpansions,
+    budgetExceeded,
+  });
+
+  return {
+    solvable: params.solvable,
+    solvedRatio: round4(params.solvedRatio),
+    blindGuessRequired: params.blindGuessRequired,
+    budgetExceeded,
+    branchExpansions,
+    bestRatio: round4(bestRatio),
+    ambiguousWordCount,
+    meanCandidateCount: round4(meanCandidateCount),
+    maxCandidateCount,
+    unresolvedCipherCount,
+    forcedGuessCount: branchExpansions,
+    ambiguityScore: round4(ambiguityScore),
+  };
+};
+
 export const runDummySolver = (params: {
   puzzle: PuzzlePrivate;
   revealedIndices: number[];
@@ -920,21 +1049,29 @@ export const runDummySolver = (params: {
     }
     const assigned = assignCipherLetter(state, cipherNumber, tile.char);
     if (assigned === 'conflict') {
-      return {
+      return buildSolverResult({
         solvable: false,
         solvedRatio: solveRatio(state.solvedIndices, totalLetters),
         blindGuessRequired: true,
-      };
+        state,
+        cipherTiles,
+        wordTiles,
+        solverProfile,
+      });
     }
     state.solvedIndices.add(revealedIndex);
   }
 
   if (countKnown(state.knownLetters) === 0) {
-    return {
+    return buildSolverResult({
       solvable: false,
       solvedRatio: 0,
       blindGuessRequired: true,
-    };
+      state,
+      cipherTiles,
+      wordTiles,
+      solverProfile,
+    });
   }
 
   const context: SolverContext = {
@@ -964,16 +1101,26 @@ export const runDummySolver = (params: {
 
   if (solved && !context.budgetExceeded) {
     const ratio = solveRatio(solved.solvedIndices, totalLetters);
-    return {
+    return buildSolverResult({
       solvable: ratio >= context.targetRatio,
       solvedRatio: ratio,
       blindGuessRequired: ratio < context.targetRatio,
-    };
+      state: solved,
+      cipherTiles,
+      wordTiles,
+      solverProfile,
+      context,
+    });
   }
 
-  return {
+  return buildSolverResult({
     solvable: false,
     solvedRatio: context.bestRatio,
     blindGuessRequired: true,
-  };
+    state,
+    cipherTiles,
+    wordTiles,
+    solverProfile,
+    context,
+  });
 };

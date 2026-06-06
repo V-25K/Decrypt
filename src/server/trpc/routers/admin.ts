@@ -34,7 +34,11 @@ import {
   removeCommunityPuzzle,
   requestCommunitySubmissionChanges,
 } from '../../core/community';
-import { getGlobalDailyCalibrationSnapshot } from '../../core/difficulty-calibration';
+import {
+  buildShadowCalibrationPreview,
+  getGlobalDailyCalibrationSnapshot,
+  readDifficultyCalibrationV3Artifact,
+} from '../../core/difficulty-calibration';
 import { getMetricsSnapshot } from '../../core/metrics';
 import { router } from '../base';
 import { adminProcedure } from '../procedures';
@@ -42,8 +46,16 @@ import { adminDebugProcedures } from './admin.debug';
 
 export const adminRouter = router({
   getDifficultyCalibration: adminProcedure.query(async () => {
-    const snapshot = await getGlobalDailyCalibrationSnapshot();
-    return adminDifficultyCalibrationResponseSchema.parse(snapshot);
+    const [snapshot, v3Artifact, shadowCalibrationPreview] = await Promise.all([
+      getGlobalDailyCalibrationSnapshot(),
+      readDifficultyCalibrationV3Artifact(),
+      buildShadowCalibrationPreview(),
+    ]);
+    return adminDifficultyCalibrationResponseSchema.parse({
+      ...snapshot,
+      v3Artifact,
+      shadowCalibrationPreview,
+    });
   }),
   reroll: adminProcedure.mutation(async () => {
     try {

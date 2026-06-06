@@ -1,6 +1,6 @@
 export type StateUpdate<T> = T | ((previous: T) => T);
 
-export const isStateUpdater = <T>(
+const isStateUpdater = <T>(
   update: StateUpdate<T>
 ): update is (previous: T) => T => typeof update === 'function';
 

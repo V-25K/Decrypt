@@ -45,7 +45,15 @@ vi.mock('../../core/admin', () => ({
 }));
 
 vi.mock('../../core/difficulty-calibration', () => ({
+  buildShadowCalibrationPreview: vi.fn().mockResolvedValue({
+    readyLevels: 0,
+    averageStaticShadowDelta: 0,
+    maxStaticShadowDelta: 0,
+    generatedAt: 0,
+    reviewCandidates: [],
+  }),
   getGlobalDailyCalibrationSnapshot: vi.fn(),
+  readDifficultyCalibrationV3Artifact: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../../core/metrics', () => ({

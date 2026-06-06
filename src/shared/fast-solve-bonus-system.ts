@@ -180,32 +180,6 @@ export class FastSolveBonusSystem {
   }
 
   /**
-   * Get difficulty-scaled thresholds for all difficulty levels
-   */
-  getThresholdBreakdown(): Array<{
-    difficulty: number;
-    threshold: number;
-    scalingFactor: number;
-  }> {
-    const breakdown = [];
-    
-    for (let difficulty = 1; difficulty <= 10; difficulty++) {
-      const threshold = this.getThresholdForDifficulty(difficulty);
-      const scalingFactor = this.config.difficultyScaling 
-        ? 1 + (difficulty - 5) * 0.1 
-        : 1.0;
-      
-      breakdown.push({
-        difficulty,
-        threshold,
-        scalingFactor
-      });
-    }
-    
-    return breakdown;
-  }
-
-  /**
    * Get the current configuration
    */
   getConfig(): FastSolveBonusConfig {

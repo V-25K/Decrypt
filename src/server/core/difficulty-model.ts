@@ -14,6 +14,11 @@ const roundedDifficulty = (score: number): number =>
   Math.max(1, Math.min(10, Math.round(score)));
 
 const commonSuffixes = ['ING', 'TION', 'NESS', 'LY', 'ED', 'ER', 'EST'];
+const unsolvedFairnessPenalty = 1.2;
+const weakSolveFairnessPenalty = 0.45;
+const unfairConfidenceCap = 0.42;
+const budgetExceededConfidencePenalty = 0.12;
+const ambiguityConfidencePenalty = 0.08;
 
 const wordPatternSignature = (word: string): string => {
   const seen = new Map<string, number>();
@@ -150,24 +155,30 @@ export const buildDifficultyBreakdown = (puzzle: PuzzlePrivate): DifficultyBreak
     prefillCoverage * 6.0 + fullyPrefilledWordCount * 0.25 + revealedAnchor * 0.5
   );
   const solverDiscount = Math.min(1.3, solver.solvedRatio * 1.3);
+  const fairnessFailed = !solver.solvable || solver.blindGuessRequired;
   const fairnessPenalty =
-    !solver.solvable || solver.blindGuessRequired
-      ? 0.9
+    fairnessFailed
+      ? unsolvedFairnessPenalty
       : solver.solvedRatio < 0.45
-        ? 0.3
+        ? weakSolveFairnessPenalty
         : 0;
   const cipherAdjustment =
     puzzle.cipherType === 'random' ? 0.25 : puzzle.cipherType === 'shift' ? -0.3 : 0;
   const staticDifficulty = roundedDifficulty(
     textBase + obstructionBonus - revealDiscount - solverDiscount + fairnessPenalty + cipherAdjustment
   );
-  const confidence = clamp01(
+  const rawConfidence = clamp01(
     0.35 +
       solver.solvedRatio * 0.35 +
       phraseProfile.lexiconCoverageRatio * 0.2 +
       Math.min(0.1, puzzle.prefilledIndices.length / 20) -
-      (solver.blindGuessRequired ? 0.2 : 0)
+      (solver.blindGuessRequired ? 0.2 : 0) -
+      (solver.budgetExceeded ? budgetExceededConfidencePenalty : 0) -
+      solver.ambiguityScore * ambiguityConfidencePenalty
   );
+  const confidence = fairnessFailed
+    ? Math.min(rawConfidence, unfairConfidenceCap)
+    : rawConfidence;
 
   return {
     difficultyModelVersion,
@@ -192,6 +203,15 @@ export const buildDifficultyBreakdown = (puzzle: PuzzlePrivate): DifficultyBreak
       solvable: solver.solvable,
       solvedRatio: Number(solver.solvedRatio.toFixed(4)),
       blindGuessRequired: solver.blindGuessRequired,
+      budgetExceeded: solver.budgetExceeded,
+      branchExpansions: solver.branchExpansions,
+      bestRatio: Number(solver.bestRatio.toFixed(4)),
+      ambiguousWordCount: solver.ambiguousWordCount,
+      meanCandidateCount: Number(solver.meanCandidateCount.toFixed(4)),
+      maxCandidateCount: solver.maxCandidateCount,
+      unresolvedCipherCount: solver.unresolvedCipherCount,
+      forcedGuessCount: solver.forcedGuessCount,
+      ambiguityScore: Number(solver.ambiguityScore.toFixed(4)),
     },
   };
 };

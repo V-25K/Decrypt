@@ -106,6 +106,10 @@
       "decrypt-cleanup-journals-0300": {
         "endpoint": "/internal/scheduler/cleanup-completion-journals",
         "cron": "0 3 * * *"
+      },
+      "decrypt-calibrate-difficulty-v3": {
+        "endpoint": "/internal/scheduler/calibrate-difficulty-v3",
+        "cron": "30 3 * * *"
       }
     }
   },

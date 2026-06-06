@@ -117,6 +117,37 @@ describe('community manual layout preview', () => {
 	    );
 	  });
 
+  it('returns preview-only guidance without mutating a manual layout draft', async () => {
+    const manualLayout = {
+      prefilledIndices: [0],
+      prefilledWordIndices: [],
+      blindIndices: [],
+      lockIndices: [],
+      lockKeyIndices: [],
+      padlocks: [{ padlockId: 1, lockedIndices: [], keyIndices: [] }],
+    };
+    const originalLayout = structuredClone(manualLayout);
+
+    const preview = await previewCommunitySubmission({
+      title: 'Manual puzzle',
+      text: 'THE QUICK BROWN FOX JUMPS',
+      category: 'QUOTE',
+      attribution: 'Tester',
+      targetDifficulty: 9,
+      creationMode: 'manual',
+      manualLayout,
+    });
+
+    expect(manualLayout).toEqual(originalLayout);
+    expect(preview.manualLayoutGuidance?.status).toBe('too_easy');
+    expect(preview.manualLayoutGuidance?.suggestedActions.join(' ')).toContain(
+      'Publish as'
+    );
+    expect(preview.puzzlePreview?.difficulty).toBe(
+      preview.suggestedDifficulty.estimatedDifficulty
+    );
+  });
+
 	  it('supports multiple manual padlocks with different keys', async () => {
 	    const preview = await previewCommunitySubmission({
 	      title: 'Manual puzzle',

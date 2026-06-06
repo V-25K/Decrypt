@@ -24,22 +24,7 @@ import {
 } from './keys';
 import { normalizeHearts } from './hearts';
 import { dailyDataTtlSeconds } from './constants';
-
-const numberFromHash = (
-  hash: Record<string, string>,
-  field: string,
-  fallback: number
-): number => {
-  const raw = hash[field];
-  if (raw === undefined) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  if (Number.isNaN(parsed)) {
-    return fallback;
-  }
-  return parsed;
-};
+import { numberFromHash } from './hash';
 
 const stringFromHash = (
   hash: Record<string, string>,
@@ -472,14 +457,6 @@ export const getDailyRetryCount = async (
     return 0;
   }
   return Math.max(0, Math.floor(parsed));
-};
-
-export const incrementDailyRetryCount = async (
-  userId: string,
-  levelId: string
-): Promise<number> => {
-  const next = await redis.hIncrBy(keyUserDailyRetryCounts(userId), levelId, 1);
-  return Math.max(0, Math.floor(next));
 };
 
 export const getDailyQuestProgress = async (

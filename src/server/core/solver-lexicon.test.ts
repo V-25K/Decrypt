@@ -21,8 +21,8 @@ describe('solverLexicon', () => {
     expect(solverLexicon).toEqual(
       expect.arrayContaining([
         'OPPORTUNITY',
-        'PERSISTENCE',
-        'SOVEREIGNTY',
+        'EXPERIENCE',
+        'KNOWLEDGE',
       ])
     );
   });

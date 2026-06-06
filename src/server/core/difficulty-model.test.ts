@@ -189,4 +189,20 @@ describe('difficulty model v2', () => {
     expect(breakdown.fairnessSummary.solvedRatio).toBeLessThanOrEqual(0.6);
     expect(breakdown.calibratedDifficulty).toBeLessThanOrEqual(8);
   });
+
+  it('adds solver ambiguity metrics and caps confidence for unfair layouts', () => {
+    const puzzle = buildBase('ABCDEFG HIJKLMN OPQRSTU', 9);
+    const breakdown = buildDifficultyBreakdown({
+      ...puzzle,
+      prefilledIndices: [],
+      revealedIndices: [],
+      revealed_indices: [],
+    });
+
+    expect(breakdown.fairnessSummary.solvable).toBe(false);
+    expect(breakdown.fairnessSummary.ambiguityScore).toBeGreaterThanOrEqual(0);
+    expect(breakdown.fairnessSummary.branchExpansions).toBeGreaterThanOrEqual(0);
+    expect(breakdown.difficultyConfidence).toBeLessThanOrEqual(0.42);
+    expect(breakdown.calibratedDifficulty).toBeLessThanOrEqual(10);
+  });
 });

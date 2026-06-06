@@ -164,6 +164,15 @@ const difficultyFairnessSummarySchema = z.object({
   solvable: z.boolean(),
   solvedRatio: z.number().min(0).max(1),
   blindGuessRequired: z.boolean(),
+  budgetExceeded: z.boolean().optional(),
+  branchExpansions: z.number().int().nonnegative().optional(),
+  bestRatio: z.number().min(0).max(1).optional(),
+  ambiguousWordCount: z.number().int().nonnegative().optional(),
+  meanCandidateCount: z.number().nonnegative().optional(),
+  maxCandidateCount: z.number().int().nonnegative().optional(),
+  unresolvedCipherCount: z.number().int().nonnegative().optional(),
+  forcedGuessCount: z.number().int().nonnegative().optional(),
+  ambiguityScore: z.number().min(0).max(1).optional(),
 });
 
 export const difficultyBreakdownSchema = z.object({
@@ -176,6 +185,25 @@ export const difficultyBreakdownSchema = z.object({
 });
 
 export type DifficultyBreakdown = z.infer<typeof difficultyBreakdownSchema>;
+
+export const challengeEvaluationSummarySchema = z.object({
+  challengeEvaluationVersion: z.literal('v1'),
+  targetTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
+  targetDifficulty: z.number().int().min(1).max(10),
+  estimatedTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
+  estimatedDifficulty: z.number().int().min(1).max(10),
+  confidence: z.number().min(0).max(1),
+  fairnessStatus: z.enum(['pass', 'warning', 'fail']),
+  solverSolvedRatio: z.number().min(0).max(1),
+  ambiguityScore: z.number().min(0).max(1),
+  anchorCoverage: z.number().min(0).max(1),
+  candidatesEvaluated: z.number().int().nonnegative(),
+  recommendation: z.string().min(1),
+});
+
+export type ChallengeEvaluationSummary = z.infer<
+  typeof challengeEvaluationSummarySchema
+>;
 
 export const puzzlePrivateSchema = z.object({
   levelId: z.string().min(1),
@@ -789,6 +817,7 @@ export const adminValidateManualChallengeResponseSchema = z.object({
   reasons: z.array(z.string()),
   suggestions: z.array(z.string()),
   difficultyExplanation: difficultyBreakdownSchema.optional(),
+  challengeEvaluationSummary: challengeEvaluationSummarySchema.optional(),
 });
 
 export const adminInjectManualChallengeWithAdjustmentInputSchema = z.object({
@@ -821,6 +850,7 @@ export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
     adjustmentsMade: z.array(z.string()),
     suggestions: z.array(z.string()).optional(),
     difficultyExplanation: difficultyBreakdownSchema.optional(),
+    challengeEvaluationSummary: challengeEvaluationSummarySchema.optional(),
   }),
   error: z.string().optional(),
 });
@@ -852,7 +882,41 @@ export const adminDifficultyCalibrationResponseSchema = z.object({
     biasRequiredShare: z.number().nonnegative(),
     observedEasyThreshold: z.number().nonnegative(),
     observedHardThreshold: z.number().nonnegative(),
+    observedExpertThreshold: z.number().nonnegative().optional(),
   }),
+  v3Artifact: z
+    .object({
+      difficultyCalibrationVersion: z.literal('v3'),
+      difficultyModelVersion: z.literal('v2'),
+      builtAt: z.number().int().nonnegative(),
+      complete: z.boolean(),
+      nextOffset: z.number().int().nonnegative().nullable(),
+      totalLevels: z.number().int().nonnegative(),
+      processedLevels: z.number().int().nonnegative(),
+      updatedEvaluations: z.number().int().nonnegative(),
+      qualifiedLevels: z.number().int().nonnegative(),
+      shadowReadyLevels: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
+  shadowCalibrationPreview: z
+    .object({
+      readyLevels: z.number().int().nonnegative(),
+      averageStaticShadowDelta: z.number(),
+      maxStaticShadowDelta: z.number(),
+      generatedAt: z.number().int().nonnegative(),
+      reviewCandidates: z.array(
+        z.object({
+          levelId: z.string().min(1),
+          staticDifficulty: z.number().int().min(1).max(10),
+          shadowDifficulty: z.number().min(1).max(10),
+          recommendedShift: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
+          itemPlayCount: z.number().int().nonnegative(),
+          itemUncertainty: z.number().min(0).max(1),
+        })
+      ),
+    })
+    .optional(),
 });
 
 export const storeProductsResponseSchema = z.object({

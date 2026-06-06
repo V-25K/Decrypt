@@ -480,6 +480,29 @@ const PreviewPanel = ({
 	          ))}
 	        </ul>
 	      )}
+      {creationMode === 'manual' && preview.manualLayoutGuidance && (
+        <div
+          className={cn(
+            'mt-2 rounded-md px-3 py-2 text-xs font-semibold leading-snug',
+            preview.manualLayoutGuidance.status === 'aligned'
+              ? 'bg-emerald-400/10 text-emerald-100'
+              : preview.manualLayoutGuidance.status === 'unfair'
+                ? 'bg-red-500/15 text-red-100'
+                : 'bg-amber-300/15 text-amber-100'
+          )}
+        >
+          <div className="font-black">
+            {preview.manualLayoutGuidance.messages[0]}
+          </div>
+          {preview.manualLayoutGuidance.suggestedActions.length > 0 && (
+            <ul className="mt-1 space-y-1">
+              {preview.manualLayoutGuidance.suggestedActions.map((action) => (
+                <li key={action}>{action}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {creationMode === 'manual' && preview.puzzlePreview && (
         <div className="mt-3 space-y-3">
           <div className="app-surface app-border rounded-md border px-2.5 py-2">

@@ -1,9 +1,10 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { UiResponse } from '@devvit/web/shared';
 import {
   injectAndPublishManualPuzzle,
   ManualChallengePreflightFailedError,
   preflightManualChallengeForPublish,
+  type ManualChallengeValidationResult,
 } from '../core/admin';
 import { clearSubredditGameData } from '../core/playtest-reset';
 import {
@@ -45,6 +46,22 @@ type ManualPublishFailure = {
   levelId: string;
   dateKey: string;
 };
+
+type ManualPuzzleFormValues = {
+  text: string;
+  author: string;
+  challengeType: ChallengeType;
+};
+
+type ManualPuzzleFormParseResult =
+  | { valid: true; values: ManualPuzzleFormValues }
+  | { valid: false; response: UiResponse };
+
+type ManualPuzzleRequestParseResult<TBody> =
+  | { valid: true; body: TBody; values: ManualPuzzleFormValues }
+  | { valid: false; response: UiResponse };
+
+type ManualPublishResult = Awaited<ReturnType<typeof injectAndPublishManualPuzzle>>;
 
 const formatTierList = (tiers: string[]): string =>
   tiers.map((tier) => tier.charAt(0).toUpperCase() + tier.slice(1)).join(', ');
@@ -145,6 +162,17 @@ const formatPublishFailureToast = (params: {
 };
 
 export const forms = new Hono();
+
+const rejectWithoutAdminAccess = async (c: Context): Promise<Response | null> => {
+  const allowed = await hasAdminAccess({
+    subredditName: context.subredditName,
+    username: context.username,
+  });
+  if (allowed) {
+    return null;
+  }
+  return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
+};
 
 const difficultyBandToValue: Record<string, number> = {
   warmup: 2,
@@ -431,254 +459,269 @@ const getManualPublishFailure = (error: unknown): ManualPublishFailure | null =>
   return { name, levelId, dateKey };
 };
 
-forms.post('/mod-inject-submit', async (c) => {
-  const allowed = await hasAdminAccess({
-    subredditName: context.subredditName,
-    username: context.username,
-  });
-  if (!allowed) {
-    return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
+const buildManualPreflightHint = (validation: ManualChallengeValidationResult): string =>
+  buildValidationHint(validation);
+
+const parseManualPuzzleFormValues = (body: {
+  text: unknown;
+  author?: unknown;
+  challengeType?: unknown;
+}): ManualPuzzleFormParseResult => {
+  const rawText = firstValue(body.text);
+  if (!rawText) {
+    return { valid: false, response: { showToast: 'Invalid puzzle text.' } };
+  }
+  const text = sanitizePhrase(rawText);
+  if (!text) {
+    return { valid: false, response: { showToast: 'Invalid puzzle text.' } };
+  }
+  if (text !== normalizeLoose(rawText)) {
+    return {
+      valid: false,
+      response: {
+        showToast:
+          'Puzzle text contains unsupported characters. Use letters, numbers, spaces, and , . \' ! ? ; : ( ) - only.',
+      },
+    };
+  }
+  const rawAuthor = firstValue(body.author);
+  if (!rawAuthor) {
+    return {
+      valid: false,
+      response: { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
+    };
+  }
+  const author = parseAuthor(body.author);
+  if (!author) {
+    return {
+      valid: false,
+      response: { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
+    };
+  }
+  if (author !== normalizeLoose(rawAuthor)) {
+    return {
+      valid: false,
+      response: {
+        showToast: 'Author contains unsupported characters. Use letters, numbers, spaces, . \' and - only.',
+      },
+    };
+  }
+  const challengeType = parseChallengeType(body.challengeType);
+  if (!challengeType) {
+    return {
+      valid: false,
+      response: {
+        showToast: 'Invalid challenge type. Please re-open the form and choose a valid type.',
+      },
+    };
+  }
+  return {
+    valid: true,
+    values: {
+      text,
+      author,
+      challengeType,
+    },
+  };
+};
+
+const readManualPuzzleRequest = async <TBody extends {
+  text: unknown;
+  author?: unknown;
+  challengeType?: unknown;
+}>(
+  c: Context
+): Promise<ManualPuzzleRequestParseResult<TBody>> => {
+  const body = await c.req.json<TBody>();
+  const parsedForm = parseManualPuzzleFormValues(body);
+  if (!parsedForm.valid) {
+    return { valid: false, response: parsedForm.response };
+  }
+  return {
+    valid: true,
+    body,
+    values: parsedForm.values,
+  };
+};
+
+const buildManualPublishErrorResponse = (params: {
+  error: unknown;
+  actionLabel: string;
+  fallbackPrefix: string;
+}): UiResponse => {
+  const reason = params.error instanceof Error ? params.error.message : 'Unknown error';
+  console.error(`Error ${params.actionLabel} manual puzzle: ${reason}`);
+  const publishFailure = getManualPublishFailure(params.error);
+  return {
+    showToast: params.error instanceof ManualChallengePreflightFailedError
+      ? buildManualPreflightHint(params.error.validation)
+      : publishFailure
+      ? `Puzzle saved as ${publishFailure.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
+      : `${params.fallbackPrefix}: ${reason}`,
+  };
+};
+
+const handleManualPuzzleRequest = async <TBody extends {
+  text: unknown;
+  author?: unknown;
+  challengeType?: unknown;
+}>(
+  c: Context,
+  params: {
+    actionLabel: string;
+    fallbackPrefix: string;
+    onValid: (request: {
+      body: TBody;
+      values: ManualPuzzleFormValues;
+    }) => Promise<Response>;
+  }
+): Promise<Response> => {
+  const accessDenied = await rejectWithoutAdminAccess(c);
+  if (accessDenied) {
+    return accessDenied;
   }
   try {
-    const body = await c.req.json<ModInjectFormRequest>();
-    const rawText = firstValue(body.text);
-    if (!rawText) {
-      return c.json<UiResponse>({ showToast: 'Invalid puzzle text.' }, 200);
+    const parsedRequest = await readManualPuzzleRequest<TBody>(c);
+    if (!parsedRequest.valid) {
+      return c.json<UiResponse>(parsedRequest.response, 200);
     }
-    const text = sanitizePhrase(rawText);
-    if (!text) {
-      return c.json<UiResponse>({ showToast: 'Invalid puzzle text.' }, 200);
-    }
-    if (text !== normalizeLoose(rawText)) {
-      return c.json<UiResponse>(
-        {
-          showToast:
-            'Puzzle text contains unsupported characters. Use letters, numbers, spaces, and , . \' ! ? ; : ( ) - only.',
-        },
-        200
-      );
-    }
-    const rawAuthor = firstValue(body.author);
-    if (!rawAuthor) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
-        200
-      );
-    }
-    const author = parseAuthor(body.author);
-    if (!author) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
-        200
-      );
-    }
-    if (author !== normalizeLoose(rawAuthor)) {
-      return c.json<UiResponse>(
-        {
-          showToast: 'Author contains unsupported characters. Use letters, numbers, spaces, . \' and - only.',
-        },
-        200
-      );
-    }
-    const challengeType = parseChallengeType(body.challengeType);
-    if (!challengeType) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid challenge type. Please re-open the form and choose a valid type.' },
-        200
-      );
-    }
-    const validation = await preflightManualChallengeForPublish({
-      text,
-      challengeType,
-    });
-    if (!validation.valid) {
-      return c.json<UiResponse>(
-        {
-          showToast: buildValidationHint({
-            ...validation,
-          }),
-        },
-        200
-      );
-    }
+    return await params.onValid(parsedRequest);
+  } catch (error) {
     return c.json<UiResponse>(
-      buildReviewFormResponse({
-        text,
-        author,
-        challengeType,
-        validation,
+      buildManualPublishErrorResponse({
+        error,
+        actionLabel: params.actionLabel,
+        fallbackPrefix: params.fallbackPrefix,
       }),
       200
     );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Error injecting manual puzzle: ${reason}`);
-    const publishFailure = getManualPublishFailure(error);
-    return c.json<UiResponse>(
-      {
-        showToast: error instanceof ManualChallengePreflightFailedError
-          ? buildValidationHint({
-              ...(error.validation as {
-                naturalDifficulty: string;
-                achievableTierRange: string[];
-                reasons: string[];
-                suggestions: string[];
-              }),
-            })
-          : publishFailure
-          ? `Puzzle saved as ${publishFailure.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
-          : `Failed to inject manual puzzle: ${reason}`,
-      },
-      200
-    );
   }
+};
+
+const buildManualPublishFailureToast = (result: ManualPublishResult): string =>
+  formatPublishFailureToast({
+    error: result.error,
+    levelId: result.levelId,
+    publishState: result.publishState,
+    cleanupPerformed: result.cleanupPerformed,
+  }) ??
+  (result.levelId
+    ? `Puzzle saved as ${result.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
+    : 'Manual puzzle publish failed before a usable Reddit post was created.');
+
+const buildManualPublishSuccessToast = (params: {
+  result: ManualPublishResult;
+  text: string;
+  requestedDifficulty: number;
+}): string => {
+  const achievedTier = difficultyToTier(params.result.difficulty ?? params.requestedDifficulty);
+  const requestedTier = difficultyToTier(params.requestedDifficulty);
+  const adjustmentSuffix =
+    achievedTier !== requestedTier ? ` (adjusted from ${formatTier(requestedTier)})` : '';
+  return `${formatTier(achievedTier)} puzzle published${adjustmentSuffix} - "${formatQuoteExcerpt(
+    params.text
+  )}"`;
+};
+
+const buildManualPublishResultResponse = (params: {
+  result: ManualPublishResult;
+  text: string;
+  requestedDifficulty: number;
+}): UiResponse => {
+  if (!params.result.success || !params.result.postId) {
+    return { showToast: buildManualPublishFailureToast(params.result) };
+  }
+  return {
+    showToast: buildManualPublishSuccessToast(params),
+  };
+};
+
+forms.post('/mod-inject-submit', async (c) => {
+  return handleManualPuzzleRequest<ModInjectFormRequest>(c, {
+    actionLabel: 'injecting',
+    fallbackPrefix: 'Failed to inject manual puzzle',
+    onValid: async ({ values }) => {
+      const { text, author, challengeType } = values;
+      const validation = await preflightManualChallengeForPublish({
+        text,
+        challengeType,
+      });
+      if (!validation.valid) {
+        return c.json<UiResponse>(
+          {
+            showToast: buildValidationHint({
+              ...validation,
+            }),
+          },
+          200
+        );
+      }
+      return c.json<UiResponse>(
+        buildReviewFormResponse({
+          text,
+          author,
+          challengeType,
+          validation,
+        }),
+        200
+      );
+    },
+  });
 });
 
 forms.post('/mod-inject-review-submit', async (c) => {
-  const allowed = await hasAdminAccess({
-    subredditName: context.subredditName,
-    username: context.username,
+  return handleManualPuzzleRequest<ModInjectReviewFormRequest>(c, {
+    actionLabel: 'publishing reviewed',
+    fallbackPrefix: 'Failed to publish manual puzzle',
+    onValid: async ({ body, values }) => {
+      const { text, author, challengeType } = values;
+      const difficulty = parseDifficulty(body.difficulty);
+      if (typeof difficulty !== 'number') {
+        return c.json<UiResponse>(
+          { showToast: 'Choose a publish tier from the reviewed options.' },
+          200
+        );
+      }
+      const validation = await preflightManualChallengeForPublish({
+        text,
+        difficulty,
+        challengeType,
+      });
+      if (!validation.valid) {
+        return c.json<UiResponse>(
+          {
+            showToast: buildValidationHint({
+              ...validation,
+              targetTier: difficultyToTier(difficulty),
+            }),
+          },
+          200
+        );
+      }
+      const result = await injectAndPublishManualPuzzle({
+        text,
+        author,
+        difficulty,
+        challengeType,
+        allowAdjustment: true,
+        skipPreflight: true,
+      });
+      return c.json<UiResponse>(
+        buildManualPublishResultResponse({
+          result,
+          text,
+          requestedDifficulty: difficulty,
+        }),
+        200
+      );
+    },
   });
-  if (!allowed) {
-    return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
-  }
-  try {
-    const body = await c.req.json<ModInjectReviewFormRequest>();
-    const rawText = firstValue(body.text);
-    if (!rawText) {
-      return c.json<UiResponse>({ showToast: 'Invalid puzzle text.' }, 200);
-    }
-    const text = sanitizePhrase(rawText);
-    if (!text) {
-      return c.json<UiResponse>({ showToast: 'Invalid puzzle text.' }, 200);
-    }
-    if (text !== normalizeLoose(rawText)) {
-      return c.json<UiResponse>(
-        {
-          showToast:
-            'Puzzle text contains unsupported characters. Use letters, numbers, spaces, and , . \' ! ? ; : ( ) - only.',
-        },
-        200
-      );
-    }
-    const rawAuthor = firstValue(body.author);
-    if (!rawAuthor) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
-        200
-      );
-    }
-    const author = parseAuthor(body.author);
-    if (!author) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
-        200
-      );
-    }
-    if (author !== normalizeLoose(rawAuthor)) {
-      return c.json<UiResponse>(
-        {
-          showToast: 'Author contains unsupported characters. Use letters, numbers, spaces, . \' and - only.',
-        },
-        200
-      );
-    }
-    const difficulty = parseDifficulty(body.difficulty);
-    if (typeof difficulty !== 'number') {
-      return c.json<UiResponse>(
-        { showToast: 'Choose a publish tier from the reviewed options.' },
-        200
-      );
-    }
-    const challengeType = parseChallengeType(body.challengeType);
-    if (!challengeType) {
-      return c.json<UiResponse>(
-        { showToast: 'Invalid challenge type. Please re-open the form and choose a valid type.' },
-        200
-      );
-    }
-    const validation = await preflightManualChallengeForPublish({
-      text,
-      difficulty,
-      challengeType,
-    });
-    if (!validation.valid) {
-      return c.json<UiResponse>(
-        {
-          showToast: buildValidationHint({
-            ...validation,
-            targetTier: difficultyToTier(difficulty),
-          }),
-        },
-        200
-      );
-    }
-    const result = await injectAndPublishManualPuzzle({
-      text,
-      author,
-      difficulty,
-      challengeType,
-      allowAdjustment: true,
-      skipPreflight: true,
-    });
-    if (!result.success || !result.postId) {
-      return c.json<UiResponse>(
-        {
-          showToast:
-            formatPublishFailureToast({
-              error: result.error,
-              levelId: result.levelId,
-              publishState: result.publishState,
-              cleanupPerformed: result.cleanupPerformed,
-            }) ??
-            (result.levelId
-              ? `Puzzle saved as ${result.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
-              : 'Manual puzzle publish failed before a usable Reddit post was created.'),
-        },
-        200
-      );
-    }
-    return c.json<UiResponse>(
-      {
-        showToast: `${formatTier(difficultyToTier(result.difficulty ?? difficulty))} puzzle published${
-          difficultyToTier(result.difficulty ?? difficulty) !== difficultyToTier(difficulty)
-            ? ` (adjusted from ${formatTier(difficultyToTier(difficulty))})`
-            : ''
-        } - "${formatQuoteExcerpt(text)}"`,
-      },
-      200
-    );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Error publishing reviewed manual puzzle: ${reason}`);
-    const publishFailure = getManualPublishFailure(error);
-    return c.json<UiResponse>(
-      {
-        showToast: error instanceof ManualChallengePreflightFailedError
-          ? buildValidationHint({
-              ...(error.validation as {
-                naturalDifficulty: string;
-                achievableTierRange: string[];
-                reasons: string[];
-                suggestions: string[];
-              }),
-            })
-          : publishFailure
-          ? `Puzzle saved as ${publishFailure.levelId} but post publish failed. Use "Post Last Generated Challenge" to retry.`
-          : `Failed to publish manual puzzle: ${reason}`,
-      },
-      200
-    );
-  }
 });
 
 forms.post('/mod-clear-subreddit-data-submit', async (c) => {
-  const allowed = await hasAdminAccess({
-    subredditName: context.subredditName,
-    username: context.username,
-  });
-  if (!allowed) {
-    return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
+  const accessDenied = await rejectWithoutAdminAccess(c);
+  if (accessDenied) {
+    return accessDenied;
   }
   try {
     const body = await c.req.json<ModClearSubredditDataFormRequest>();

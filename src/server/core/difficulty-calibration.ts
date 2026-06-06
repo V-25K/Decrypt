@@ -9,23 +9,41 @@ import {
 } from './content';
 import { getQualifiedLevelTelemetry } from './engagement';
 import { getAllLevelIds, getPuzzlePrivate } from './puzzle-store';
-import { keyDifficultyCalibrationArtifact } from './keys';
+import {
+  keyDifficultyCalibrationArtifact,
+  keyDifficultyCalibrationV3Artifact,
+} from './keys';
 import { difficultyModelVersion } from './difficulty-model';
+import {
+  buildChallengeEvaluation,
+  getRecentChallengeEvaluations,
+  saveChallengeEvaluation,
+} from './challenge-evaluation';
+import { getChallengeShadowRatingSnapshot } from './difficulty-shadow-rating';
 
-export const BAYES_ALPHA = 4;
-export const BAYES_BETA = 2;
-export const MIN_QUALIFIED_PLAYS_PER_LEVEL = 30;
-export const LOOKBACK_ELIGIBLE_LEVELS = 30;
-export const RECENT_LEVEL_SCAN_LIMIT = 120;
-export const MIN_ELIGIBLE_LEVELS_FOR_BIAS = 5;
-export const BIAS_REQUIRED_SHARE = 0.5;
-export const OBSERVED_EASY_THRESHOLD = 0.72;
-export const OBSERVED_HARD_THRESHOLD = 0.4;
-export const OBSERVED_EXPERT_THRESHOLD = 0.25;
-export const MIN_QUALIFIED_PLAYS_FOR_HARDNESS_BANDS = 15;
-export const HARDNESS_BAND_SCAN_LIMIT = 180;
-export const MIN_HARDNESS_SAMPLES_PER_TIER = 4;
-export const HARDNESS_BAND_BLEND_SAMPLE_TARGET = 16;
+const BAYES_ALPHA = 4;
+const BAYES_BETA = 2;
+const MIN_QUALIFIED_PLAYS_PER_LEVEL = 30;
+const LOOKBACK_ELIGIBLE_LEVELS = 30;
+const RECENT_LEVEL_SCAN_LIMIT = 120;
+const MIN_ELIGIBLE_LEVELS_FOR_BIAS = 5;
+const BIAS_REQUIRED_SHARE = 0.5;
+const OBSERVED_EASY_THRESHOLD = 0.72;
+const OBSERVED_HARD_THRESHOLD = 0.4;
+const OBSERVED_EXPERT_THRESHOLD = 0.25;
+const MIN_QUALIFIED_PLAYS_FOR_HARDNESS_BANDS = 15;
+const HARDNESS_BAND_SCAN_LIMIT = 180;
+const MIN_HARDNESS_SAMPLES_PER_TIER = 4;
+const HARDNESS_BAND_BLEND_SAMPLE_TARGET = 16;
+const V3_CALIBRATION_SCAN_LIMIT = 180;
+const V3_DEFAULT_CHUNK_SIZE = 20;
+const V3_MAX_EXECUTION_MS = 20_000;
+const SHADOW_PREVIEW_SCAN_LIMIT = 40;
+const SHADOW_PREVIEW_CANDIDATE_LIMIT = 8;
+const SHADOW_READY_MIN_PLAYS = 30;
+const SHADOW_READY_MAX_UNCERTAINTY = 0.5;
+
+export const difficultyCalibrationV3Version = 'v3';
 
 export type TierShift = -1 | 0 | 1;
 
@@ -59,6 +77,41 @@ type CalibrationArtifact = {
   difficultyModelVersion: typeof difficultyModelVersion;
   snapshot: DifficultyCalibrationSnapshot;
   hardnessBoundsByTier: HardnessBoundsByTier;
+};
+
+export type DifficultyCalibrationV3Artifact = {
+  difficultyCalibrationVersion: typeof difficultyCalibrationV3Version;
+  difficultyModelVersion: typeof difficultyModelVersion;
+  builtAt: number;
+  complete: boolean;
+  nextOffset: number | null;
+  totalLevels: number;
+  processedLevels: number;
+  updatedEvaluations: number;
+  qualifiedLevels: number;
+  shadowReadyLevels: number;
+  params: {
+    scanLimit: number;
+    chunkSize: number;
+    maxExecutionMs: number;
+  };
+};
+
+export type ShadowCalibrationPreviewCandidate = {
+  levelId: string;
+  staticDifficulty: number;
+  shadowDifficulty: number;
+  recommendedShift: TierShift;
+  itemPlayCount: number;
+  itemUncertainty: number;
+};
+
+export type ShadowCalibrationPreview = {
+  readyLevels: number;
+  averageStaticShadowDelta: number;
+  maxStaticShadowDelta: number;
+  generatedAt: number;
+  reviewCandidates: ShadowCalibrationPreviewCandidate[];
 };
 
 type CalibrationLevelData = {
@@ -108,6 +161,35 @@ const calibrationArtifactSchema = z.object({
     expert: hardnessTierSchema,
   }),
 });
+const difficultyCalibrationV3ArtifactSchema = z.object({
+  difficultyCalibrationVersion: z.literal(difficultyCalibrationV3Version),
+  difficultyModelVersion: z.literal(difficultyModelVersion),
+  builtAt: z.number().int().nonnegative(),
+  complete: z.boolean(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+  totalLevels: z.number().int().nonnegative(),
+  processedLevels: z.number().int().nonnegative(),
+  updatedEvaluations: z.number().int().nonnegative(),
+  qualifiedLevels: z.number().int().nonnegative(),
+  shadowReadyLevels: z.number().int().nonnegative(),
+  params: z.object({
+    scanLimit: z.number().int().positive(),
+    chunkSize: z.number().int().positive(),
+    maxExecutionMs: z.number().int().positive(),
+  }),
+});
+
+const round4 = (value: number): number => Number(value.toFixed(4));
+
+const clampTierShift = (value: number): TierShift => {
+  if (value > 0) {
+    return 1;
+  }
+  if (value < 0) {
+    return -1;
+  }
+  return 0;
+};
 
 let calibrationArtifactInFlight: Promise<CalibrationArtifact> | null = null;
 
@@ -432,7 +514,7 @@ const getCalibrationArtifact = async (): Promise<CalibrationArtifact> => {
 export const smoothedWinRate = (wins: number, plays: number): number =>
   (BAYES_ALPHA + wins) / (BAYES_ALPHA + BAYES_BETA + plays);
 
-export const tierFromDifficulty = (difficulty: number): DifficultyTier =>
+const tierFromDifficulty = (difficulty: number): DifficultyTier =>
   difficultyToTier(difficulty);
 
 export const observedTierFromSmoothedRate = (rate: number): DifficultyTier => {
@@ -552,4 +634,226 @@ export const getGlobalDailyCalibrationSnapshot =
 export const computeGlobalDailyBias = async (): Promise<TierShift> => {
   const snapshot = await getGlobalDailyCalibrationSnapshot();
   return snapshot.biasTierShift;
+};
+
+export const readDifficultyCalibrationV3Artifact =
+  async (): Promise<DifficultyCalibrationV3Artifact | null> => {
+    const raw = await redis.get(keyDifficultyCalibrationV3Artifact);
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const artifact = difficultyCalibrationV3ArtifactSchema.safeParse(parsed);
+      return artifact.success ? artifact.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+const shadowRatingIsReady = (snapshot: {
+  itemPlayCount: number;
+  itemUncertainty: number;
+} | null): boolean =>
+  snapshot !== null &&
+  snapshot.itemPlayCount >= SHADOW_READY_MIN_PLAYS &&
+  snapshot.itemUncertainty <= SHADOW_READY_MAX_UNCERTAINTY;
+
+const recommendedShadowShift = (params: {
+  staticDifficulty: number;
+  shadowDifficulty: number;
+}): TierShift =>
+  clampTierShift(
+    Math.max(
+      -1,
+      Math.min(1, Math.round(params.shadowDifficulty) - params.staticDifficulty)
+    )
+  );
+
+export const buildShadowCalibrationPreview =
+  async (): Promise<ShadowCalibrationPreview> => {
+    const evaluations = await getRecentChallengeEvaluations(SHADOW_PREVIEW_SCAN_LIMIT);
+    const readyCandidates = evaluations
+      .filter((evaluation) => shadowRatingIsReady(evaluation.shadowRatingSnapshot))
+      .map((evaluation): ShadowCalibrationPreviewCandidate => {
+        const shadow = evaluation.shadowRatingSnapshot;
+        if (shadow === null) {
+          throw new Error('Expected ready shadow rating snapshot.');
+        }
+        const staticDifficulty = evaluation.difficultyBreakdown.staticDifficulty;
+        return {
+          levelId: evaluation.levelId,
+          staticDifficulty,
+          shadowDifficulty: round4(shadow.itemDifficultyRating),
+          recommendedShift: recommendedShadowShift({
+            staticDifficulty,
+            shadowDifficulty: shadow.itemDifficultyRating,
+          }),
+          itemPlayCount: shadow.itemPlayCount,
+          itemUncertainty: round4(shadow.itemUncertainty),
+        };
+      });
+    const deltas = readyCandidates.map((candidate) =>
+      Math.abs(candidate.shadowDifficulty - candidate.staticDifficulty)
+    );
+    const averageDelta =
+      deltas.length > 0
+        ? deltas.reduce((total, delta) => total + delta, 0) / deltas.length
+        : 0;
+    const maxDelta = deltas.length > 0 ? Math.max(...deltas) : 0;
+    const reviewCandidates = [...readyCandidates]
+      .sort(
+        (left, right) =>
+          Math.abs(right.shadowDifficulty - right.staticDifficulty) -
+          Math.abs(left.shadowDifficulty - left.staticDifficulty)
+      )
+      .slice(0, SHADOW_PREVIEW_CANDIDATE_LIMIT);
+
+    return {
+      readyLevels: readyCandidates.length,
+      averageStaticShadowDelta: round4(averageDelta),
+      maxStaticShadowDelta: round4(maxDelta),
+      generatedAt: Date.now(),
+      reviewCandidates,
+    };
+  };
+
+type DifficultyCalibrationV3ChunkParams = {
+  offset?: number;
+  processedLevels?: number;
+  updatedEvaluations?: number;
+  qualifiedLevels?: number;
+  shadowReadyLevels?: number;
+  chunkSize?: number;
+  startedAtMs?: number;
+};
+
+type DifficultyCalibrationV3ChunkProgress = {
+  processedThisChunk: number;
+  updatedThisChunk: number;
+  qualifiedThisChunk: number;
+  shadowReadyThisChunk: number;
+};
+
+const normalizeDifficultyCalibrationV3Chunk = (
+  params?: DifficultyCalibrationV3ChunkParams
+): {
+  startedAtMs: number;
+  chunkSize: number;
+  offset: number;
+} => ({
+  startedAtMs: params?.startedAtMs ?? Date.now(),
+  chunkSize: Math.max(
+    1,
+    Math.floor(params?.chunkSize ?? V3_DEFAULT_CHUNK_SIZE)
+  ),
+  offset: Math.max(0, Math.floor(params?.offset ?? 0)),
+});
+
+const isDifficultyCalibrationV3ChunkOutOfTime = (
+  startedAtMs: number
+): boolean => Date.now() - startedAtMs > V3_MAX_EXECUTION_MS;
+
+const refreshChallengeEvaluationForCalibration = async (
+  levelId: string
+): Promise<Omit<DifficultyCalibrationV3ChunkProgress, 'processedThisChunk'>> => {
+  const puzzle = await getPuzzlePrivate(levelId);
+  if (!puzzle) {
+    return {
+      updatedThisChunk: 0,
+      qualifiedThisChunk: 0,
+      shadowReadyThisChunk: 0,
+    };
+  }
+
+  const [telemetry, shadowRatingSnapshot] = await Promise.all([
+    getQualifiedLevelTelemetry(levelId),
+    getChallengeShadowRatingSnapshot({
+      levelId,
+      puzzle,
+    }),
+  ]);
+  await saveChallengeEvaluation(
+    buildChallengeEvaluation({
+      puzzle,
+      telemetrySnapshot: {
+        ...telemetry,
+        targetTimeSeconds: puzzle.targetTimeSeconds ?? null,
+      },
+      shadowRatingSnapshot,
+      optimizerSummary: {
+        mode: 'fallback',
+        candidatesEvaluated: 0,
+        searchDepth: 0,
+        selectedScore: null,
+        reasons: ['Evaluation refreshed by scheduled V3 shadow calibration.'],
+      },
+    })
+  );
+
+  return {
+    updatedThisChunk: 1,
+    qualifiedThisChunk:
+      telemetry.plays >= MIN_QUALIFIED_PLAYS_FOR_HARDNESS_BANDS ? 1 : 0,
+    shadowReadyThisChunk: shadowRatingIsReady(shadowRatingSnapshot) ? 1 : 0,
+  };
+};
+
+export const runDifficultyCalibrationV3Chunk = async (
+  params?: DifficultyCalibrationV3ChunkParams
+): Promise<DifficultyCalibrationV3Artifact> => {
+  const { startedAtMs, chunkSize, offset } =
+    normalizeDifficultyCalibrationV3Chunk(params);
+  const allLevelIds = await getAllLevelIds();
+  const levelIds = allLevelIds.slice(-V3_CALIBRATION_SCAN_LIMIT).reverse();
+  const chunk = levelIds.slice(offset, offset + chunkSize);
+  const progress: DifficultyCalibrationV3ChunkProgress = {
+    processedThisChunk: 0,
+    updatedThisChunk: 0,
+    qualifiedThisChunk: 0,
+    shadowReadyThisChunk: 0,
+  };
+
+  for (const levelId of chunk) {
+    if (isDifficultyCalibrationV3ChunkOutOfTime(startedAtMs)) {
+      break;
+    }
+    progress.processedThisChunk += 1;
+    const levelProgress = await refreshChallengeEvaluationForCalibration(levelId);
+    progress.updatedThisChunk += levelProgress.updatedThisChunk;
+    progress.qualifiedThisChunk += levelProgress.qualifiedThisChunk;
+    progress.shadowReadyThisChunk += levelProgress.shadowReadyThisChunk;
+  }
+
+  const processedLevels =
+    (params?.processedLevels ?? 0) + progress.processedThisChunk;
+  const updatedEvaluations =
+    (params?.updatedEvaluations ?? 0) + progress.updatedThisChunk;
+  const qualifiedLevels =
+    (params?.qualifiedLevels ?? 0) + progress.qualifiedThisChunk;
+  const shadowReadyLevels =
+    (params?.shadowReadyLevels ?? 0) + progress.shadowReadyThisChunk;
+  const nextOffset =
+    offset + progress.processedThisChunk < levelIds.length
+      ? offset + progress.processedThisChunk
+      : null;
+  const artifact: DifficultyCalibrationV3Artifact = {
+    difficultyCalibrationVersion: difficultyCalibrationV3Version,
+    difficultyModelVersion,
+    builtAt: Date.now(),
+    complete: nextOffset === null,
+    nextOffset,
+    totalLevels: levelIds.length,
+    processedLevels,
+    updatedEvaluations,
+    qualifiedLevels,
+    shadowReadyLevels,
+    params: {
+      scanLimit: V3_CALIBRATION_SCAN_LIMIT,
+      chunkSize,
+      maxExecutionMs: V3_MAX_EXECUTION_MS,
+    },
+  };
+  await redis.set(keyDifficultyCalibrationV3Artifact, JSON.stringify(artifact));
+  return artifact;
 };

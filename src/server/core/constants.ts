@@ -1,7 +1,5 @@
-import type { PowerupType } from '../../shared/game';
 import { scorePenaltyEngine } from '../../shared/score-penalty-engine';
 import { fastSolveBonusSystem } from '../../shared/fast-solve-bonus-system';
-import { powerupPricingEngine } from '../../shared/powerup-pricing-engine';
 
 export const heartsPerRun = 3;
 export const heartRefillIntervalMs = 30 * 60 * 1000;
@@ -12,52 +10,10 @@ export const dailyDataTtlSeconds = 90 * 24 * 60 * 60;
 
 export const defaultCoinsReward = 35;
 export const flawlessBonusCoins = 15;
-export const fastSolveSeconds = 60; // Legacy - use fastSolveBonusSystem for new logic
-export const fastSolveBonusCoins = 10; // Legacy - use fastSolveBonusSystem for new logic
 export const communityJoinRewardCoins = 100;
-export const dailyRetryCostFirst = 80;
-export const dailyRetryCostSecond = 140;
-export const dailyRetryCostCap = 200;
 export const coinHeartRefillCost = 350;
 export const coinHeartTopUpCost = 150;
 export const maxCoinHeartPurchasesPerDay = 2;
-
-export const powerupCosts: Record<PowerupType, number> = {
-  hammer: 60, // Legacy - use powerupPricingEngine for new logic
-  shield: 110, // Legacy - use powerupPricingEngine for new logic
-  wand: 170, // Legacy - use powerupPricingEngine for new logic
-  rocket: 240, // Legacy - use powerupPricingEngine for new logic
-};
-
-export const getPowerupCost = (
-  powerupType: PowerupType,
-  difficulty: number = 5,
-  remainingLetters: number = 10
-): number => {
-  return powerupPricingEngine.calculatePowerupCost(powerupType, difficulty, remainingLetters);
-};
-
-export const getPowerupValueAnalysis = (
-  powerupType: PowerupType,
-  difficulty: number = 5,
-  remainingLetters: number = 10
-) => {
-  return powerupPricingEngine
-    .getPricingBreakdown(difficulty, remainingLetters)
-    .find((item) => item.powerupType === powerupType) ?? null;
-};
-
-export const allPowerups: PowerupType[] = ['hammer', 'wand', 'shield', 'rocket'];
-
-export const getDailyRetryCost = (retryCount: number): number => {
-  if (retryCount <= 0) {
-    return dailyRetryCostFirst;
-  }
-  if (retryCount === 1) {
-    return dailyRetryCostSecond;
-  }
-  return dailyRetryCostCap;
-};
 
 export const getDailyRetryScoreFactor = (retryCount: number): number => {
   return scorePenaltyEngine.calculatePenaltyFactor(retryCount);
@@ -76,10 +32,6 @@ export const getFastSolveBonus = (
   difficulty: number = 5
 ): number => {
   return fastSolveBonusSystem.calculateBonus(solveSeconds, baseScore, difficulty);
-};
-
-export const getFastSolveThreshold = (difficulty: number = 5): number => {
-  return fastSolveBonusSystem.getThresholdForDifficulty(difficulty);
 };
 
 export const qualifiesForFastSolveBonus = (

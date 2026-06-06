@@ -9,7 +9,7 @@ import * as fc from 'fast-check';
 /**
  * Common generators for game entities
  */
-export const GameGenerators = {
+const GameGenerators = {
   /**
    * Generate valid user IDs
    */
@@ -118,7 +118,7 @@ export const GameGenerators = {
 /**
  * Property test patterns for common game logic
  */
-export const PropertyPatterns = {
+const PropertyPatterns = {
   /**
    * Test that a function is idempotent
    */
@@ -194,7 +194,7 @@ export const PropertyPatterns = {
 /**
  * Test utilities for performance validation
  */
-export const PerformanceTestUtils = {
+const PerformanceTestUtils = {
   /**
    * Test that an operation completes within a time limit
    */
@@ -265,7 +265,7 @@ export const PerformanceTestUtils = {
 /**
  * Balance testing utilities
  */
-export const BalanceTestUtils = {
+const BalanceTestUtils = {
   /**
    * Test that cost scaling is reasonable
    */

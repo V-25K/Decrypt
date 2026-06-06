@@ -162,14 +162,6 @@ export const getMetricsSnapshot = (): MetricsSnapshot => {
 };
 
 /**
- * Log current metrics snapshot
- */
-export const logMetricsSnapshot = (): void => {
-  const snapshot = getMetricsSnapshot();
-  console.log('[metrics] Snapshot', snapshot);
-};
-
-/**
  * Reset all metrics (useful for testing)
  */
 export const resetMetrics = (): void => {

@@ -4,7 +4,7 @@ import { heartRefillIntervalMs, heartsPerRun } from './constants';
 const clampHearts = (hearts: number): number =>
   Math.min(heartsPerRun, Math.max(0, hearts));
 
-export const hasInfiniteHearts = (
+const hasInfiniteHearts = (
   profile: UserProfile,
   nowTs: number = Date.now()
 ): boolean => profile.infiniteHeartsExpiryTs > nowTs;

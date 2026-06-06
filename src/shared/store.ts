@@ -32,7 +32,7 @@ const offerPromotionLabels: Record<string, string> = {
   heart_surge_2h: '2 HR ∞',
 };
 
-export const bundleCatalog: Record<string, BundleCatalogEntry> = {
+const bundleCatalog: Record<string, BundleCatalogEntry> = {
   rookie_stash: {
     isOneTime: true,
     perks: {
@@ -95,7 +95,7 @@ export const bundleCatalog: Record<string, BundleCatalogEntry> = {
   },
 };
 
-export const oneTimeOfferSkus = Object.entries(bundleCatalog)
+const oneTimeOfferSkus = Object.entries(bundleCatalog)
   .filter((entry) => entry[1].isOneTime)
   .map((entry) => entry[0]);
 
@@ -129,11 +129,6 @@ export const getUsdApproxFromGold = (goldAmount: number): number | null =>
 
 export const getOfferPromotionLabel = (sku: string): string =>
   offerPromotionLabels[sku] ?? 'Offer';
-
-export const isInfiniteHeartSku = (sku: string): boolean => {
-  const entry = bundleCatalog[sku];
-  return entry !== undefined && entry.perks.infiniteHeartsHours > 0;
-};
 
 export const getInfiniteHeartsDurationMs = (sku: string): number => {
   const entry = bundleCatalog[sku];

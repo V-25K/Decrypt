@@ -28,7 +28,7 @@ const clampRemainingLetters = (remainingLetters: number | null | undefined): num
   return Math.max(0, Math.round(remainingLetters));
 };
 
-export const normalizePowerupPricingContext = (
+const normalizePowerupPricingContext = (
   context: Partial<PowerupPricingContext> | null | undefined
 ): PowerupPricingContext => ({
   difficulty: clampDifficulty(context?.difficulty),

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { TaskResponse } from '@devvit/web/server';
+import { scheduler, type TaskResponse } from '@devvit/web/server';
 import {
   generatePuzzleForDate,
   publishAndActivateDailyPost,
@@ -19,10 +19,24 @@ import { formatDateKey } from '../core/serde';
 import { awardDailyTopRank } from '../core/leaderboard';
 import { getDailyAutomationEnabled } from '../core/config';
 import { CompletionJournalCleanup } from '../core/completion-journal-cleanup';
+import { runDifficultyCalibrationV3Chunk } from '../core/difficulty-calibration';
 
 export const schedulerRoutes = new Hono();
 const expectedDailyPosts = 2;
 const allowedScheduledPublishHoursUtc = [0, 12];
+
+type DifficultyCalibrationV3JobData = {
+  offset?: number;
+  processedLevels?: number;
+  updatedEvaluations?: number;
+  qualifiedLevels?: number;
+  shadowReadyLevels?: number;
+  chunkSize?: number;
+};
+
+type DifficultyCalibrationV3RequestBody = {
+  data?: DifficultyCalibrationV3JobData;
+};
 
 const pause = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -338,6 +352,42 @@ schedulerRoutes.post('/verify-daily', async (c) => {
     });
     throw error;
   }
+});
+
+schedulerRoutes.post('/calibrate-difficulty-v3', async (c) => {
+  const body = await c.req
+    .json<DifficultyCalibrationV3RequestBody>()
+    .catch((): DifficultyCalibrationV3RequestBody => ({ data: {} }));
+  const data = body.data ?? {};
+  const artifact = await runDifficultyCalibrationV3Chunk({
+    offset: data.offset,
+    processedLevels: data.processedLevels,
+    updatedEvaluations: data.updatedEvaluations,
+    qualifiedLevels: data.qualifiedLevels,
+    shadowReadyLevels: data.shadowReadyLevels,
+    chunkSize: data.chunkSize,
+    startedAtMs: Date.now(),
+  });
+
+  if (artifact.nextOffset !== null) {
+    await scheduler.runJob({
+      name: 'decrypt-calibrate-difficulty-v3',
+      runAt: new Date(),
+      data: {
+        offset: artifact.nextOffset,
+        processedLevels: artifact.processedLevels,
+        updatedEvaluations: artifact.updatedEvaluations,
+        qualifiedLevels: artifact.qualifiedLevels,
+        shadowReadyLevels: artifact.shadowReadyLevels,
+        chunkSize: artifact.params.chunkSize,
+      },
+    });
+  }
+
+  return c.json<TaskResponse>({
+    status: artifact.complete ? 'success' : 'requeued',
+    data: artifact,
+  });
 });
 
 schedulerRoutes.post('/cleanup-completion-journals', async (c) => {

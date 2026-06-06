@@ -29,7 +29,7 @@ export type RatingResult = {
   qualityMultiplier: number;
 };
 
-export const getChallengeRating = (params: {
+const getChallengeRating = (params: {
   difficulty: number;
   cryptoHardness?: number | null | undefined;
   isLogical?: boolean | undefined;

@@ -16,10 +16,8 @@ export type UiSpriteType =
 
 export const coinEmoji = '\u{1FA99}';
 export const crossMarkEmoji = '\u{274C}';
-export const lockEmoji = '\u{1F512}';
 export const wordContinuationGlyph = '\u{21B3}';
 export const heartEmoji = '\u{2764}\u{FE0F}';
-export const emptyHeartGlyph = '\u2661';
 export const infiniteHeartsIcon = '\u267E\u{FE0F}';
 
 export const heartRefillIntervalMs = 30 * 60 * 1000;
@@ -81,21 +79,6 @@ export const uiSpriteAssetPath: Record<UiSpriteType, string> = {
 
 export const coinHeartRefillCost = 350;
 export const coinHeartTopUpCost = 150;
-export const maxCoinHeartPurchasesPerDay = 2;
-
-export const dailyRetryCostFirst = 80;
-export const dailyRetryCostSecond = 140;
-export const dailyRetryCostCap = 200;
-
-export const getDailyRetryCost = (retryCount: number): number => {
-  if (retryCount <= 0) {
-    return dailyRetryCostFirst;
-  }
-  if (retryCount === 1) {
-    return dailyRetryCostSecond;
-  }
-  return dailyRetryCostCap;
-};
 
 export const helpSlides = [
   {
@@ -132,11 +115,6 @@ export const helpSlides = [
     hint: 'Cleaner and faster solves rank better.',
   },
 ] as const;
-
-export const endlessPreviewLevels = Array.from(
-  { length: 12 },
-  (_, index) => index + 1
-);
 
 export const maxOutcomeCrowdAvatars = 20;
 export const outcomeCrowdScale = 0.75;

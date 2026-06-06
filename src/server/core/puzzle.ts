@@ -19,6 +19,10 @@ import {
   difficultyModelVersion,
   estimateDifficultyV2,
 } from './difficulty-model.ts';
+import {
+  scoreChallengeLayoutCandidate,
+  type ChallengeOptimizerSummary,
+} from './challenge-evaluation.ts';
 import { checkPadlockStatus } from './gameplay.ts';
 import { deriveSeed, mulberry32, shuffleWithRng, type Rng } from './rng.ts';
 import { solverThresholdForDifficulty } from './solver-thresholds.ts';
@@ -102,6 +106,7 @@ export type DifficultyAdjustmentResult = {
   budgetUsed: number;
   budgetTotal: number;
   reason?: string;
+  optimizerSummary?: ChallengeOptimizerSummary;
 };
 
 const baselinePrefillCountForTier = (tier: DifficultyTier): number => {
@@ -1154,6 +1159,8 @@ const passesFinalSolvabilityValidation = (params: {
     revealedIndices: params.puzzle.prefilledIndices,
     requiredSolveRatio: params.requiredRatio,
     solverProfile: 'standard',
+    maxSearchMs: 90,
+    maxBranchExpansions: 2000,
   });
   if (
     !standard.solvable ||
@@ -1518,6 +1525,13 @@ export const adjustPuzzleDifficulty = async (params: {
   let currentBudget = { ...params.budget };
   const adjustmentLog: string[] = [];
   const seenStates = new Set<string>();
+  let latestOptimizerSummary: ChallengeOptimizerSummary = {
+    mode: 'candidate_optimizer',
+    candidatesEvaluated: 0,
+    searchDepth: 0,
+    selectedScore: null,
+    reasons: ['No optimizer pass has run yet.'],
+  };
   
   // Log adjustment start
   console.log(`${tracePrefix} Starting difficulty adjustment`, {
@@ -1560,6 +1574,7 @@ export const adjustPuzzleDifficulty = async (params: {
           adjustmentLog,
           budgetUsed: currentBudget.spent,
           budgetTotal: currentBudget.total,
+          optimizerSummary: latestOptimizerSummary,
         };
       }
       return {
@@ -1570,6 +1585,7 @@ export const adjustPuzzleDifficulty = async (params: {
         adjustmentLog,
         budgetUsed: currentBudget.spent,
         budgetTotal: currentBudget.total,
+        optimizerSummary: latestOptimizerSummary,
         reason: 'Difficulty adjustment entered a stable loop without improving toward the target',
       };
     }
@@ -1615,19 +1631,27 @@ export const adjustPuzzleDifficulty = async (params: {
         adjustmentLog,
         budgetUsed: currentBudget.spent,
         budgetTotal: currentBudget.total,
+        optimizerSummary: latestOptimizerSummary,
       };
     }
     
     // Select best adjustment
-    const adjustment = selectBestAdjustment({
+    const selection = selectBestAdjustment({
       puzzle: currentPuzzle,
       budget: currentBudget,
       targetDifficulty: params.targetDifficulty,
       currentEstimatedDifficulty: estimatedDifficulty,
       rng: params.rng,
     });
+    latestOptimizerSummary = selection?.optimizerSummary ?? {
+      mode: 'candidate_optimizer',
+      candidatesEvaluated: 0,
+      searchDepth: 0,
+      selectedScore: null,
+      reasons: ['No candidate adjustment passed optimizer scoring.'],
+    };
     
-    if (!adjustment) {
+    if (!selection) {
       // No valid adjustments available
       console.warn(`${tracePrefix} No valid adjustments available`, {
         iteration: iteration + 1,
@@ -1647,9 +1671,11 @@ export const adjustPuzzleDifficulty = async (params: {
         adjustmentLog,
         budgetUsed: currentBudget.spent,
         budgetTotal: currentBudget.total,
+        optimizerSummary: latestOptimizerSummary,
         reason: 'No valid adjustments available within budget',
       };
     }
+    const adjustment = selection.adjustment;
     
     // Log adjustment application
     const nextBudget = updateBudget(currentBudget, adjustment.cost);
@@ -1685,6 +1711,7 @@ export const adjustPuzzleDifficulty = async (params: {
         adjustmentLog,
         budgetUsed: currentBudget.spent,
         budgetTotal: currentBudget.total,
+        optimizerSummary: latestOptimizerSummary,
         reason: `Fairness constraint violated: ${validation.reasons.join('; ')}`,
       };
     }
@@ -1718,6 +1745,7 @@ export const adjustPuzzleDifficulty = async (params: {
       adjustmentLog,
       budgetUsed: currentBudget.spent,
       budgetTotal: currentBudget.total,
+      optimizerSummary: latestOptimizerSummary,
     };
   }
 
@@ -1741,6 +1769,7 @@ export const adjustPuzzleDifficulty = async (params: {
     adjustmentLog,
     budgetUsed: currentBudget.spent,
     budgetTotal: currentBudget.total,
+    optimizerSummary: latestOptimizerSummary,
     reason: 'Max iterations reached without convergence',
   };
 };
@@ -1797,54 +1826,290 @@ const computeAchievableRange = (
 /**
  * Selects the best adjustment to apply based on impact/cost ratio.
  */
+type AdjustmentSelection = {
+  adjustment: Adjustment;
+  optimizerSummary: ChallengeOptimizerSummary;
+};
+
+type AdjustmentSearchState = {
+  puzzle: PuzzlePrivate;
+  budget: ObstructionBudget;
+  sequence: Adjustment[];
+};
+
+type ScoredAdjustmentCandidate = AdjustmentSearchState & {
+  score: number;
+  estimatedDifficulty: number;
+  valid: boolean;
+};
+
+const optimizerMaxCandidates = 24;
+const optimizerMaxDepth = 3;
+
+const adjustmentStateKey = (
+  state: AdjustmentSearchState,
+  estimatedDifficulty: number
+): string =>
+  JSON.stringify({
+    estimatedDifficulty,
+    blindIndices: [...state.puzzle.blindIndices].sort((a, b) => a - b),
+    prefilledIndices: [...state.puzzle.prefilledIndices].sort((a, b) => a - b),
+    lockIndices: [...(state.puzzle.lockIndices ?? [])].sort((a, b) => a - b),
+    padlockChainIds: state.puzzle.padlockChains
+      .map((chain) => chain.chainId)
+      .sort((a, b) => a - b),
+    budgetSpent: state.budget.spent,
+  });
+
+const scoreAdjustmentCandidate = (params: {
+  state: AdjustmentSearchState;
+  targetDifficulty: number;
+}): ScoredAdjustmentCandidate => {
+  const difficultyBreakdown = buildDifficultyBreakdown(params.state.puzzle);
+  const estimatedDifficulty = difficultyBreakdown.calibratedDifficulty;
+  const validation = validatePuzzle({
+    ...params.state.puzzle,
+    difficulty: estimatedDifficulty,
+  });
+  const letterCount = Math.max(
+    1,
+    params.state.puzzle.tiles.filter((tile) => tile.isLetter).length
+  );
+  const lockCount = params.state.puzzle.lockIndices?.length ?? 0;
+  const retainedObstructionCount =
+    params.state.puzzle.blindIndices.length +
+    lockCount +
+    params.state.puzzle.padlockChains.length;
+  const firstAdjustment = params.state.sequence[0];
+  const fairnessStatus =
+    validation.valid && difficultyBreakdown.fairnessSummary.solvable
+      ? difficultyBreakdown.fairnessSummary.solvedRatio < 0.5
+        ? 'warning'
+        : 'pass'
+      : 'fail';
+  const baseScore = scoreChallengeLayoutCandidate({
+    targetTier: difficultyToTier(params.targetDifficulty),
+    targetDifficulty: params.targetDifficulty,
+    estimatedTier: difficultyToTier(estimatedDifficulty),
+    estimatedDifficulty,
+    fairnessStatus,
+    solverSolvedRatio: difficultyBreakdown.fairnessSummary.solvedRatio,
+    ambiguityScore:
+      difficultyBreakdown.fairnessSummary.ambiguityScore ??
+      1 - difficultyBreakdown.difficultyConfidence,
+    anchorCoverage: difficultyBreakdown.humanFeatures.revealedAnchorCoverage,
+    blindCoverage: params.state.puzzle.blindIndices.length / letterCount,
+    lockCoverage: lockCount / letterCount,
+    prefillCoverage: params.state.puzzle.prefilledIndices.length / letterCount,
+    padlockCount: params.state.puzzle.padlockChains.length,
+    budgetUsed: params.state.budget.spent,
+    budgetTotal: params.state.budget.total,
+  });
+  const prefillBeforeObstructionPenalty =
+    firstAdjustment?.type === 'add_prefill' &&
+    retainedObstructionCount > 0 &&
+    estimatedDifficulty > params.targetDifficulty
+      ? 2.5
+      : 0;
+  const hardeningFirstStepPenalty =
+    (firstAdjustment?.type === 'add_blind' ||
+      firstAdjustment?.type === 'add_padlock' ||
+      firstAdjustment?.type === 'remove_prefill') &&
+    estimatedDifficulty > params.targetDifficulty
+      ? 5
+      : 0;
+  const score =
+    baseScore + prefillBeforeObstructionPenalty + hardeningFirstStepPenalty;
+
+  return {
+    ...params.state,
+    score: validation.valid ? score : score + 100,
+    estimatedDifficulty,
+    valid: validation.valid && fairnessStatus !== 'fail',
+  };
+};
+
+const candidateAdjustmentsForState = (params: {
+  state: AdjustmentSearchState;
+  targetDifficulty: number;
+  currentEstimatedDifficulty: number;
+  rng: Rng;
+}): Adjustment[] => {
+  const increase = getIncreaseAdjustments(params.state.puzzle, params.state.budget, params.rng);
+  const decrease = getDecreaseAdjustments(params.state.puzzle, params.state.budget);
+  const needsIncrease = params.targetDifficulty > params.currentEstimatedDifficulty;
+  return needsIncrease ? [...increase, ...decrease] : [...decrease, ...increase];
+};
+
+const estimatedDifficultyForSearchState = (
+  state: AdjustmentSearchState,
+  currentEstimatedDifficulty: number
+): number =>
+  state.sequence.length === 0
+    ? currentEstimatedDifficulty
+    : estimateDifficultyFromObstructions(state.puzzle);
+
+const addScoredAdjustmentCandidate = (params: {
+  state: AdjustmentSearchState;
+  adjustment: Adjustment;
+  targetDifficulty: number;
+  seen: Set<string>;
+  scored: ScoredAdjustmentCandidate[];
+  nextFrontier: AdjustmentSearchState[];
+}): boolean => {
+  const candidate: AdjustmentSearchState = {
+    puzzle: applyAdjustment(params.state.puzzle, params.adjustment),
+    budget: updateBudget(params.state.budget, params.adjustment.cost),
+    sequence: [...params.state.sequence, params.adjustment],
+  };
+  const scoredCandidate = scoreAdjustmentCandidate({
+    state: candidate,
+    targetDifficulty: params.targetDifficulty,
+  });
+  const key = adjustmentStateKey(candidate, scoredCandidate.estimatedDifficulty);
+  if (params.seen.has(key)) {
+    return false;
+  }
+  params.seen.add(key);
+  params.scored.push(scoredCandidate);
+  params.nextFrontier.push(candidate);
+  return true;
+};
+
+const expandAdjustmentSearchDepth = (params: {
+  frontier: AdjustmentSearchState[];
+  targetDifficulty: number;
+  currentEstimatedDifficulty: number;
+  rng: Rng;
+  seen: Set<string>;
+  scored: ScoredAdjustmentCandidate[];
+}): AdjustmentSearchState[] => {
+  const nextFrontier: AdjustmentSearchState[] = [];
+  for (const state of params.frontier) {
+    if (params.scored.length >= optimizerMaxCandidates) {
+      break;
+    }
+    const estimatedDifficulty = estimatedDifficultyForSearchState(
+      state,
+      params.currentEstimatedDifficulty
+    );
+    const adjustments = candidateAdjustmentsForState({
+      state,
+      targetDifficulty: params.targetDifficulty,
+      currentEstimatedDifficulty: estimatedDifficulty,
+      rng: params.rng,
+    });
+    for (const adjustment of adjustments) {
+      if (params.scored.length >= optimizerMaxCandidates) {
+        break;
+      }
+      addScoredAdjustmentCandidate({
+        state,
+        adjustment,
+        targetDifficulty: params.targetDifficulty,
+        seen: params.seen,
+        scored: params.scored,
+        nextFrontier,
+      });
+    }
+  }
+  return nextFrontier;
+};
+
+const collectScoredAdjustmentCandidates = (params: {
+  root: AdjustmentSearchState;
+  targetDifficulty: number;
+  currentEstimatedDifficulty: number;
+  rng: Rng;
+}): {
+  scored: ScoredAdjustmentCandidate[];
+  maxDepthReached: number;
+} => {
+  let frontier: AdjustmentSearchState[] = [params.root];
+  const seen = new Set<string>();
+  const scored: ScoredAdjustmentCandidate[] = [];
+  let maxDepthReached = 0;
+
+  for (let depth = 1; depth <= optimizerMaxDepth; depth += 1) {
+    const nextFrontier = expandAdjustmentSearchDepth({
+      frontier,
+      targetDifficulty: params.targetDifficulty,
+      currentEstimatedDifficulty: params.currentEstimatedDifficulty,
+      rng: params.rng,
+      seen,
+      scored,
+    });
+    if (nextFrontier.length > 0) {
+      maxDepthReached = depth;
+    }
+    if (scored.length >= optimizerMaxCandidates || nextFrontier.length === 0) {
+      break;
+    }
+    frontier = nextFrontier;
+  }
+
+  return { scored, maxDepthReached };
+};
+
+const selectBestValidAdjustmentCandidate = (
+  scored: ScoredAdjustmentCandidate[]
+): ScoredAdjustmentCandidate | undefined => {
+  const validCandidates = scored
+    .filter((candidate) => candidate.sequence.length > 0 && candidate.valid)
+    .sort((a, b) => a.score - b.score);
+
+  return validCandidates.find((candidate) =>
+    passesFinalSolvabilityValidation({
+      puzzle: {
+        ...candidate.puzzle,
+        difficulty: candidate.estimatedDifficulty,
+      },
+      requiredRatio: solveRatioThreshold(candidate.estimatedDifficulty),
+    })
+  );
+};
+
 const selectBestAdjustment = (params: {
   puzzle: PuzzlePrivate;
   budget: ObstructionBudget;
   targetDifficulty: number;
   currentEstimatedDifficulty: number;
   rng: Rng;
-}): Adjustment | null => {
-  const needsIncrease = params.targetDifficulty > params.currentEstimatedDifficulty;
-  const available = needsIncrease
-    ? getIncreaseAdjustments(params.puzzle, params.budget, params.rng)
-    : getDecreaseAdjustments(params.puzzle, params.budget);
-  
-  if (available.length === 0) return null;
-  
-  const currentDirection = Math.sign(params.targetDifficulty - params.currentEstimatedDifficulty);
-  available.sort((a, b) => {
-    const nextPuzzleA = applyAdjustment(params.puzzle, a);
-    const nextPuzzleB = applyAdjustment(params.puzzle, b);
-    const nextDifficultyA = estimateDifficultyFromObstructions(nextPuzzleA);
-    const nextDifficultyB = estimateDifficultyFromObstructions(nextPuzzleB);
-    const gapA = Math.abs(params.targetDifficulty - nextDifficultyA);
-    const gapB = Math.abs(params.targetDifficulty - nextDifficultyB);
-    if (gapA !== gapB) {
-      return gapA - gapB;
-    }
-
-    const nextDirectionA = Math.sign(params.targetDifficulty - nextDifficultyA);
-    const nextDirectionB = Math.sign(params.targetDifficulty - nextDifficultyB);
-    const overshootPenaltyA = nextDirectionA !== 0 && nextDirectionA !== currentDirection ? 1 : 0;
-    const overshootPenaltyB = nextDirectionB !== 0 && nextDirectionB !== currentDirection ? 1 : 0;
-    if (overshootPenaltyA !== overshootPenaltyB) {
-      return overshootPenaltyA - overshootPenaltyB;
-    }
-
-    if (Math.abs(a.impact) !== Math.abs(b.impact)) {
-      return Math.abs(b.impact) - Math.abs(a.impact);
-    }
-
-    if (Math.abs(a.cost) !== Math.abs(b.cost)) {
-      return Math.abs(a.cost) - Math.abs(b.cost);
-    }
-
-    const ratioA = Math.abs(a.impact / (a.cost === 0 ? 1 : a.cost));
-    const ratioB = Math.abs(b.impact / (b.cost === 0 ? 1 : b.cost));
-    return ratioB - ratioA;
+}): AdjustmentSelection | null => {
+  const root: AdjustmentSearchState = {
+    puzzle: params.puzzle,
+    budget: params.budget,
+    sequence: [],
+  };
+  const { scored, maxDepthReached } = collectScoredAdjustmentCandidates({
+    root,
+    targetDifficulty: params.targetDifficulty,
+    currentEstimatedDifficulty: params.currentEstimatedDifficulty,
+    rng: params.rng,
   });
-  
-  return available[0] ?? null;
+  const selected = selectBestValidAdjustmentCandidate(scored);
+
+  if (!selected) {
+    return null;
+  }
+  const adjustment = selected.sequence[0];
+  if (!adjustment) {
+    return null;
+  }
+
+  return {
+    adjustment,
+    optimizerSummary: {
+      mode: 'candidate_optimizer',
+      candidatesEvaluated: scored.length,
+      searchDepth: maxDepthReached,
+      selectedScore: selected.score,
+      reasons: [
+        `Selected ${adjustment.type} from ${selected.sequence.length}-step candidate path.`,
+        `Estimated difficulty ${selected.estimatedDifficulty} scored ${selected.score}.`,
+      ],
+    },
+  };
 };
 
 /**

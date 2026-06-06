@@ -55,3 +55,6 @@ src/server/core/endless-*.ts
 src/server/core/endless-*.test.ts
 src/shared/endless.ts
 src/server/trpc/routers/admin.debug.ts
+
+
+.fallowrc.json

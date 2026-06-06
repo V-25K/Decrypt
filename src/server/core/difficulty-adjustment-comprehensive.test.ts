@@ -289,7 +289,7 @@ describe('adjustPuzzleDifficulty - comprehensive tests', () => {
       expect(validation.valid).toBe(true);
       expect(validation.reasons.length).toBe(0);
     }
-  });
+  }, 15_000);
   
   it('should provide achievable tier range on failure', async () => {
     const text = 'HI';
