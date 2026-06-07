@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { redisGetMock, redisSetMock, redisZAddMock, redisZRangeMock, store, zIndex } =
+const { redisGetMock, redisSetMock, redisZAddMock, redisZRangeMock, store, zIndexes } =
   vi.hoisted(() => ({
     redisGetMock: vi.fn(),
     redisSetMock: vi.fn(),
     redisZAddMock: vi.fn(),
     redisZRangeMock: vi.fn(),
     store: new Map<string, string>(),
-    zIndex: new Map<string, number>(),
+    zIndexes: new Map<string, Map<string, number>>(),
   }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -24,14 +24,20 @@ import { buildPuzzle } from './puzzle';
 import {
   buildChallengeEvaluation,
   getChallengeEvaluation,
+  getRecentChallengeEvaluationLevelIds,
+  getRecentPublishedChallengeEvaluationLevelIds,
   saveChallengeEvaluation,
   scoreChallengeLayoutCandidate,
 } from './challenge-evaluation';
 import type { ChallengeLayoutCandidateScoreInput } from './challenge-evaluation';
+import {
+  keyChallengeEvaluationIndex,
+  keyChallengeEvaluationPublishIndex,
+} from './keys';
 
 beforeEach(() => {
   store.clear();
-  zIndex.clear();
+  zIndexes.clear();
   redisGetMock.mockReset();
   redisSetMock.mockReset();
   redisZAddMock.mockReset();
@@ -42,12 +48,14 @@ beforeEach(() => {
     return true;
   });
   redisZAddMock.mockImplementation(
-    async (_key: string, entry: { member: string; score: number }) => {
+    async (key: string, entry: { member: string; score: number }) => {
+      const zIndex = zIndexes.get(key) ?? new Map<string, number>();
+      zIndexes.set(key, zIndex);
       zIndex.set(entry.member, entry.score);
     }
   );
-  redisZRangeMock.mockImplementation(async () =>
-    [...zIndex.entries()]
+  redisZRangeMock.mockImplementation(async (key: string) =>
+    [...(zIndexes.get(key)?.entries() ?? [])]
       .sort((a, b) => b[1] - a[1])
       .map(([member, score]) => ({ member, score }))
   );
@@ -141,7 +149,70 @@ describe('challenge evaluation persistence', () => {
 
     expect(loaded?.challengeEvaluationVersion).toBe('v1');
     expect(loaded?.summary.fairnessStatus).toMatch(/pass|warning|fail/);
-    expect(redisZAddMock).toHaveBeenCalledTimes(1);
+    expect(loaded?.puzzleCreatedAt).toBe(generated.puzzlePrivate.createdAt);
+    expect(redisZAddMock).toHaveBeenCalledTimes(2);
+    expect(redisZAddMock).toHaveBeenCalledWith(keyChallengeEvaluationIndex, {
+      member: generated.puzzlePrivate.levelId,
+      score: evaluation.createdAt,
+    });
+    expect(redisZAddMock).toHaveBeenCalledWith(
+      keyChallengeEvaluationPublishIndex,
+      {
+        member: generated.puzzlePrivate.levelId,
+        score: generated.puzzlePrivate.createdAt,
+      }
+    );
+  });
+
+  it('keeps evaluation-recency separate from publish-recency', async () => {
+    const oldPuzzle = buildPuzzle({
+      levelId: 'lvl_eval_old',
+      dateKey: '2026-06-06',
+      text: 'OLD PUZZLES CAN BE REEVALUATED LATER',
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+    }).puzzlePrivate;
+    const newPuzzle = buildPuzzle({
+      levelId: 'lvl_eval_new',
+      dateKey: '2026-06-07',
+      text: 'NEW PUZZLES SHOULD SORT BY PUBLICATION',
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 20,
+      skipSolvabilityCheck: true,
+    }).puzzlePrivate;
+    const oldPublishedPuzzle = {
+      ...oldPuzzle,
+      createdAt: 1_000,
+    };
+    const newPublishedPuzzle = {
+      ...newPuzzle,
+      createdAt: 2_000,
+    };
+
+    await saveChallengeEvaluation(
+      buildChallengeEvaluation({
+        puzzle: newPublishedPuzzle,
+        createdAt: 2_500,
+      })
+    );
+    await saveChallengeEvaluation(
+      buildChallengeEvaluation({
+        puzzle: oldPublishedPuzzle,
+        createdAt: 3_000,
+      })
+    );
+
+    await expect(getRecentChallengeEvaluationLevelIds(2)).resolves.toEqual([
+      oldPublishedPuzzle.levelId,
+      newPublishedPuzzle.levelId,
+    ]);
+    await expect(getRecentPublishedChallengeEvaluationLevelIds(2)).resolves.toEqual([
+      newPublishedPuzzle.levelId,
+      oldPublishedPuzzle.levelId,
+    ]);
   });
 
   it('does not add private evaluation fields to the public puzzle payload', () => {

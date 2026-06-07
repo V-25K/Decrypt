@@ -896,6 +896,13 @@ export const adminDifficultyCalibrationResponseSchema = z.object({
       updatedEvaluations: z.number().int().nonnegative(),
       qualifiedLevels: z.number().int().nonnegative(),
       shadowReadyLevels: z.number().int().nonnegative(),
+      shadowReadyLevelsBySource: z.object({
+        AUTO_DAILY: z.number().int().nonnegative(),
+        AUTO_ENDLESS: z.number().int().nonnegative(),
+        COMMUNITY: z.number().int().nonnegative(),
+        MANUAL_INJECTED: z.number().int().nonnegative(),
+        UNKNOWN_LEGACY: z.number().int().nonnegative(),
+      }),
     })
     .nullable()
     .optional(),
@@ -905,9 +912,36 @@ export const adminDifficultyCalibrationResponseSchema = z.object({
       averageStaticShadowDelta: z.number(),
       maxStaticShadowDelta: z.number(),
       generatedAt: z.number().int().nonnegative(),
+      tierBreakdown: z.object({
+        warmup: z.object({
+          readyLevels: z.number().int().nonnegative(),
+          averageDelta: z.number(),
+          suggestEasier: z.number().int().nonnegative(),
+          suggestHarder: z.number().int().nonnegative(),
+        }),
+        medium: z.object({
+          readyLevels: z.number().int().nonnegative(),
+          averageDelta: z.number(),
+          suggestEasier: z.number().int().nonnegative(),
+          suggestHarder: z.number().int().nonnegative(),
+        }),
+        hard: z.object({
+          readyLevels: z.number().int().nonnegative(),
+          averageDelta: z.number(),
+          suggestEasier: z.number().int().nonnegative(),
+          suggestHarder: z.number().int().nonnegative(),
+        }),
+        expert: z.object({
+          readyLevels: z.number().int().nonnegative(),
+          averageDelta: z.number(),
+          suggestEasier: z.number().int().nonnegative(),
+          suggestHarder: z.number().int().nonnegative(),
+        }),
+      }),
       reviewCandidates: z.array(
         z.object({
           levelId: z.string().min(1),
+          source: puzzleSourceSchema,
           staticDifficulty: z.number().int().min(1).max(10),
           shadowDifficulty: z.number().min(1).max(10),
           recommendedShift: z.union([z.literal(-1), z.literal(0), z.literal(1)]),

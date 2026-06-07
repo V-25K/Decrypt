@@ -14,9 +14,11 @@ import {
   difficultyToTier,
   type DifficultyTier,
 } from './content';
+import { clamp, round4 } from './math';
 import {
   keyChallengeEvaluation,
   keyChallengeEvaluationIndex,
+  keyChallengeEvaluationPublishIndex,
 } from './keys';
 import { buildDifficultyBreakdown } from './difficulty-model';
 import { runDummySolver, type SolverResult } from './dummy-solver';
@@ -79,6 +81,7 @@ export type ChallengeEvaluation = {
   targetTier: DifficultyTier;
   targetDifficulty: number;
   createdAt: number;
+  puzzleCreatedAt?: number;
   difficultyBreakdown: DifficultyBreakdown;
   layoutSummary: ChallengeLayoutSummary;
   solverSummary: ChallengeSolverSummary;
@@ -186,6 +189,7 @@ export const challengeEvaluationSchema = z.object({
   targetTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
   targetDifficulty: z.number().int().min(1).max(10),
   createdAt: z.number().int().nonnegative(),
+  puzzleCreatedAt: z.number().int().nonnegative().optional(),
   difficultyBreakdown: difficultyBreakdownSchema,
   layoutSummary: layoutSummarySchema,
   solverSummary: z.object({
@@ -200,11 +204,6 @@ export const challengeEvaluationSchema = z.object({
   shadowRatingSnapshot: shadowRatingSnapshotSchema,
   summary: challengeEvaluationSummarySchema,
 });
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, value));
-
-const round4 = (value: number): number => Number(value.toFixed(4));
 
 const tierRank = (tier: DifficultyTier): number => {
   if (tier === 'warmup') {
@@ -452,6 +451,7 @@ export const buildChallengeEvaluation = (params: {
     targetTier,
     targetDifficulty,
     createdAt: params.createdAt ?? Date.now(),
+    puzzleCreatedAt: params.puzzle.createdAt,
     difficultyBreakdown,
     layoutSummary: buildLayoutSummary({
       ...params.puzzle,
@@ -480,6 +480,10 @@ export const saveChallengeEvaluation = async (
       member: evaluation.levelId,
       score: evaluation.createdAt,
     }),
+    redis.zAdd(keyChallengeEvaluationPublishIndex, {
+      member: evaluation.levelId,
+      score: evaluation.puzzleCreatedAt ?? evaluation.createdAt,
+    }),
   ]);
 };
 
@@ -502,7 +506,7 @@ export const getChallengeEvaluation = async (
 export const getRecentChallengeEvaluationLevelIds = async (
   limit = 40
 ): Promise<string[]> => {
-  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const entries = await redis.zRange(keyChallengeEvaluationIndex, 0, safeLimit - 1, {
     by: 'rank',
     reverse: true,
@@ -516,6 +520,34 @@ export const getRecentChallengeEvaluations = async (
   limit = 40
 ): Promise<ChallengeEvaluation[]> => {
   const levelIds = await getRecentChallengeEvaluationLevelIds(limit);
+  const evaluations = await Promise.all(levelIds.map(getChallengeEvaluation));
+  return evaluations.filter(
+    (evaluation): evaluation is ChallengeEvaluation => evaluation !== null
+  );
+};
+
+export const getRecentPublishedChallengeEvaluationLevelIds = async (
+  limit = 40
+): Promise<string[]> => {
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+  const entries = await redis.zRange(
+    keyChallengeEvaluationPublishIndex,
+    0,
+    safeLimit - 1,
+    {
+      by: 'rank',
+      reverse: true,
+    }
+  );
+  return entries
+    .map((entry) => entry.member)
+    .filter((member) => member.length > 0);
+};
+
+export const getRecentPublishedChallengeEvaluations = async (
+  limit = 40
+): Promise<ChallengeEvaluation[]> => {
+  const levelIds = await getRecentPublishedChallengeEvaluationLevelIds(limit);
   const evaluations = await Promise.all(levelIds.map(getChallengeEvaluation));
   return evaluations.filter(
     (evaluation): evaluation is ChallengeEvaluation => evaluation !== null

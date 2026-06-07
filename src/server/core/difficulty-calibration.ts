@@ -1,5 +1,6 @@
 import { redis } from '@devvit/web/server';
 import { z } from 'zod';
+import type { PuzzleSource } from '../../shared/game';
 import {
   computePhraseDifficultyProfile,
   difficultyToTier,
@@ -16,7 +17,7 @@ import {
 import { difficultyModelVersion } from './difficulty-model';
 import {
   buildChallengeEvaluation,
-  getRecentChallengeEvaluations,
+  getRecentPublishedChallengeEvaluations,
   saveChallengeEvaluation,
 } from './challenge-evaluation';
 import { getChallengeShadowRatingSnapshot } from './difficulty-shadow-rating';
@@ -38,14 +39,31 @@ const HARDNESS_BAND_BLEND_SAMPLE_TARGET = 16;
 const V3_CALIBRATION_SCAN_LIMIT = 180;
 const V3_DEFAULT_CHUNK_SIZE = 20;
 const V3_MAX_EXECUTION_MS = 20_000;
-const SHADOW_PREVIEW_SCAN_LIMIT = 40;
+const SHADOW_PREVIEW_SCAN_LIMIT = V3_CALIBRATION_SCAN_LIMIT;
 const SHADOW_PREVIEW_CANDIDATE_LIMIT = 8;
 const SHADOW_READY_MIN_PLAYS = 30;
 const SHADOW_READY_MAX_UNCERTAINTY = 0.5;
+const TELEMETRY_FAILURE_WEIGHT = 0.18;
+const TELEMETRY_ABANDON_WEIGHT = 0.12;
+const SHADOW_RECOMMENDATION_HYSTERESIS = 0.75;
+const SHADOW_PREVIEW_SOURCES = new Set<PuzzleSource>([
+  'AUTO_DAILY',
+  'MANUAL_INJECTED',
+]);
 
 export const difficultyCalibrationV3Version = 'v3';
 
 export type TierShift = -1 | 0 | 1;
+
+type SourceCounts = Record<PuzzleSource, number>;
+
+const emptySourceCounts = (): SourceCounts => ({
+  AUTO_DAILY: 0,
+  AUTO_ENDLESS: 0,
+  COMMUNITY: 0,
+  MANUAL_INJECTED: 0,
+  UNKNOWN_LEGACY: 0,
+});
 
 type HardnessSample = {
   uniqueLetterCount: number;
@@ -90,6 +108,7 @@ export type DifficultyCalibrationV3Artifact = {
   updatedEvaluations: number;
   qualifiedLevels: number;
   shadowReadyLevels: number;
+  shadowReadyLevelsBySource: SourceCounts;
   params: {
     scanLimit: number;
     chunkSize: number;
@@ -99,6 +118,7 @@ export type DifficultyCalibrationV3Artifact = {
 
 export type ShadowCalibrationPreviewCandidate = {
   levelId: string;
+  source: PuzzleSource;
   staticDifficulty: number;
   shadowDifficulty: number;
   recommendedShift: TierShift;
@@ -106,11 +126,24 @@ export type ShadowCalibrationPreviewCandidate = {
   itemUncertainty: number;
 };
 
+export type ShadowCalibrationTierBreakdownEntry = {
+  readyLevels: number;
+  averageDelta: number;
+  suggestEasier: number;
+  suggestHarder: number;
+};
+
+export type ShadowCalibrationTierBreakdown = Record<
+  DifficultyTier,
+  ShadowCalibrationTierBreakdownEntry
+>;
+
 export type ShadowCalibrationPreview = {
   readyLevels: number;
   averageStaticShadowDelta: number;
   maxStaticShadowDelta: number;
   generatedAt: number;
+  tierBreakdown: ShadowCalibrationTierBreakdown;
   reviewCandidates: ShadowCalibrationPreviewCandidate[];
 };
 
@@ -161,6 +194,14 @@ const calibrationArtifactSchema = z.object({
     expert: hardnessTierSchema,
   }),
 });
+const sourceCountsSchema = z.object({
+  AUTO_DAILY: z.number().int().nonnegative(),
+  AUTO_ENDLESS: z.number().int().nonnegative(),
+  COMMUNITY: z.number().int().nonnegative(),
+  MANUAL_INJECTED: z.number().int().nonnegative(),
+  UNKNOWN_LEGACY: z.number().int().nonnegative(),
+});
+
 const difficultyCalibrationV3ArtifactSchema = z.object({
   difficultyCalibrationVersion: z.literal(difficultyCalibrationV3Version),
   difficultyModelVersion: z.literal(difficultyModelVersion),
@@ -172,6 +213,7 @@ const difficultyCalibrationV3ArtifactSchema = z.object({
   updatedEvaluations: z.number().int().nonnegative(),
   qualifiedLevels: z.number().int().nonnegative(),
   shadowReadyLevels: z.number().int().nonnegative(),
+  shadowReadyLevelsBySource: sourceCountsSchema.default(emptySourceCounts()),
   params: z.object({
     scanLimit: z.number().int().positive(),
     chunkSize: z.number().int().positive(),
@@ -181,15 +223,16 @@ const difficultyCalibrationV3ArtifactSchema = z.object({
 
 const round4 = (value: number): number => Number(value.toFixed(4));
 
-const clampTierShift = (value: number): TierShift => {
-  if (value > 0) {
-    return 1;
-  }
-  if (value < 0) {
-    return -1;
-  }
-  return 0;
-};
+const addSourceCounts = (
+  left: SourceCounts,
+  right: SourceCounts
+): SourceCounts => ({
+  AUTO_DAILY: left.AUTO_DAILY + right.AUTO_DAILY,
+  AUTO_ENDLESS: left.AUTO_ENDLESS + right.AUTO_ENDLESS,
+  COMMUNITY: left.COMMUNITY + right.COMMUNITY,
+  MANUAL_INJECTED: left.MANUAL_INJECTED + right.MANUAL_INJECTED,
+  UNKNOWN_LEGACY: left.UNKNOWN_LEGACY + right.UNKNOWN_LEGACY,
+});
 
 let calibrationArtifactInFlight: Promise<CalibrationArtifact> | null = null;
 
@@ -558,8 +601,8 @@ export const telemetryEaseScore = (params: {
 
   return clampNumber(
     completionEase -
-      failureRate * 0.18 -
-      abandonRate * 0.24 -
+      failureRate * TELEMETRY_FAILURE_WEIGHT -
+      abandonRate * TELEMETRY_ABANDON_WEIGHT -
       hintPressure * 0.14 -
       mistakePressure * 0.08 -
       retryPressure * 0.06 -
@@ -662,19 +705,93 @@ const shadowRatingIsReady = (snapshot: {
 const recommendedShadowShift = (params: {
   staticDifficulty: number;
   shadowDifficulty: number;
-}): TierShift =>
-  clampTierShift(
-    Math.max(
-      -1,
-      Math.min(1, Math.round(params.shadowDifficulty) - params.staticDifficulty)
-    )
-  );
+}): TierShift => {
+  const delta = params.shadowDifficulty - params.staticDifficulty;
+  if (delta > SHADOW_RECOMMENDATION_HYSTERESIS) {
+    return 1;
+  }
+  if (delta < -SHADOW_RECOMMENDATION_HYSTERESIS) {
+    return -1;
+  }
+  return 0;
+};
+
+const shadowCandidateConfidenceScore = (
+  candidate: ShadowCalibrationPreviewCandidate
+): number =>
+  Math.abs(candidate.shadowDifficulty - candidate.staticDifficulty) *
+  (1 - candidate.itemUncertainty);
+
+const emptyShadowTierBreakdown = (): ShadowCalibrationTierBreakdown => ({
+  warmup: {
+    readyLevels: 0,
+    averageDelta: 0,
+    suggestEasier: 0,
+    suggestHarder: 0,
+  },
+  medium: {
+    readyLevels: 0,
+    averageDelta: 0,
+    suggestEasier: 0,
+    suggestHarder: 0,
+  },
+  hard: {
+    readyLevels: 0,
+    averageDelta: 0,
+    suggestEasier: 0,
+    suggestHarder: 0,
+  },
+  expert: {
+    readyLevels: 0,
+    averageDelta: 0,
+    suggestEasier: 0,
+    suggestHarder: 0,
+  },
+});
+
+const buildShadowTierBreakdown = (
+  candidates: ShadowCalibrationPreviewCandidate[]
+): ShadowCalibrationTierBreakdown => {
+  const breakdown = emptyShadowTierBreakdown();
+  const deltaTotals: Record<DifficultyTier, number> = {
+    warmup: 0,
+    medium: 0,
+    hard: 0,
+    expert: 0,
+  };
+
+  for (const candidate of candidates) {
+    const tier = difficultyToTier(candidate.staticDifficulty);
+    const delta = candidate.shadowDifficulty - candidate.staticDifficulty;
+    breakdown[tier].readyLevels += 1;
+    deltaTotals[tier] += delta;
+    if (candidate.recommendedShift < 0) {
+      breakdown[tier].suggestEasier += 1;
+    } else if (candidate.recommendedShift > 0) {
+      breakdown[tier].suggestHarder += 1;
+    }
+  }
+
+  for (const tier of Object.keys(breakdown) as DifficultyTier[]) {
+    const readyLevels = breakdown[tier].readyLevels;
+    breakdown[tier].averageDelta =
+      readyLevels > 0 ? round4(deltaTotals[tier] / readyLevels) : 0;
+  }
+
+  return breakdown;
+};
 
 export const buildShadowCalibrationPreview =
   async (): Promise<ShadowCalibrationPreview> => {
-    const evaluations = await getRecentChallengeEvaluations(SHADOW_PREVIEW_SCAN_LIMIT);
+    const evaluations = await getRecentPublishedChallengeEvaluations(
+      SHADOW_PREVIEW_SCAN_LIMIT
+    );
     const readyCandidates = evaluations
-      .filter((evaluation) => shadowRatingIsReady(evaluation.shadowRatingSnapshot))
+      .filter(
+        (evaluation) =>
+          SHADOW_PREVIEW_SOURCES.has(evaluation.source) &&
+          shadowRatingIsReady(evaluation.shadowRatingSnapshot)
+      )
       .map((evaluation): ShadowCalibrationPreviewCandidate => {
         const shadow = evaluation.shadowRatingSnapshot;
         if (shadow === null) {
@@ -683,6 +800,7 @@ export const buildShadowCalibrationPreview =
         const staticDifficulty = evaluation.difficultyBreakdown.staticDifficulty;
         return {
           levelId: evaluation.levelId,
+          source: evaluation.source,
           staticDifficulty,
           shadowDifficulty: round4(shadow.itemDifficultyRating),
           recommendedShift: recommendedShadowShift({
@@ -701,11 +819,12 @@ export const buildShadowCalibrationPreview =
         ? deltas.reduce((total, delta) => total + delta, 0) / deltas.length
         : 0;
     const maxDelta = deltas.length > 0 ? Math.max(...deltas) : 0;
+    const tierBreakdown = buildShadowTierBreakdown(readyCandidates);
     const reviewCandidates = [...readyCandidates]
       .sort(
         (left, right) =>
-          Math.abs(right.shadowDifficulty - right.staticDifficulty) -
-          Math.abs(left.shadowDifficulty - left.staticDifficulty)
+          shadowCandidateConfidenceScore(right) -
+          shadowCandidateConfidenceScore(left)
       )
       .slice(0, SHADOW_PREVIEW_CANDIDATE_LIMIT);
 
@@ -714,6 +833,7 @@ export const buildShadowCalibrationPreview =
       averageStaticShadowDelta: round4(averageDelta),
       maxStaticShadowDelta: round4(maxDelta),
       generatedAt: Date.now(),
+      tierBreakdown,
       reviewCandidates,
     };
   };
@@ -724,6 +844,7 @@ type DifficultyCalibrationV3ChunkParams = {
   updatedEvaluations?: number;
   qualifiedLevels?: number;
   shadowReadyLevels?: number;
+  shadowReadyLevelsBySource?: SourceCounts;
   chunkSize?: number;
   startedAtMs?: number;
 };
@@ -733,6 +854,7 @@ type DifficultyCalibrationV3ChunkProgress = {
   updatedThisChunk: number;
   qualifiedThisChunk: number;
   shadowReadyThisChunk: number;
+  shadowReadyThisChunkBySource: SourceCounts;
 };
 
 const normalizeDifficultyCalibrationV3Chunk = (
@@ -763,6 +885,7 @@ const refreshChallengeEvaluationForCalibration = async (
       updatedThisChunk: 0,
       qualifiedThisChunk: 0,
       shadowReadyThisChunk: 0,
+      shadowReadyThisChunkBySource: emptySourceCounts(),
     };
   }
 
@@ -791,11 +914,18 @@ const refreshChallengeEvaluationForCalibration = async (
     })
   );
 
+  const shadowReady = shadowRatingIsReady(shadowRatingSnapshot);
+  const shadowReadyThisChunkBySource = emptySourceCounts();
+  if (shadowReady) {
+    shadowReadyThisChunkBySource[puzzle.source] = 1;
+  }
+
   return {
     updatedThisChunk: 1,
     qualifiedThisChunk:
       telemetry.plays >= MIN_QUALIFIED_PLAYS_FOR_HARDNESS_BANDS ? 1 : 0,
-    shadowReadyThisChunk: shadowRatingIsReady(shadowRatingSnapshot) ? 1 : 0,
+    shadowReadyThisChunk: shadowReady ? 1 : 0,
+    shadowReadyThisChunkBySource,
   };
 };
 
@@ -812,6 +942,7 @@ export const runDifficultyCalibrationV3Chunk = async (
     updatedThisChunk: 0,
     qualifiedThisChunk: 0,
     shadowReadyThisChunk: 0,
+    shadowReadyThisChunkBySource: emptySourceCounts(),
   };
 
   for (const levelId of chunk) {
@@ -823,6 +954,10 @@ export const runDifficultyCalibrationV3Chunk = async (
     progress.updatedThisChunk += levelProgress.updatedThisChunk;
     progress.qualifiedThisChunk += levelProgress.qualifiedThisChunk;
     progress.shadowReadyThisChunk += levelProgress.shadowReadyThisChunk;
+    progress.shadowReadyThisChunkBySource = addSourceCounts(
+      progress.shadowReadyThisChunkBySource,
+      levelProgress.shadowReadyThisChunkBySource
+    );
   }
 
   const processedLevels =
@@ -833,6 +968,10 @@ export const runDifficultyCalibrationV3Chunk = async (
     (params?.qualifiedLevels ?? 0) + progress.qualifiedThisChunk;
   const shadowReadyLevels =
     (params?.shadowReadyLevels ?? 0) + progress.shadowReadyThisChunk;
+  const shadowReadyLevelsBySource = addSourceCounts(
+    params?.shadowReadyLevelsBySource ?? emptySourceCounts(),
+    progress.shadowReadyThisChunkBySource
+  );
   const nextOffset =
     offset + progress.processedThisChunk < levelIds.length
       ? offset + progress.processedThisChunk
@@ -848,6 +987,7 @@ export const runDifficultyCalibrationV3Chunk = async (
     updatedEvaluations,
     qualifiedLevels,
     shadowReadyLevels,
+    shadowReadyLevelsBySource,
     params: {
       scanLimit: V3_CALIBRATION_SCAN_LIMIT,
       chunkSize,
