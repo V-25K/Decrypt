@@ -2,26 +2,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   approveCommunitySubmissionMock,
+  buildShadowCalibrationPreviewMock,
   completeSavedManualPuzzlePublishMock,
   formatModeratorRerollErrorMock,
+  getGlobalDailyCalibrationSnapshotMock,
+  getMetricsSnapshotMock,
   hasAdminAccessMock,
   injectAndPublishManualPuzzleMock,
   injectManualChallengeWithAdjustmentMock,
   listCommunitySubmissionsForReviewMock,
   preflightManualChallengeForPublishMock,
+  readDifficultyCalibrationV3ArtifactMock,
   rejectCommunitySubmissionMock,
   removeCommunityPuzzleMock,
   requestCommunitySubmissionChangesMock,
   rerollAndPublishMock,
 } = vi.hoisted(() => ({
   approveCommunitySubmissionMock: vi.fn(),
+  buildShadowCalibrationPreviewMock: vi.fn(),
   completeSavedManualPuzzlePublishMock: vi.fn(),
   formatModeratorRerollErrorMock: vi.fn(),
+  getGlobalDailyCalibrationSnapshotMock: vi.fn(),
+  getMetricsSnapshotMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   injectAndPublishManualPuzzleMock: vi.fn(),
   injectManualChallengeWithAdjustmentMock: vi.fn(),
   listCommunitySubmissionsForReviewMock: vi.fn(),
   preflightManualChallengeForPublishMock: vi.fn(),
+  readDifficultyCalibrationV3ArtifactMock: vi.fn(),
   rejectCommunitySubmissionMock: vi.fn(),
   removeCommunityPuzzleMock: vi.fn(),
   requestCommunitySubmissionChangesMock: vi.fn(),
@@ -45,19 +53,46 @@ vi.mock('../../core/admin', () => ({
 }));
 
 vi.mock('../../core/difficulty-calibration', () => ({
-  buildShadowCalibrationPreview: vi.fn().mockResolvedValue({
-    readyLevels: 0,
-    averageStaticShadowDelta: 0,
-    maxStaticShadowDelta: 0,
-    generatedAt: 0,
-    reviewCandidates: [],
-  }),
-  getGlobalDailyCalibrationSnapshot: vi.fn(),
-  readDifficultyCalibrationV3Artifact: vi.fn().mockResolvedValue(null),
+  buildShadowCalibrationPreview: buildShadowCalibrationPreviewMock,
+  getGlobalDailyCalibrationSnapshot: getGlobalDailyCalibrationSnapshotMock,
+  readDifficultyCalibrationV3Artifact: readDifficultyCalibrationV3ArtifactMock,
 }));
 
+const defaultShadowCalibrationPreview = () => ({
+  readyLevels: 0,
+  averageStaticShadowDelta: 0,
+  maxStaticShadowDelta: 0,
+  generatedAt: 0,
+  tierBreakdown: {
+    warmup: { readyLevels: 0, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+    medium: { readyLevels: 0, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+    hard: { readyLevels: 0, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+    expert: { readyLevels: 0, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+  },
+  reviewCandidates: [],
+});
+
+const defaultDifficultyCalibrationSnapshot = () => ({
+  biasTierShift: 0,
+  eligibleLevels: 0,
+  harderCount: 0,
+  easierCount: 0,
+  neutralCount: 0,
+  params: {
+    bayesAlpha: 2,
+    bayesBeta: 2,
+    minQualifiedPlaysPerLevel: 5,
+    lookbackEligibleLevels: 50,
+    recentLevelScanLimit: 100,
+    minEligibleLevelsForBias: 12,
+    biasRequiredShare: 0.55,
+    observedEasyThreshold: 0.68,
+    observedHardThreshold: 0.42,
+  },
+});
+
 vi.mock('../../core/metrics', () => ({
-  getMetricsSnapshot: vi.fn(),
+  getMetricsSnapshot: getMetricsSnapshotMock,
 }));
 
 vi.mock('../../core/community', () => ({
@@ -112,22 +147,112 @@ const communitySubmission = {
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  buildShadowCalibrationPreviewMock.mockResolvedValue(defaultShadowCalibrationPreview());
+  getGlobalDailyCalibrationSnapshotMock.mockResolvedValue(
+    defaultDifficultyCalibrationSnapshot()
+  );
+  readDifficultyCalibrationV3ArtifactMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   approveCommunitySubmissionMock.mockReset();
+  buildShadowCalibrationPreviewMock.mockReset();
   completeSavedManualPuzzlePublishMock.mockReset();
   formatModeratorRerollErrorMock.mockReset();
+  getGlobalDailyCalibrationSnapshotMock.mockReset();
+  getMetricsSnapshotMock.mockReset();
   hasAdminAccessMock.mockReset();
   injectAndPublishManualPuzzleMock.mockReset();
   injectManualChallengeWithAdjustmentMock.mockReset();
   listCommunitySubmissionsForReviewMock.mockReset();
   preflightManualChallengeForPublishMock.mockReset();
+  readDifficultyCalibrationV3ArtifactMock.mockReset();
   rejectCommunitySubmissionMock.mockReset();
   removeCommunityPuzzleMock.mockReset();
   requestCommunitySubmissionChangesMock.mockReset();
   rerollAndPublishMock.mockReset();
+});
+
+describe('adminRouter.getMetrics', () => {
+  it('returns the async metrics snapshot', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    getMetricsSnapshotMock.mockResolvedValue({
+      timestamp: 1,
+      batch: {
+        totalBatches: 0,
+        successfulBatches: 0,
+        failedBatches: 0,
+        totalCandidatesRequested: 0,
+        totalCandidatesReturned: 0,
+        totalCandidatesSelected: 0,
+        averageCandidatesPerBatch: 0,
+        batchSuccessRate: 0,
+      },
+      adjustment: {
+        totalAdjustments: 0,
+        successfulAdjustments: 0,
+        failedAdjustments: 0,
+        averageIterations: 0,
+        convergenceRate: 0,
+        budgetUtilizationStats: {
+          min: 0,
+          max: 0,
+          average: 0,
+          median: 0,
+        },
+      },
+      shadow: {
+        updateFailures: 3,
+      },
+    });
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.getMetrics();
+
+    expect(getMetricsSnapshotMock).toHaveBeenCalled();
+    expect(result.shadow.updateFailures).toBe(3);
+  });
+});
+
+describe('adminRouter.getDifficultyCalibration', () => {
+  it('returns the shadow calibration tier breakdown contract', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    buildShadowCalibrationPreviewMock.mockResolvedValue({
+      ...defaultShadowCalibrationPreview(),
+      readyLevels: 4,
+      tierBreakdown: {
+        warmup: { readyLevels: 1, averageDelta: -0.25, suggestEasier: 1, suggestHarder: 0 },
+        medium: { readyLevels: 2, averageDelta: 0.5, suggestEasier: 0, suggestHarder: 1 },
+        hard: { readyLevels: 1, averageDelta: 1.25, suggestEasier: 0, suggestHarder: 1 },
+        expert: { readyLevels: 0, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+      },
+    });
+
+    const caller = adminRouter.createCaller({
+      userId: 't2_mod',
+      username: 'mod_user',
+      subredditName: 'decrypttest',
+      postId: 't3_context',
+    });
+
+    const result = await caller.getDifficultyCalibration();
+
+    expect(getGlobalDailyCalibrationSnapshotMock).toHaveBeenCalled();
+    expect(buildShadowCalibrationPreviewMock).toHaveBeenCalled();
+    expect(result.shadowCalibrationPreview?.tierBreakdown.medium).toEqual({
+      readyLevels: 2,
+      averageDelta: 0.5,
+      suggestEasier: 0,
+      suggestHarder: 1,
+    });
+  });
 });
 
 describe('adminRouter.reroll', () => {

@@ -9,12 +9,51 @@ import {
 } from '../core/admin';
 import { hasAdminAccess } from '../core/admin-auth';
 import {
+  buildShadowCalibrationPreview,
+  type ShadowCalibrationTierBreakdownEntry,
+} from '../core/difficulty-calibration';
+import {
   challengeTypeDisplayOrder,
   challengeTypeMetadata,
   challengeTypeSelectionHelpText,
 } from '../../shared/game';
 
 export const menu = new Hono();
+
+type CalibrationTier = 'warmup' | 'medium' | 'hard' | 'expert';
+
+const calibrationTierOrder: CalibrationTier[] = ['warmup', 'medium', 'hard', 'expert'];
+
+const formatCalibrationTierLabel = (tier: string): string =>
+  tier.length > 0 ? tier.charAt(0).toUpperCase() + tier.slice(1) : tier;
+
+const formatSignedNumber = (value: number): string =>
+  value > 0 ? `+${value}` : `${value}`;
+
+const formatTierBreakdownLine = (
+  tier: CalibrationTier,
+  entry: ShadowCalibrationTierBreakdownEntry
+): string =>
+  `${formatCalibrationTierLabel(tier)}: ${entry.readyLevels} ready, avg ${formatSignedNumber(
+    entry.averageDelta
+  )}, easier ${entry.suggestEasier}, harder ${entry.suggestHarder}`;
+
+const buildShadowCalibrationStatusSummary = async (): Promise<string> => {
+  const preview = await buildShadowCalibrationPreview();
+  return [
+    `Ready levels: ${preview.readyLevels}`,
+    `Average static-shadow delta: ${formatSignedNumber(
+      preview.averageStaticShadowDelta
+    )}`,
+    `Max absolute delta: ${preview.maxStaticShadowDelta}`,
+    '',
+    ...calibrationTierOrder.map((tier) =>
+      formatTierBreakdownLine(tier, preview.tierBreakdown[tier])
+    ),
+    '',
+    'Candidate order favors high-confidence disagreements; positive averages suggest levels playing harder than their static difficulty.',
+  ].join('\n');
+};
 
 const requireAdmin = async (): Promise<UiResponse | null> => {
   let allowed = false;
@@ -197,4 +236,46 @@ menu.post('/mod-inject', async (c) => {
     },
     200
   );
+});
+
+menu.post('/mod-difficulty-calibration', async (c) => {
+  const deny = await requireAdmin();
+  if (deny) {
+    return c.json<UiResponse>(deny, 200);
+  }
+  try {
+    const summary = await buildShadowCalibrationStatusSummary();
+    return c.json<UiResponse>(
+      {
+        showForm: {
+          name: 'mod_difficulty_calibration_status_form',
+          form: {
+            title: 'Difficulty Calibration Status',
+            description:
+              'Shadow calibration readiness and tier drift for moderator review.',
+            acceptLabel: 'Close',
+            fields: [
+              {
+                type: 'paragraph',
+                name: 'summary',
+                label: 'Shadow calibration',
+                defaultValue: summary,
+                disabled: true,
+              },
+            ],
+          },
+        },
+      },
+      200
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Error loading difficulty calibration status: ${reason}`);
+    return c.json<UiResponse>(
+      {
+        showToast: `Failed to load difficulty calibration status: ${reason}`,
+      },
+      200
+    );
+  }
 });

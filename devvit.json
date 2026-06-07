@@ -72,6 +72,13 @@
         "endpoint": "/internal/menu/mod-inject"
       },
       {
+        "label": "Decrypt: Difficulty Calibration Status",
+        "description": "Review shadow calibration readiness and tier drift",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-difficulty-calibration"
+      },
+      {
         "label": "Decrypt: Clear Subreddit Game Data",
         "description": "Clear this subreddit's Decrypt game data, including players, challenges, and progress",
         "location": "subreddit",
@@ -83,6 +90,7 @@
   "forms": {
     "mod_inject_form": "/internal/forms/mod-inject-submit",
     "mod_inject_review_form": "/internal/forms/mod-inject-review-submit",
+    "mod_difficulty_calibration_status_form": "/internal/forms/mod-difficulty-calibration-status-submit",
     "mod_clear_subreddit_data_form": "/internal/forms/mod-clear-subreddit-data-submit"
   },
   "scheduler": {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const {
   contextMock,
   createPostMock,
+  buildShadowCalibrationPreviewMock,
   formatModeratorRerollErrorMock,
   hasAdminAccessMock,
   publishLastGeneratedChallengeMock,
@@ -13,6 +14,7 @@ const {
     username: 'mod_user',
   },
   createPostMock: vi.fn(),
+  buildShadowCalibrationPreviewMock: vi.fn(),
   formatModeratorRerollErrorMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   publishLastGeneratedChallengeMock: vi.fn(),
@@ -37,12 +39,17 @@ vi.mock('../core/admin-auth', () => ({
   hasAdminAccess: hasAdminAccessMock,
 }));
 
+vi.mock('../core/difficulty-calibration', () => ({
+  buildShadowCalibrationPreview: buildShadowCalibrationPreviewMock,
+}));
+
 import { menu } from './menu';
 
 afterEach(() => {
   contextMock.subredditName = 'decrypttest';
   contextMock.username = 'mod_user';
   createPostMock.mockReset();
+  buildShadowCalibrationPreviewMock.mockReset();
   formatModeratorRerollErrorMock.mockReset();
   hasAdminAccessMock.mockReset();
   publishLastGeneratedChallengeMock.mockReset();
@@ -156,5 +163,36 @@ describe('menu routes', () => {
         placeholder: 'CLEAR',
       })
     );
+  });
+
+  it('opens a difficulty calibration status form with tier breakdowns', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    buildShadowCalibrationPreviewMock.mockResolvedValue({
+      readyLevels: 7,
+      averageStaticShadowDelta: 0.42,
+      maxStaticShadowDelta: 2.1,
+      generatedAt: 1,
+      tierBreakdown: {
+        warmup: { readyLevels: 1, averageDelta: -0.2, suggestEasier: 1, suggestHarder: 0 },
+        medium: { readyLevels: 3, averageDelta: 0.7, suggestEasier: 0, suggestHarder: 2 },
+        hard: { readyLevels: 2, averageDelta: 1.1, suggestEasier: 0, suggestHarder: 1 },
+        expert: { readyLevels: 1, averageDelta: 0, suggestEasier: 0, suggestHarder: 0 },
+      },
+      reviewCandidates: [],
+    });
+
+    const response = await menu.request('http://localhost/mod-difficulty-calibration', {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.showForm.name).toBe('mod_difficulty_calibration_status_form');
+    const summaryField = body.showForm.form.fields.find(
+      (field: { name: string }) => field.name === 'summary'
+    );
+    expect(summaryField.defaultValue).toContain('Ready levels: 7');
+    expect(summaryField.defaultValue).toContain('Medium: 3 ready, avg +0.7');
+    expect(summaryField.defaultValue).toContain('Hard: 2 ready, avg +1.1');
   });
 });
