@@ -22,6 +22,7 @@ afterEach(() => {
 
 describe('adjustPuzzleDifficulty - comprehensive tests', () => {
   it('prefers removing real obstructions before adding prefills when lowering a hard board', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
     const text = 'ZEPHYR QUARTZ VORTEX JIGSAW KRYPTON FJORDS ALIGN.';
     const basePuzzle = buildPuzzle({
       levelId: 'comp-006',
@@ -58,7 +59,6 @@ describe('adjustPuzzleDifficulty - comprehensive tests', () => {
       'warmup'
     );
 
-    vi.spyOn(Date, 'now').mockReturnValue(1000);
     const result = await adjustPuzzleDifficulty({
       basePuzzle: basePuzzle.puzzlePrivate,
       targetDifficulty: 3,
