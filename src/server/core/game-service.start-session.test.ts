@@ -3,7 +3,12 @@ import type { PuzzlePrivate, SessionState, UserProfile } from '../../shared/game
 
 const {
   contextMock,
+  redisHashStore,
+  redisHDelMock,
+  redisHGetMock,
+  redisHSetNXMock,
   redisGetMock,
+  redisIncrByMock,
   redisSetMock,
   getCompletedLevelsMock,
   getFailedLevelsMock,
@@ -37,54 +42,88 @@ const {
   puzzleIsCompleteMock,
   revealFromGuessMock,
   tileIsLockedMock,
-} = vi.hoisted(() => ({
-  contextMock: {
-    userId: 't2_test',
-    postId: 't3_test',
-    username: 'tester',
-    subredditName: 'decrypttest_dev',
-    postData: {},
-  },
-  redisGetMock: vi.fn(),
-  redisSetMock: vi.fn(),
-	  getCompletedLevelsMock: vi.fn(),
-	  getFailedLevelsMock: vi.fn(),
-	  getDailyRetryCountMock: vi.fn(),
-	  getDailyPointerMock: vi.fn(),
-	  getAllLevelIdsMock: vi.fn(),
-  hasFailedLevelMock: vi.fn(),
-  getPuzzlePrivateMock: vi.fn(),
-  getPuzzlePublicMock: vi.fn(),
-	  getEndlessCatalogStatusMock: vi.fn(),
-	  getNextEndlessCatalogLevelIdMock: vi.fn(),
-	  isPuzzlePublishedVisibleMock: vi.fn(),
-  isPuzzleRemovedFromPlayMock: vi.fn(),
-	  getSessionStateMock: vi.fn(),
-	  getUserProfileMock: vi.fn(),
-	  hasContinuedLevelMock: vi.fn(),
-	  saveUserProfileMock: vi.fn(),
-	  markLevelContinuedMock: vi.fn(),
-  createSessionStateMock: vi.fn(),
-  saveSessionStateMock: vi.fn(),
-  heartsRemainingMock: vi.fn(),
-  recordLevelPlayMock: vi.fn(),
-  recordQualifiedLevelPlayMock: vi.fn(),
-  recordQualifiedLevelFailureMock: vi.fn(),
-  touchQualifiedLevelPlayMock: vi.fn(),
-  canStartChallengeMock: vi.fn(),
-  applyHammerMock: vi.fn(),
-  applyRocketMock: vi.fn(),
-  applyWandMock: vi.fn(),
-  checkPadlockStatusMock: vi.fn(),
-  puzzleIsCompleteMock: vi.fn(),
-  revealFromGuessMock: vi.fn(),
-  tileIsLockedMock: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  const hashStore = new Map<string, Map<string, string>>();
+  return {
+    contextMock: {
+      userId: 't2_test',
+      postId: 't3_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postData: {},
+    },
+    redisHashStore: hashStore,
+    redisHDelMock: vi.fn(async (key: string, fields: string[]) => {
+      const hash = hashStore.get(key);
+      if (!hash) {
+        return 0;
+      }
+      let removed = 0;
+      for (const field of fields) {
+        if (hash.delete(field)) {
+          removed += 1;
+        }
+      }
+      return removed;
+    }),
+    redisHGetMock: vi.fn(async (key: string, field: string) => {
+      return hashStore.get(key)?.get(field) ?? null;
+    }),
+    redisHSetNXMock: vi.fn(async (key: string, field: string, value: string) => {
+      const hash = hashStore.get(key) ?? new Map<string, string>();
+      hashStore.set(key, hash);
+      if (hash.has(field)) {
+        return 0;
+      }
+      hash.set(field, value);
+      return 1;
+    }),
+    redisGetMock: vi.fn(),
+    redisIncrByMock: vi.fn(),
+    redisSetMock: vi.fn(),
+    getCompletedLevelsMock: vi.fn(),
+    getFailedLevelsMock: vi.fn(),
+    getDailyRetryCountMock: vi.fn(),
+    getDailyPointerMock: vi.fn(),
+    getAllLevelIdsMock: vi.fn(),
+    hasFailedLevelMock: vi.fn(),
+    getPuzzlePrivateMock: vi.fn(),
+    getPuzzlePublicMock: vi.fn(),
+    getEndlessCatalogStatusMock: vi.fn(),
+    getNextEndlessCatalogLevelIdMock: vi.fn(),
+    isPuzzlePublishedVisibleMock: vi.fn(),
+    isPuzzleRemovedFromPlayMock: vi.fn(),
+    getSessionStateMock: vi.fn(),
+    getUserProfileMock: vi.fn(),
+    hasContinuedLevelMock: vi.fn(),
+    saveUserProfileMock: vi.fn(),
+    markLevelContinuedMock: vi.fn(),
+    createSessionStateMock: vi.fn(),
+    saveSessionStateMock: vi.fn(),
+    heartsRemainingMock: vi.fn(),
+    recordLevelPlayMock: vi.fn(),
+    recordQualifiedLevelPlayMock: vi.fn(),
+    recordQualifiedLevelFailureMock: vi.fn(),
+    touchQualifiedLevelPlayMock: vi.fn(),
+    canStartChallengeMock: vi.fn(),
+    applyHammerMock: vi.fn(),
+    applyRocketMock: vi.fn(),
+    applyWandMock: vi.fn(),
+    checkPadlockStatusMock: vi.fn(),
+    puzzleIsCompleteMock: vi.fn(),
+    revealFromGuessMock: vi.fn(),
+    tileIsLockedMock: vi.fn(),
+  };
+});
 
 vi.mock('@devvit/web/server', () => ({
   context: contextMock,
   redis: {
     get: redisGetMock,
+    hDel: redisHDelMock,
+    hGet: redisHGetMock,
+    hSetNX: redisHSetNXMock,
+    incrBy: redisIncrByMock,
     set: redisSetMock,
   },
 }));
@@ -190,6 +229,10 @@ const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   endlessModeClears: 0,
   dailySolveTimeTotalSec: 0,
   endlessSolveTimeTotalSec: 0,
+  globalRating: 500,
+  ratingGames: 0,
+  ratingWins: 0,
+  ratingLosses: 0,
   bestOverallRank: 0,
   audioEnabled: true,
   communityJoinRecorded: false,
@@ -248,15 +291,23 @@ const puzzleFixture = (): PuzzlePrivate => ({
 });
 
 beforeEach(() => {
+  redisHashStore.clear();
   redisGetMock.mockResolvedValue(null);
+  redisIncrByMock.mockResolvedValue(1);
   redisSetMock.mockResolvedValue(true);
   getFailedLevelsMock.mockResolvedValue(new Set<string>());
+  getUserProfileMock.mockResolvedValue(profileFixture());
   hasContinuedLevelMock.mockResolvedValue(false);
   isPuzzleRemovedFromPlayMock.mockResolvedValue(false);
 });
 
 afterEach(() => {
+  redisHashStore.clear();
+  redisHDelMock.mockClear();
+  redisHGetMock.mockClear();
+  redisHSetNXMock.mockClear();
   redisGetMock.mockReset();
+  redisIncrByMock.mockReset();
   redisSetMock.mockReset();
   getCompletedLevelsMock.mockReset();
   getFailedLevelsMock.mockReset();
@@ -923,7 +974,8 @@ describe('loadLevelForUser', () => {
     expect(getNextEndlessCatalogLevelIdMock).toHaveBeenCalledWith(
       't2_test',
       'QUOTE',
-      'random'
+      'random',
+      500
     );
     expect(getPuzzlePublicMock).not.toHaveBeenCalled();
   });
@@ -972,7 +1024,8 @@ describe('loadLevelForUser', () => {
     expect(getNextEndlessCatalogLevelIdMock).toHaveBeenCalledWith(
       't2_test',
       'PROVERB',
-      'latest'
+      'latest',
+      500
     );
   });
 });

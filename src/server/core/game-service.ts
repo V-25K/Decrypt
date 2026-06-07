@@ -599,10 +599,12 @@ export const loadLevelForUser = async (params: {
   } else if (params.requestedLevelId) {
     levelId = params.requestedLevelId;
   } else {
+    const profile = await getUserProfile(userId);
     const selection = await getNextEndlessCatalogLevelId(
       userId,
       params.categoryFilter ?? null,
-      params.endlessSort ?? 'random'
+      params.endlessSort ?? 'random',
+      profile.globalRating
     );
     levelId = selection.levelId;
     if (!levelId && selection.reason === 'all_completed') {

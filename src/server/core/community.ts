@@ -47,7 +47,7 @@ import {
 } from './content';
 import { computeAdaptiveHardnessBounds } from './difficulty-calibration';
 import { buildDifficultyBreakdown, difficultyModelVersion } from './difficulty-model';
-import { buildChallengeEvaluation } from './challenge-evaluation';
+import { buildChallengeEvaluation, getChallengeEvaluation } from './challenge-evaluation';
 import { getDecryptSettings } from './config';
 import {
   getPuzzleMapping,
@@ -137,6 +137,11 @@ type CommunityEndlessCandidate = {
 
 type CommunityEndlessScoredCandidate = CommunityEndlessCandidate & {
   engagement: LevelEngagement;
+};
+
+type CommunityEndlessMatchedCandidate = CommunityEndlessCandidate & {
+  effectiveDifficulty: number;
+  matchScore: number;
 };
 
 const hasRedisSortedSetScore = (score: unknown): boolean =>
@@ -833,7 +838,7 @@ const buildManualLayoutPuzzlePreview = async (params: {
 	    const solver = runDummySolver({
       puzzle: puzzlePrivate,
       revealedIndices: prefilledIndices,
-      forbiddenIndices: blindIndices,
+      forbiddenIndices: [...blindIndices, ...lockIndices],
       requiredSolveRatio: 0.65,
       solverProfile: 'deep',
 	    });
@@ -1831,10 +1836,112 @@ export type CommunityEndlessSelection =
   | { levelId: string; reason: 'available' }
   | { levelId: null; reason: 'empty' | 'all_completed' };
 
+const ENDLESS_MATCH_TOP_RANDOM_POOL = 3;
+const ENDLESS_MATCH_CLOSE_SCORE_WINDOW = 0.45;
+const ENDLESS_SHADOW_READY_MIN_PLAYS = 30;
+const ENDLESS_SHADOW_READY_MAX_UNCERTAINTY = 0.5;
+
+const clampEndlessDifficulty = (value: number): number =>
+  Math.min(10, Math.max(1, value));
+
+const ratingToEndlessTargetDifficulty = (
+  playerRating: number | null | undefined
+): number | null => {
+  if (typeof playerRating !== 'number' || !Number.isFinite(playerRating)) {
+    return null;
+  }
+  return clampEndlessDifficulty(Math.round((playerRating - 350) / 45));
+};
+
+const shadowSnapshotIsReadyForEndless = (snapshot: {
+  itemUncertainty: number;
+  itemPlayCount: number;
+}): boolean =>
+  snapshot.itemPlayCount >= ENDLESS_SHADOW_READY_MIN_PLAYS &&
+  snapshot.itemUncertainty <= ENDLESS_SHADOW_READY_MAX_UNCERTAINTY;
+
+const getCommunityEndlessEffectiveDifficulty = async (
+  candidate: CommunityEndlessCandidate
+): Promise<number> => {
+  const evaluation = await getChallengeEvaluation(candidate.levelId);
+  const submissionDifficulty = candidate.submission.targetDifficulty;
+  const staticDifficulty =
+    evaluation?.difficultyBreakdown.staticDifficulty ?? submissionDifficulty;
+  const calibratedDifficulty =
+    evaluation?.difficultyBreakdown.calibratedDifficulty ?? staticDifficulty;
+  const modelDifficulty = staticDifficulty * 0.35 + calibratedDifficulty * 0.65;
+  const shadow = evaluation?.shadowRatingSnapshot;
+  if (shadow && shadowSnapshotIsReadyForEndless(shadow)) {
+    const shadowWeight = (1 - shadow.itemUncertainty) * 0.6;
+    return clampEndlessDifficulty(
+      modelDifficulty * (1 - shadowWeight) +
+        shadow.itemDifficultyRating * shadowWeight
+    );
+  }
+  return clampEndlessDifficulty(modelDifficulty);
+};
+
+const scoreCommunityEndlessCandidateForRating = async (params: {
+  candidate: CommunityEndlessCandidate;
+  targetDifficulty: number;
+}): Promise<CommunityEndlessMatchedCandidate> => {
+  const effectiveDifficulty = await getCommunityEndlessEffectiveDifficulty(
+    params.candidate
+  );
+  const matchGap = Math.abs(effectiveDifficulty - params.targetDifficulty);
+  const tierGap =
+    difficultyToTier(Math.round(effectiveDifficulty)) ===
+    difficultyToTier(params.targetDifficulty)
+      ? 0
+      : 0.55;
+  return {
+    ...params.candidate,
+    effectiveDifficulty,
+    matchScore: matchGap + tierGap,
+  };
+};
+
+const selectCommunityEndlessMatchForRating = async (params: {
+  candidates: CommunityEndlessCandidate[];
+  playerRating: number;
+}): Promise<CommunityEndlessCandidate | null> => {
+  const targetDifficulty = ratingToEndlessTargetDifficulty(params.playerRating);
+  if (targetDifficulty === null) {
+    return null;
+  }
+  const scored = await Promise.all(
+    params.candidates.map((candidate) =>
+      scoreCommunityEndlessCandidateForRating({
+        candidate,
+        targetDifficulty,
+      })
+    )
+  );
+  scored.sort((left, right) => {
+    const scoreDelta = left.matchScore - right.matchScore;
+    if (scoreDelta !== 0) {
+      return scoreDelta;
+    }
+    return right.approvedAt - left.approvedAt;
+  });
+  const bestScore = scored[0]?.matchScore;
+  if (bestScore === undefined) {
+    return null;
+  }
+  const closeMatches = scored
+    .filter(
+      (candidate) =>
+        candidate.matchScore <= bestScore + ENDLESS_MATCH_CLOSE_SCORE_WINDOW
+    )
+    .slice(0, ENDLESS_MATCH_TOP_RANDOM_POOL);
+  return closeMatches[Math.floor(Math.random() * closeMatches.length)] ?? null;
+};
+
 export const getNextCommunityEndlessLevelId = async (params: {
   userId: string;
   categoryFilter?: ChallengeType | null;
   endlessSort?: EndlessSort;
+  playerRating?: number | null;
 }): Promise<CommunityEndlessSelection> => {
   const entries = await redis.zRange(keyCommunitySubmissionsApproved, 0, -1, {
     by: 'rank',
@@ -1891,7 +1998,16 @@ export const getNextCommunityEndlessLevelId = async (params: {
   }
   const sort = params.endlessSort ?? 'random';
   if (sort === 'random') {
-    const selected = openCandidates[Math.floor(Math.random() * openCandidates.length)];
+    const ratingMatched =
+      params.playerRating === undefined || params.playerRating === null
+        ? null
+        : await selectCommunityEndlessMatchForRating({
+            candidates: openCandidates,
+            playerRating: params.playerRating,
+          });
+    const selected =
+      ratingMatched ??
+      openCandidates[Math.floor(Math.random() * openCandidates.length)];
     return selected
       ? { levelId: selected.levelId, reason: 'available' }
       : { levelId: null, reason: 'empty' };

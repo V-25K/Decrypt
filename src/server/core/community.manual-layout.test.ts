@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { redisMock } = vi.hoisted(() => ({
-  redisMock: {
-    hGet: vi.fn(),
-  },
-}));
+const { redisMock, solverCallSummaries } = vi.hoisted(() => {
+  const summaries: {
+    forbiddenIndices: number[];
+    requiredSolveRatio?: number;
+    solverProfile?: string;
+  }[] = [];
+  return {
+    redisMock: {
+      hGet: vi.fn(),
+    },
+    solverCallSummaries: summaries,
+  };
+});
 
 vi.mock('@devvit/web/server', () => ({
   context: {
@@ -56,12 +64,29 @@ vi.mock('./engagement', () => ({
   getLevelEngagement: vi.fn(),
 }));
 
+vi.mock('./dummy-solver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./dummy-solver')>();
+  return {
+    ...actual,
+    runDummySolver: (params: Parameters<typeof actual.runDummySolver>[0]) => {
+      solverCallSummaries.push({
+        forbiddenIndices: params.forbiddenIndices ?? [],
+        requiredSolveRatio: params.requiredSolveRatio,
+        solverProfile: params.solverProfile,
+      });
+      return actual.runDummySolver(params);
+    },
+  };
+});
+
 import { previewCommunitySubmission } from './community';
 
 describe('community manual layout preview', () => {
   beforeEach(() => {
     redisMock.hGet.mockReset();
     redisMock.hGet.mockResolvedValue(null);
+    solverCallSummaries.length = 0;
+    vi.restoreAllMocks();
   });
 
   it('returns an editable puzzle preview before the manual layout is valid', async () => {
@@ -127,25 +152,30 @@ describe('community manual layout preview', () => {
       padlocks: [{ padlockId: 1, lockedIndices: [], keyIndices: [] }],
     };
     const originalLayout = structuredClone(manualLayout);
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000);
 
-    const preview = await previewCommunitySubmission({
-      title: 'Manual puzzle',
-      text: 'THE QUICK BROWN FOX JUMPS',
-      category: 'QUOTE',
-      attribution: 'Tester',
-      targetDifficulty: 9,
-      creationMode: 'manual',
-      manualLayout,
-    });
+    try {
+      const preview = await previewCommunitySubmission({
+        title: 'Manual puzzle',
+        text: 'THE QUICK BROWN FOX JUMPS',
+        category: 'QUOTE',
+        attribution: 'Tester',
+        targetDifficulty: 9,
+        creationMode: 'manual',
+        manualLayout,
+      });
 
-    expect(manualLayout).toEqual(originalLayout);
-    expect(preview.manualLayoutGuidance?.status).toBe('too_easy');
-    expect(preview.manualLayoutGuidance?.suggestedActions.join(' ')).toContain(
-      'Publish as'
-    );
-    expect(preview.puzzlePreview?.difficulty).toBe(
-      preview.suggestedDifficulty.estimatedDifficulty
-    );
+      expect(manualLayout).toEqual(originalLayout);
+      expect(preview.manualLayoutGuidance?.status).toBe('too_easy');
+      expect(preview.manualLayoutGuidance?.suggestedActions.join(' ')).toContain(
+        'Publish as'
+      );
+      expect(preview.puzzlePreview?.difficulty).toBe(
+        preview.suggestedDifficulty.estimatedDifficulty
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
 	  it('supports multiple manual padlocks with different keys', async () => {
@@ -177,6 +207,34 @@ describe('community manual layout preview', () => {
 	    );
 	    expect(chainIds.has(1)).toBe(true);
 	    expect(chainIds.has(2)).toBe(true);
+	  });
+
+	  it('forbids both blind and locked tiles during manual fairness checking', async () => {
+	    await previewCommunitySubmission({
+	      title: 'Manual puzzle',
+	      text: 'THE QUICK BROWN FOX JUMPS',
+	      category: 'QUOTE',
+	      attribution: 'Tester',
+	      targetDifficulty: 5,
+	      creationMode: 'manual',
+	      manualLayout: {
+	        prefilledIndices: [0],
+	        prefilledWordIndices: [],
+	        blindIndices: [5],
+	        lockIndices: [],
+	        lockKeyIndices: [],
+	        padlocks: [{ padlockId: 1, lockedIndices: [10], keyIndices: [4] }],
+	      },
+	    });
+
+	    const fairnessCall = solverCallSummaries.find(
+	      (summary) =>
+	        summary.solverProfile === 'deep' && summary.requiredSolveRatio === 0.65
+	    );
+
+	    expect(fairnessCall?.forbiddenIndices).toEqual(
+	      expect.arrayContaining([5, 10])
+	    );
 	  });
 
 	  it('allows a manual padlock key to also be a question-mark tile', async () => {
