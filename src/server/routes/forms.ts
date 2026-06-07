@@ -752,16 +752,3 @@ forms.post('/mod-clear-subreddit-data-submit', async (c) => {
     );
   }
 });
-
-forms.post('/mod-difficulty-calibration-status-submit', async (c) => {
-  const accessDenied = await rejectWithoutAdminAccess(c);
-  if (accessDenied) {
-    return accessDenied;
-  }
-  return c.json<UiResponse>(
-    {
-      showToast: 'Difficulty calibration status closed.',
-    },
-    200
-  );
-});

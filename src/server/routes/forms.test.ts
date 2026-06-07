@@ -91,26 +91,6 @@ describe('mod-clear-subreddit-data-submit', () => {
   });
 });
 
-describe('mod-difficulty-calibration-status-submit', () => {
-  it('closes the read-only calibration status form', async () => {
-    hasAdminAccessMock.mockResolvedValue(true);
-
-    const response = await forms.request(
-      'http://localhost/mod-difficulty-calibration-status-submit',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      }
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      showToast: 'Difficulty calibration status closed.',
-    });
-  });
-});
-
 describe('mod-inject-submit', () => {
   it('analyzes the quote first and opens a bounded review form instead of publishing immediately', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
