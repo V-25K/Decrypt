@@ -1,4 +1,5 @@
 import type { PuzzlePrivate, PuzzleTile } from '../../shared/game.ts';
+import { clamp, round4 } from './math';
 import { solverLexicon } from './solver-lexicon.ts';
 
 const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
@@ -894,11 +895,6 @@ const searchSolve = (params: {
 
   return null;
 };
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, value));
-
-const round4 = (value: number): number => Number(value.toFixed(4));
 
 const collectUnresolvedWordCandidateCounts = (params: {
   state: SolverState;

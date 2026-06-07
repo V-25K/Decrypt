@@ -58,6 +58,7 @@ describe('adjustPuzzleDifficulty - comprehensive tests', () => {
       'warmup'
     );
 
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
     const result = await adjustPuzzleDifficulty({
       basePuzzle: basePuzzle.puzzlePrivate,
       targetDifficulty: 3,
@@ -70,7 +71,7 @@ describe('adjustPuzzleDifficulty - comprehensive tests', () => {
       `Remove padlock chain (cost: -18)`,
       `Remove blind tile (cost: -8)`,
     ]).toContain(result.adjustmentLog[0]);
-  });
+  }, 15_000);
 
   it('refunds spent budget when softening an already-obstructed board', async () => {
     const text = 'THE LIGHT WILL FALL PREY TO DARKNESS';

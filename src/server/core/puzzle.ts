@@ -1845,6 +1845,8 @@ type ScoredAdjustmentCandidate = AdjustmentSearchState & {
 
 const optimizerMaxCandidates = 24;
 const optimizerMaxDepth = 3;
+const wrongDirectionFirstStepPenalty = 100;
+const prefillBeforeObstructionPenalty = 2.5;
 
 const adjustmentStateKey = (
   state: AdjustmentSearchState,
@@ -1905,21 +1907,21 @@ const scoreAdjustmentCandidate = (params: {
     budgetUsed: params.state.budget.spent,
     budgetTotal: params.state.budget.total,
   });
-  const prefillBeforeObstructionPenalty =
+  const prefillFirstPenalty =
     firstAdjustment?.type === 'add_prefill' &&
     retainedObstructionCount > 0 &&
     estimatedDifficulty > params.targetDifficulty
-      ? 2.5
+      ? prefillBeforeObstructionPenalty
       : 0;
   const hardeningFirstStepPenalty =
     (firstAdjustment?.type === 'add_blind' ||
       firstAdjustment?.type === 'add_padlock' ||
       firstAdjustment?.type === 'remove_prefill') &&
     estimatedDifficulty > params.targetDifficulty
-      ? 5
+      ? wrongDirectionFirstStepPenalty
       : 0;
   const score =
-    baseScore + prefillBeforeObstructionPenalty + hardeningFirstStepPenalty;
+    baseScore + prefillFirstPenalty + hardeningFirstStepPenalty;
 
   return {
     ...params.state,

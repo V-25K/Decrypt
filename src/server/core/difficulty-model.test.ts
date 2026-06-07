@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildDifficultyBreakdown } from './difficulty-model';
 import { buildPuzzle } from './puzzle';
 
@@ -124,26 +124,31 @@ describe('difficulty model v2', () => {
   });
 
   it('keeps shift cipher no harder than random for the same board', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000);
     const puzzle = buildBase('PATTERNS REVEAL HIDDEN STRUCTURE OVER TIME', 6);
     const prefilledIndices = firstLetterIndices(puzzle, new Set(), 4);
-    const shift = buildDifficultyBreakdown({
-      ...puzzle,
-      cipherType: 'shift',
-      prefilledIndices,
-      revealedIndices: prefilledIndices,
-      revealed_indices: prefilledIndices,
-    });
-    const random = buildDifficultyBreakdown({
-      ...puzzle,
-      cipherType: 'random',
-      prefilledIndices,
-      revealedIndices: prefilledIndices,
-      revealed_indices: prefilledIndices,
-    });
+    try {
+      const shift = buildDifficultyBreakdown({
+        ...puzzle,
+        cipherType: 'shift',
+        prefilledIndices,
+        revealedIndices: prefilledIndices,
+        revealed_indices: prefilledIndices,
+      });
+      const random = buildDifficultyBreakdown({
+        ...puzzle,
+        cipherType: 'random',
+        prefilledIndices,
+        revealedIndices: prefilledIndices,
+        revealed_indices: prefilledIndices,
+      });
 
-    expect(shift.calibratedDifficulty).toBeLessThanOrEqual(
-      random.calibratedDifficulty
-    );
+      expect(shift.calibratedDifficulty).toBeLessThanOrEqual(
+        random.calibratedDifficulty
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('can still classify a no-reveal high-variety random board as expert', () => {
