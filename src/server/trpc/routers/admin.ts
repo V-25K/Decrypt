@@ -148,7 +148,7 @@ export const adminRouter = router({
       });
     }),
   getMetrics: adminProcedure.query(async () => {
-    return getMetricsSnapshot();
+    return await getMetricsSnapshot();
   }),
   retryPublish: adminProcedure
     .input(adminRetryPublishInputSchema)

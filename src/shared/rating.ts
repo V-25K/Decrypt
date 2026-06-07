@@ -107,9 +107,13 @@ export const calculateRating = (params: RatingInput): RatingResult => {
       ? getWinQualityMultiplier(params)
       : getLossQualityMultiplier();
   const rawDelta = kFactor * (actual - expectedScore) * qualityMultiplier;
-  const ratingDelta = Math.round(
+  const roundedDelta = Math.round(
     clamp(rawDelta, params.outcome === 'win' ? -32 : -32, params.outcome === 'win' ? 40 : 0)
   );
+  const minWinDelta = challengeRating >= previousRating ? 1 : 0;
+  const ratingDelta = params.outcome === 'win'
+    ? Math.max(minWinDelta, roundedDelta)
+    : roundedDelta;
   const nextRating = Math.max(0, previousRating + ratingDelta);
   return {
     previousRating,

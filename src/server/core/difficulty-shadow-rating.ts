@@ -4,13 +4,22 @@ import type { PuzzlePrivate } from '../../shared/game';
 import {
   keyLevelDifficultyRating,
   keyPlayerDifficultyRating,
+  keyShadowDifficultyUpdateFailures,
+  keyUserShadowRatingOutcomes,
 } from './keys';
+import { clamp, round4 } from './math';
 import type { ChallengeShadowRatingSnapshot } from './challenge-evaluation';
 
 export const shadowDifficultyRatingVersion = 'v1';
 export const shadowUncertaintyDecay = 0.97;
 export const shadowMinUncertainty = 0.12;
 export const shadowBaseLearningRate = 0.46;
+
+const shadowBaseWinScore = 0.72;
+const playerStalenessGraceMs = 30 * 86_400_000;
+const playerRatingDecayMs = 180 * 86_400_000;
+const playerUncertaintyDecayMs = 90 * 86_400_000;
+const populationMeanPlayerRating = 5;
 
 export type ShadowDifficultyRating = {
   version: typeof shadowDifficultyRatingVersion;
@@ -39,11 +48,6 @@ const shadowDifficultyRatingStoredSchema = z.object({
   playCount: z.number(),
   updatedAt: z.number().optional(),
 });
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, value));
-
-const round4 = (value: number): number => Number(value.toFixed(4));
 
 const defaultPlayerRating = (): ShadowDifficultyRating => ({
   version: shadowDifficultyRatingVersion,
@@ -90,11 +94,34 @@ const parseRating = (
   }
 };
 
+const applyPlayerStalenessDecay = (
+  rating: ShadowDifficultyRating,
+  now = Date.now()
+): ShadowDifficultyRating => {
+  const staleMs = Math.max(0, now - rating.updatedAt - playerStalenessGraceMs);
+  if (staleMs <= 0) {
+    return rating;
+  }
+  const ratingRetention = clamp(1 - staleMs / playerRatingDecayMs, 0, 1);
+  const uncertaintyIncrease = (staleMs / playerUncertaintyDecayMs) * 0.5;
+  return {
+    ...rating,
+    rating: round4(
+      rating.rating * ratingRetention +
+        populationMeanPlayerRating * (1 - ratingRetention)
+    ),
+    uncertainty: round4(
+      clamp(rating.uncertainty + uncertaintyIncrease, shadowMinUncertainty, 1)
+    ),
+  };
+};
+
 const expectedWinProbability = (params: {
   playerRating: number;
   itemDifficultyRating: number;
 }): number =>
-  1 / (1 + Math.exp((params.itemDifficultyRating - params.playerRating) / 1.45));
+  shadowBaseWinScore /
+  (1 + Math.exp((params.itemDifficultyRating - params.playerRating) / 1.45));
 
 const observedOutcomeScore = (outcome: ShadowDifficultyOutcome): number => {
   if (outcome.outcome === 'failure') {
@@ -111,7 +138,15 @@ const observedOutcomeScore = (outcome: ShadowDifficultyOutcome): number => {
   const mistakePenalty = clamp(outcome.mistakes * 0.045, 0, 0.22);
   const powerupPenalty = clamp(outcome.usedPowerups * 0.05, 0, 0.24);
   const retryPenalty = clamp(outcome.retryCount * 0.08, 0, 0.24);
-  return clamp(0.72 + speedBonus - mistakePenalty - powerupPenalty - retryPenalty, 0.15, 1);
+  return clamp(
+    shadowBaseWinScore +
+      speedBonus -
+      mistakePenalty -
+      powerupPenalty -
+      retryPenalty,
+    0.15,
+    1
+  );
 };
 
 const updateUncertainty = (rating: ShadowDifficultyRating): number =>
@@ -120,10 +155,10 @@ const updateUncertainty = (rating: ShadowDifficultyRating): number =>
 export const getPlayerShadowDifficultyRating = async (
   userId: string
 ): Promise<ShadowDifficultyRating> =>
-  parseRating(
+  applyPlayerStalenessDecay(parseRating(
     (await redis.get(keyPlayerDifficultyRating(userId))) ?? null,
     defaultPlayerRating()
-  );
+  ));
 
 export const getLevelShadowDifficultyRating = async (
   levelId: string,
@@ -137,6 +172,47 @@ export const getLevelShadowDifficultyRating = async (
 export const recordShadowDifficultyOutcome = async (
   outcome: ShadowDifficultyOutcome
 ): Promise<ChallengeShadowRatingSnapshot> => {
+  const receiptKey = keyUserShadowRatingOutcomes(outcome.userId);
+  const winReceiptField = `win:${outcome.levelId}`;
+  const failureReceiptField = `failure:${outcome.levelId}`;
+
+  if (outcome.outcome === 'failure') {
+    const winReceipt = await redis.hGet(receiptKey, winReceiptField);
+    if (winReceipt !== null && winReceipt !== undefined) {
+      return getChallengeShadowRatingSnapshot({
+        levelId: outcome.levelId,
+        puzzle: outcome.puzzle,
+        userId: outcome.userId,
+      });
+    }
+    const inserted = await redis.hSetNX(
+      receiptKey,
+      failureReceiptField,
+      String(Date.now())
+    );
+    if (inserted !== 1) {
+      return getChallengeShadowRatingSnapshot({
+        levelId: outcome.levelId,
+        puzzle: outcome.puzzle,
+        userId: outcome.userId,
+      });
+    }
+  } else {
+    const inserted = await redis.hSetNX(
+      receiptKey,
+      winReceiptField,
+      String(Date.now())
+    );
+    if (inserted !== 1) {
+      return getChallengeShadowRatingSnapshot({
+        levelId: outcome.levelId,
+        puzzle: outcome.puzzle,
+        userId: outcome.userId,
+      });
+    }
+    await redis.hDel(receiptKey, [failureReceiptField]);
+  }
+
   const [player, item] = await Promise.all([
     getPlayerShadowDifficultyRating(outcome.userId),
     getLevelShadowDifficultyRating(outcome.levelId, outcome.puzzle),
@@ -191,6 +267,11 @@ export const recordShadowDifficultyOutcomeSafely = async (
       userId: outcome.userId,
       error: error instanceof Error ? error.message : 'unknown',
     });
+    try {
+      await redis.incrBy(keyShadowDifficultyUpdateFailures, 1);
+    } catch {
+      // Best effort metric only.
+    }
     return null;
   }
 };

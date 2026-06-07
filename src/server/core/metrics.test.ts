@@ -1,4 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { redisGetMock } = vi.hoisted(() => ({
+  redisGetMock: vi.fn(),
+}));
+
+vi.mock('@devvit/web/server', () => ({
+  redis: {
+    get: redisGetMock,
+  },
+}));
+
 import {
   trackBatchGeneration,
   trackDifficultyAdjustment,
@@ -9,17 +20,19 @@ import {
 describe('metrics', () => {
   beforeEach(() => {
     resetMetrics();
+    redisGetMock.mockReset();
+    redisGetMock.mockResolvedValue(null);
   });
 
   describe('trackBatchGeneration', () => {
-    it('should track successful batch generation', () => {
+    it('should track successful batch generation', async () => {
       trackBatchGeneration({
         candidatesRequested: 3,
         candidatesReturned: 3,
         candidateSelected: true,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.batch.totalBatches).toBe(1);
       expect(snapshot.batch.successfulBatches).toBe(1);
       expect(snapshot.batch.failedBatches).toBe(0);
@@ -29,21 +42,21 @@ describe('metrics', () => {
       expect(snapshot.batch.batchSuccessRate).toBe(100);
     });
 
-    it('should track failed batch generation', () => {
+    it('should track failed batch generation', async () => {
       trackBatchGeneration({
         candidatesRequested: 3,
         candidatesReturned: 2,
         candidateSelected: false,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.batch.totalBatches).toBe(1);
       expect(snapshot.batch.successfulBatches).toBe(0);
       expect(snapshot.batch.failedBatches).toBe(1);
       expect(snapshot.batch.batchSuccessRate).toBe(0);
     });
 
-    it('should calculate average candidates per batch', () => {
+    it('should calculate average candidates per batch', async () => {
       trackBatchGeneration({
         candidatesRequested: 3,
         candidatesReturned: 3,
@@ -55,13 +68,13 @@ describe('metrics', () => {
         candidateSelected: false,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.batch.averageCandidatesPerBatch).toBe(2.5);
     });
   });
 
   describe('trackDifficultyAdjustment', () => {
-    it('should track successful adjustment', () => {
+    it('should track successful adjustment', async () => {
       trackDifficultyAdjustment({
         success: true,
         iterations: 3,
@@ -69,7 +82,7 @@ describe('metrics', () => {
         budgetTotal: 50,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.adjustment.totalAdjustments).toBe(1);
       expect(snapshot.adjustment.successfulAdjustments).toBe(1);
       expect(snapshot.adjustment.failedAdjustments).toBe(0);
@@ -78,7 +91,7 @@ describe('metrics', () => {
       expect(snapshot.adjustment.budgetUtilizationStats.average).toBe(52);
     });
 
-    it('should track failed adjustment', () => {
+    it('should track failed adjustment', async () => {
       trackDifficultyAdjustment({
         success: false,
         iterations: 5,
@@ -86,14 +99,14 @@ describe('metrics', () => {
         budgetTotal: 50,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.adjustment.totalAdjustments).toBe(1);
       expect(snapshot.adjustment.successfulAdjustments).toBe(0);
       expect(snapshot.adjustment.failedAdjustments).toBe(1);
       expect(snapshot.adjustment.convergenceRate).toBe(0);
     });
 
-    it('should calculate budget utilization stats', () => {
+    it('should calculate budget utilization stats', async () => {
       trackDifficultyAdjustment({
         success: true,
         iterations: 2,
@@ -113,14 +126,14 @@ describe('metrics', () => {
         budgetTotal: 50,
       });
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.adjustment.budgetUtilizationStats.min).toBe(20);
       expect(snapshot.adjustment.budgetUtilizationStats.max).toBe(100);
       expect(snapshot.adjustment.budgetUtilizationStats.average).toBeCloseTo(60, 1);
       expect(snapshot.adjustment.budgetUtilizationStats.median).toBe(60);
     });
 
-    it('should limit budget utilization samples to 100', () => {
+    it('should limit budget utilization samples to 100', async () => {
       for (let i = 0; i < 150; i++) {
         trackDifficultyAdjustment({
           success: true,
@@ -130,7 +143,7 @@ describe('metrics', () => {
         });
       }
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.adjustment.totalAdjustments).toBe(150);
       // Budget utilization stats should only use last 100 samples
       expect(snapshot.adjustment.budgetUtilizationStats.average).toBe(50);
@@ -138,17 +151,17 @@ describe('metrics', () => {
   });
 
   describe('getMetricsSnapshot', () => {
-    it('should return snapshot with timestamp', () => {
+    it('should return snapshot with timestamp', async () => {
       const before = Date.now();
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       const after = Date.now();
 
       expect(snapshot.timestamp).toBeGreaterThanOrEqual(before);
       expect(snapshot.timestamp).toBeLessThanOrEqual(after);
     });
 
-    it('should handle empty metrics', () => {
-      const snapshot = getMetricsSnapshot();
+    it('should handle empty metrics', async () => {
+      const snapshot = await getMetricsSnapshot();
 
       expect(snapshot.batch.totalBatches).toBe(0);
       expect(snapshot.batch.batchSuccessRate).toBe(0);
@@ -156,11 +169,20 @@ describe('metrics', () => {
       expect(snapshot.adjustment.totalAdjustments).toBe(0);
       expect(snapshot.adjustment.convergenceRate).toBe(0);
       expect(snapshot.adjustment.averageIterations).toBe(0);
+      expect(snapshot.shadow.updateFailures).toBe(0);
+    });
+
+    it('should include persistent shadow update failures', async () => {
+      redisGetMock.mockResolvedValue('12');
+
+      const snapshot = await getMetricsSnapshot();
+
+      expect(snapshot.shadow.updateFailures).toBe(12);
     });
   });
 
   describe('resetMetrics', () => {
-    it('should reset all metrics to zero', () => {
+    it('should reset all metrics to zero', async () => {
       trackBatchGeneration({
         candidatesRequested: 3,
         candidatesReturned: 3,
@@ -175,7 +197,7 @@ describe('metrics', () => {
 
       resetMetrics();
 
-      const snapshot = getMetricsSnapshot();
+      const snapshot = await getMetricsSnapshot();
       expect(snapshot.batch.totalBatches).toBe(0);
       expect(snapshot.adjustment.totalAdjustments).toBe(0);
     });

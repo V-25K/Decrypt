@@ -64,6 +64,47 @@ describe('rating model', () => {
     expect(clean.ratingDelta).toBeGreaterThan(assisted.ratingDelta);
   });
 
+  it('allows zero ELO for high-rated players farming easy wins', () => {
+    const result = calculateRating({
+      playerRating: 1200,
+      ratingGames: 120,
+      outcome: 'win',
+      difficulty: 3,
+      mistakes: 2,
+      usedPowerups: 1,
+      solveSeconds: 90,
+      targetTimeSeconds: 60,
+    });
+
+    expect(result.ratingDelta).toBe(0);
+  });
+
+  it('still awards positive ELO for matched or harder wins', () => {
+    const matched = calculateRating({
+      playerRating: 575,
+      ratingGames: 120,
+      outcome: 'win',
+      difficulty: 5,
+      mistakes: 4,
+      usedPowerups: 3,
+      solveSeconds: 120,
+      targetTimeSeconds: 60,
+    });
+    const harder = calculateRating({
+      playerRating: 575,
+      ratingGames: 120,
+      outcome: 'win',
+      difficulty: 8,
+      mistakes: 4,
+      usedPowerups: 3,
+      solveSeconds: 120,
+      targetTimeSeconds: 60,
+    });
+
+    expect(matched.ratingDelta).toBeGreaterThan(0);
+    expect(harder.ratingDelta).toBeGreaterThan(0);
+  });
+
   it('increases win gains with streaks within the delta cap', () => {
     const noStreak = calculateRating({
       playerRating: startingGlobalRating,

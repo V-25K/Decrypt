@@ -61,6 +61,9 @@ export const keyChallengeEvaluation = (levelId: string) =>
 export const keyChallengeEvaluationIndex =
   'decrypt:challenge:evaluation:index';
 
+export const keyChallengeEvaluationPublishIndex =
+  'decrypt:challenge:evaluation:publish_index';
+
 export const keyUserProfile = (userId: string) => `decrypt:user:${userId}:profile`;
 
 export const keyPlayerDifficultyRating = (userId: string) =>
@@ -68,6 +71,12 @@ export const keyPlayerDifficultyRating = (userId: string) =>
 
 export const keyLevelDifficultyRating = (levelId: string) =>
   `decrypt:level:${levelId}:difficulty_rating`;
+
+export const keyUserShadowRatingOutcomes = (userId: string) =>
+  `decrypt:user:${userId}:shadow_rating_outcomes`;
+
+export const keyShadowDifficultyUpdateFailures =
+  'decrypt:metrics:shadow_update_failures';
 
 export const keyUserInventory = (userId: string) =>
   `decrypt:user:${userId}:inventory`;

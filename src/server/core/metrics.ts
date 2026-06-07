@@ -1,3 +1,6 @@
+import { redis } from '@devvit/web/server';
+import { keyShadowDifficultyUpdateFailures } from './keys';
+
 /**
  * Metrics tracking for challenge generation and difficulty adjustment
  * 
@@ -32,10 +35,15 @@ type AdjustmentMetrics = {
   };
 };
 
+type ShadowMetrics = {
+  updateFailures: number;
+};
+
 type MetricsSnapshot = {
   timestamp: number;
   batch: BatchMetrics;
   adjustment: AdjustmentMetrics;
+  shadow: ShadowMetrics;
 };
 
 // In-memory metrics storage (resets on server restart)
@@ -106,10 +114,20 @@ export const trackDifficultyAdjustment = (params: {
   }
 };
 
+const readShadowUpdateFailures = async (): Promise<number> => {
+  try {
+    const raw = await redis.get(keyShadowDifficultyUpdateFailures);
+    const parsed = raw ? Number(raw) : 0;
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+  } catch {
+    return 0;
+  }
+};
+
 /**
  * Get current metrics snapshot
  */
-export const getMetricsSnapshot = (): MetricsSnapshot => {
+export const getMetricsSnapshot = async (): Promise<MetricsSnapshot> => {
   const batchSuccessRate = metrics.batch.totalBatches > 0
     ? (metrics.batch.successfulBatches / metrics.batch.totalBatches) * 100
     : 0;
@@ -138,6 +156,8 @@ export const getMetricsSnapshot = (): MetricsSnapshot => {
       : 0,
   };
   
+  const shadowUpdateFailures = await readShadowUpdateFailures();
+
   return {
     timestamp: Date.now(),
     batch: {
@@ -157,6 +177,9 @@ export const getMetricsSnapshot = (): MetricsSnapshot => {
       averageIterations,
       convergenceRate,
       budgetUtilizationStats,
+    },
+    shadow: {
+      updateFailures: shadowUpdateFailures,
     },
   };
 };
