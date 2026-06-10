@@ -2,8 +2,8 @@ import type { PuzzlePrivate, PuzzleTile } from '../../shared/game.ts';
 import { clamp, round4 } from './math';
 import { solverLexicon } from './solver-lexicon.ts';
 
-const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
-const suffixHints = ['ING', 'ED', 'ER', 'LY', 'EST', 'TION', 'NESS'] as const;
+export const englishFrequencyOrder = 'ETAOINSHRDLCUMWFGYPBVKJXQZ'.split('');
+export const suffixHints = ['ING', 'ED', 'ER', 'LY', 'EST', 'TION', 'NESS'] as const;
 const defaultMaxBranchExpansionsByProfile = {
   standard: 2000,
   deep: 5000,

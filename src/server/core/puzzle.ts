@@ -2236,7 +2236,7 @@ const getDecreaseAdjustments = (
  * Attempts to add a padlock chain to the puzzle.
  * Returns the padlock chain if successful, null otherwise.
  */
-const tryAddPadlock = (puzzle: PuzzlePrivate, rng: Rng): PadlockChain | null => {
+export const tryAddPadlock = (puzzle: PuzzlePrivate, rng: Rng): PadlockChain | null => {
   // Find words that can be locked
   const lettersByWord = new Map<number, number[]>();
   for (const tile of puzzle.tiles) {
@@ -2286,7 +2286,7 @@ const tryAddPadlock = (puzzle: PuzzlePrivate, rng: Rng): PadlockChain | null => 
  * Attempts to add a blind tile to the puzzle.
  * Returns the tile index if successful, null otherwise.
  */
-const tryAddBlindTile = (puzzle: PuzzlePrivate): number | null => {
+export const tryAddBlindTile = (puzzle: PuzzlePrivate): number | null => {
   // Find letters that appear multiple times and aren't already blind
   const letterCounts = new Map<string, number[]>();
   for (const tile of puzzle.tiles) {
@@ -2384,7 +2384,7 @@ const tryAddPrefill = (puzzle: PuzzlePrivate): number | null => {
 /**
  * Applies an adjustment to the puzzle, returning a new puzzle with the modification.
  */
-const applyAdjustment = (puzzle: PuzzlePrivate, adjustment: Adjustment): PuzzlePrivate => {
+export const applyAdjustment = (puzzle: PuzzlePrivate, adjustment: Adjustment): PuzzlePrivate => {
   const newPuzzle = { ...puzzle };
   
   switch (adjustment.type) {

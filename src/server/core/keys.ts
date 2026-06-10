@@ -248,3 +248,13 @@ export const keyCommunityVotes = (levelId: string) =>
 // milestone is credited at most once per level.
 export const keyCommunityAcclaimAwarded = (levelId: string) =>
   `decrypt:community:acclaim_awarded:${levelId}`;
+
+// Tier-fit board cache. Keyed by a hash of the normalized text plus the
+// fitter's layout version, so stale boards from older fitter logic are never
+// replayed. Short TTL: consumers persist the chosen layout themselves and
+// re-fit deterministically on a miss.
+export const keyBoardFitReport = (textHash: string) =>
+  `decrypt:fit:${textHash}:report`;
+
+export const keyBoardFitLayout = (textHash: string, tier: string) =>
+  `decrypt:fit:${textHash}:layout:${tier}`;

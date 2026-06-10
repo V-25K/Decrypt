@@ -17,6 +17,7 @@ import { dedupSignatureLookback } from '../../shared/puzzle-limits.ts';
 import type { HardnessBoundsByTier } from './content.ts';
 import {
   validateQuoteForPhase1,
+  validateQuoteStructure,
   normalizeContent,
   contentTokenSignature,
   isNearDuplicateSignature,
@@ -59,6 +60,13 @@ export type ValidationPipeline = {
    * Checks: length, letter variety, word count, hardness bounds
    */
   phase1: (text: string, difficulty: number) => Phase1ValidationResult;
+
+  /**
+   * Structural-only variant of phase 1: hard text checks (length, variety,
+   * content safety) without the tier-fit gate. Used by the tier fitter,
+   * which treats tier fit as a target to optimize toward, not a filter.
+   */
+  phase1Structural: (text: string) => Phase1ValidationResult;
 
   /**
    * Phase 2: Validate final puzzle after building
@@ -116,6 +124,10 @@ export const createValidationPipeline = (
   return {
     phase1: (text: string, difficulty: number): Phase1ValidationResult => {
       return validateQuoteForPhase1(text, difficulty, hardnessBoundsByTier);
+    },
+
+    phase1Structural: (text: string): Phase1ValidationResult => {
+      return validateQuoteStructure(text);
     },
 
     phase2: (puzzle: PuzzlePrivate): Phase2ValidationResult => {

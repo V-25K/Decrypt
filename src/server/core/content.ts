@@ -859,18 +859,17 @@ export const rankDifficultyTiersForProfile = (
     .map((tier) => scorePhraseDifficultyAgainstTier(profile, tier, hardnessBoundsByTier))
     .sort((a, b) => a.score - b.score);
 
-export const validateQuoteForPhase1 = (
-  text: string,
-  difficulty: number,
-  hardnessBoundsByTier?: Partial<HardnessBoundsByTier>
+/**
+ * Hard, tier-independent text checks: length, letter/word variety, repeated
+ * letters, and content safety. A quote that passes these can be built into a
+ * board at SOME tier; whether it suits a specific tier is the (advisory)
+ * concern of scorePhraseDifficultyAgainstTier and the tier fitter.
+ */
+export const validateQuoteStructure = (
+  text: string
 ): { valid: boolean; reasons: string[] } => {
   const reasons: string[] = [];
   const normalized = sanitizePhrase(text);
-  const tier = difficultyToTier(difficulty);
-  const promptProfile = quotePromptProfileForDifficulty(
-    difficulty,
-    hardnessBoundsByTier
-  );
   const words = extractWords(normalized);
   const uniqueWordCount = new Set(words).size;
   const phraseProfile = computePhraseDifficultyProfile(normalized);
@@ -902,19 +901,40 @@ export const validateQuoteForPhase1 = (
       `Quote length ${normalized.length} exceeds the playable maximum of ${maxPuzzleTotalLength}.`
     );
   }
+  return {
+    valid: reasons.length === 0,
+    reasons,
+  };
+};
 
-  if (reasons.length === 0) {
-    const fit = scorePhraseDifficultyAgainstTier(phraseProfile, tier, hardnessBoundsByTier);
-    if (fit.score > 2.0) {
-      const fitReasons = fit.issues.slice(0, 2);
-      reasons.push(
-        ...(fitReasons.length > 0
-          ? fitReasons
-          : [
-              `Quote sits too far from the typical ${promptProfile.tier} presentation profile to tune fairly.`,
-            ])
-      );
-    }
+export const validateQuoteForPhase1 = (
+  text: string,
+  difficulty: number,
+  hardnessBoundsByTier?: Partial<HardnessBoundsByTier>
+): { valid: boolean; reasons: string[] } => {
+  const structural = validateQuoteStructure(text);
+  if (!structural.valid) {
+    return structural;
+  }
+
+  const normalized = sanitizePhrase(text);
+  const tier = difficultyToTier(difficulty);
+  const promptProfile = quotePromptProfileForDifficulty(
+    difficulty,
+    hardnessBoundsByTier
+  );
+  const phraseProfile = computePhraseDifficultyProfile(normalized);
+  const reasons: string[] = [];
+  const fit = scorePhraseDifficultyAgainstTier(phraseProfile, tier, hardnessBoundsByTier);
+  if (fit.score > 2.0) {
+    const fitReasons = fit.issues.slice(0, 2);
+    reasons.push(
+      ...(fitReasons.length > 0
+        ? fitReasons
+        : [
+            `Quote sits too far from the typical ${promptProfile.tier} presentation profile to tune fairly.`,
+          ])
+    );
   }
 
   return {
