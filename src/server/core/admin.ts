@@ -1,13 +1,17 @@
 import {
   getAutoDailyLevelIdsForDate,
+  getLevelIdForPost,
   getPuzzleMapping,
   getPuzzlePrivate,
   getPuzzlePublishedPostId,
+  getUsedSignatureOwner,
   deletePuzzleData,
   peekNextLevelId,
+  replacePuzzleDataInPlace,
   reserveUsedSignature,
   clearUsedSignature,
 } from './puzzle-store';
+import { getLevelEngagement } from './engagement';
 import {
   activateDailyPuzzle,
   buildAndSaveManualPuzzle,
@@ -30,6 +34,7 @@ import type {
 import {
   containsDisallowedContent,
   computePhraseDifficultyProfile,
+  contentTokenSignature,
   difficultyToTier,
   looksLikeAllowedAuthor,
   maxPuzzleAuthorLength,
@@ -55,7 +60,7 @@ import { deriveSeed, mulberry32 } from './rng';
 import { formatDateKey } from './serde';
 import { trackDifficultyAdjustment } from './metrics';
 import { createValidationPipeline } from './validation-pipeline';
-import { getCachedFittedLayout } from './board-fit-service';
+import { fitLineToTiers, getCachedFittedLayout } from './board-fit-service';
 import { applyFittedLayoutToBasePuzzle } from './board-layout';
 import { tierDisplayName } from './tier-fitter';
 import { buildPuzzle } from './puzzle';
@@ -641,6 +646,220 @@ export const publishFittedManualPuzzle = async (params: {
         error instanceof Error ? error.message : 'Unknown error during manual puzzle publish',
     };
   }
+};
+
+const previousLevelIdForEdit = (levelId: string): string | null => {
+  const match = /^(.*?)(\d+)$/.exec(levelId);
+  if (!match) {
+    return null;
+  }
+  const prefix = match[1] ?? '';
+  const numericText = match[2] ?? '';
+  const numeric = Number(numericText);
+  if (!Number.isFinite(numeric) || numeric <= 1) {
+    return null;
+  }
+  return `${prefix}${String(numeric - 1).padStart(numericText.length, '0')}`;
+};
+
+export type ChallengeEditContext = {
+  levelId: string;
+  text: string;
+  author: string;
+  tier: DifficultyTier;
+  challengeType: ChallengeType;
+  plays: number;
+  boardLocked: boolean;
+};
+
+/**
+ * Resolves the challenge behind a post for the mod "Edit Challenge" menu
+ * action. Community challenges are excluded — those are edited by their
+ * creator through the in-app review flow.
+ */
+export const prepareChallengeEdit = async (
+  postId: string
+): Promise<{ ok: true; context: ChallengeEditContext } | { ok: false; error: string }> => {
+  const levelId = await getLevelIdForPost(postId);
+  if (!levelId) {
+    return { ok: false, error: 'This post has no Decrypt challenge attached.' };
+  }
+  const puzzle = await getPuzzlePrivate(levelId);
+  if (!puzzle) {
+    return { ok: false, error: 'Challenge data for this post was not found.' };
+  }
+  if (puzzle.source === 'COMMUNITY') {
+    return {
+      ok: false,
+      error:
+        'Community challenges are edited by their creator — use Request Changes in the app’s Review tab.',
+    };
+  }
+  const engagement = await getLevelEngagement(levelId);
+  return {
+    ok: true,
+    context: {
+      levelId,
+      text: puzzle.targetText,
+      author: puzzle.author,
+      tier: difficultyToTier(puzzle.difficulty),
+      challengeType: puzzle.challengeType,
+      plays: engagement.plays,
+      boardLocked: engagement.plays > 0,
+    },
+  };
+};
+
+/**
+ * Applies a mod edit to an existing (non-community) challenge in place.
+ * Author credit is always editable; text and tier lock once anyone has
+ * played, because changing the board would invalidate existing results.
+ * Board changes go through the tier fitter, so an edit can never produce
+ * an unfair or unbuildable board.
+ */
+export const applyChallengeEdit = async (params: {
+  levelId: string;
+  text: string;
+  author: string;
+  tier: DifficultyTier;
+}): Promise<{ success: boolean; message: string }> => {
+  const puzzle = await getPuzzlePrivate(params.levelId);
+  if (!puzzle) {
+    return { success: false, message: 'Challenge data for this post was not found.' };
+  }
+  if (puzzle.source === 'COMMUNITY') {
+    return {
+      success: false,
+      message:
+        'Community challenges are edited by their creator — use Request Changes in the app’s Review tab.',
+    };
+  }
+  const author = normalizeManualAuthor(params.author);
+  if (!author) {
+    return {
+      success: false,
+      message: `Invalid author. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`,
+    };
+  }
+  const text = sanitizePhrase(params.text);
+  const textChanged = sanitizePhrase(puzzle.targetText) !== text;
+  const tierChanged = difficultyToTier(puzzle.difficulty) !== params.tier;
+
+  if (textChanged || tierChanged) {
+    const engagement = await getLevelEngagement(params.levelId);
+    if (engagement.plays > 0) {
+      return {
+        success: false,
+        message:
+          'Players already solved this board, so the text and tier are locked. You can still fix the author credit, or remove the post and inject a new challenge.',
+      };
+    }
+  }
+
+  if (!textChanged && !tierChanged) {
+    if (author === puzzle.author) {
+      return { success: true, message: 'No changes to save.' };
+    }
+    const puzzlePrivate: PuzzlePrivate = { ...puzzle, author };
+    await replacePuzzleDataInPlace({
+      levelId: params.levelId,
+      puzzlePrivate,
+      puzzlePublic: buildPublicPuzzle(puzzlePrivate, []),
+      normalizedSignature: normalizeContent(puzzle.targetText),
+      tokenSignature: contentTokenSignature(puzzle.targetText),
+    });
+    return { success: true, message: `Author updated to "${author}".` };
+  }
+
+  const newSignature = normalizeContent(text);
+  if (textChanged) {
+    const owner = await getUsedSignatureOwner(newSignature);
+    if (owner && owner !== params.levelId) {
+      return {
+        success: false,
+        message: 'That quote is already used by another challenge. Try a different line.',
+      };
+    }
+  }
+
+  const layout = await getCachedFittedLayout({
+    text,
+    tier: params.tier,
+    author,
+    challengeType: puzzle.challengeType,
+  });
+  if (!layout) {
+    const report = await fitLineToTiers({
+      text,
+      author,
+      challengeType: puzzle.challengeType,
+    });
+    const feasible = report.tiers
+      .filter((entry) => entry.feasible)
+      .map((entry) => tierDisplayName(entry.tier));
+    return {
+      success: false,
+      message:
+        feasible.length > 0
+          ? `${tierDisplayName(params.tier)} doesn't work for this line. Available: ${feasible.join(', ')}.`
+          : report.tiers.find((entry) => entry.reason)?.reason ??
+            "This line can't become a puzzle yet. Try another quote.",
+    };
+  }
+
+  const settings = await getDecryptSettings();
+  const previousId = previousLevelIdForEdit(params.levelId);
+  const base = buildPuzzle({
+    levelId: params.levelId,
+    dateKey: puzzle.dateKey,
+    text,
+    author,
+    challengeType: puzzle.challengeType,
+    source: puzzle.source,
+    difficulty: layout.difficulty,
+    logicalPercent: settings.logicalCipherPercent,
+    previousMapping: previousId ? await getPuzzleMapping(previousId) : null,
+    skipSolvabilityCheck: true,
+    applyObstructionsOnSkip: false,
+  });
+  const puzzlePrivate: PuzzlePrivate = {
+    ...applyFittedLayoutToBasePuzzle({ basePuzzle: base.puzzlePrivate, layout }),
+    createdAt: puzzle.createdAt,
+  };
+  const validation = validatePuzzle(puzzlePrivate);
+  if (!validation.valid) {
+    return {
+      success: false,
+      message: validation.reasons[0] ?? 'The edited board could not be finished. Try again.',
+    };
+  }
+  const band = solverBandForTier(params.tier);
+  const solver = runDummySolver({
+    puzzle: puzzlePrivate,
+    revealedIndices: puzzlePrivate.prefilledIndices,
+    requiredSolveRatio: band.floor,
+    solverProfile: 'standard',
+    maxSearchMs: 60_000,
+    maxBranchExpansions: 1200,
+  });
+  if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < band.floor) {
+    return {
+      success: false,
+      message: `The edited board doesn’t play fairly at ${tierDisplayName(params.tier)}. Try another tier or line.`,
+    };
+  }
+  await replacePuzzleDataInPlace({
+    levelId: params.levelId,
+    puzzlePrivate,
+    puzzlePublic: buildPublicPuzzle(puzzlePrivate, []),
+    normalizedSignature: newSignature,
+    tokenSignature: contentTokenSignature(text),
+    previousNormalizedSignature: normalizeContent(puzzle.targetText),
+  });
+  return {
+    success: true,
+    message: `${tierDisplayName(params.tier)} challenge updated.`,
+  };
 };
 
 export const retryPublishManualPuzzle = async (params: {

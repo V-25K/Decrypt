@@ -2117,7 +2117,17 @@ export const approveCommunitySubmission = async (
     }
     const hardnessBoundsByTier = await getHardnessBounds();
     const pipeline = createValidationPipeline(hardnessBoundsByTier);
-    const phase1 = pipeline.phase1(submission.text, submission.targetDifficulty);
+    // Submissions that carry their own board (a fitted layout from the auto
+    // flow, or a manual layout) were already verified by actually building
+    // that board, and approval re-validates it again when applying the
+    // layout. Re-running the legacy text-profile gate here would reject
+    // boards the fitter proved playable ("crypto hardness is outside...").
+    const carriesOwnBoard =
+      submission.fittedLayout !== null ||
+      (submission.creationMode === 'manual' && submission.manualLayout !== null);
+    const phase1 = carriesOwnBoard
+      ? pipeline.phase1Structural(submission.text)
+      : pipeline.phase1(submission.text, submission.targetDifficulty);
     if (!phase1.valid) {
       throw new Error(phase1.reasons[0] ?? 'Submission no longer fits current difficulty bounds.');
     }

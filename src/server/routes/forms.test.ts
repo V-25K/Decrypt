@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  applyChallengeEditMock,
   clearSubredditGameDataMock,
   duplicateMock,
   fitLineToTiersMock,
@@ -8,6 +9,7 @@ const {
   injectAndPublishManualPuzzleMock,
   publishFittedManualPuzzleMock,
 } = vi.hoisted(() => ({
+  applyChallengeEditMock: vi.fn(),
   clearSubredditGameDataMock: vi.fn(),
   duplicateMock: vi.fn(),
   fitLineToTiersMock: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock('../core/admin', () => ({
       this.name = 'ManualChallengePreflightFailedError';
     }
   },
+  applyChallengeEdit: applyChallengeEditMock,
   injectAndPublishManualPuzzle: injectAndPublishManualPuzzleMock,
   publishFittedManualPuzzle: publishFittedManualPuzzleMock,
 }));
@@ -90,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  applyChallengeEditMock.mockReset();
   clearSubredditGameDataMock.mockReset();
   duplicateMock.mockReset();
   fitLineToTiersMock.mockReset();
@@ -463,6 +467,78 @@ describe('mod-inject-review-submit', () => {
     await expect(response.json()).resolves.toEqual({
       showToast:
         "This quote can't be published as Easy. Go back to step 1 and pick one of the listed tiers.",
+    });
+  });
+});
+
+describe('mod-edit-challenge-submit', () => {
+  it('applies the edit and shows the result message', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    applyChallengeEditMock.mockResolvedValue({
+      success: true,
+      message: 'Medium challenge updated.',
+    });
+
+    const response = await forms.request('http://localhost/mod-edit-challenge-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        levelId: 'lvl_0042',
+        text: 'The only way to do great work is to love what you do',
+        author: 'New Author',
+        difficulty: 'medium',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(applyChallengeEditMock).toHaveBeenCalledWith({
+      levelId: 'lvl_0042',
+      text: 'THE ONLY WAY TO DO GREAT WORK IS TO LOVE WHAT YOU DO',
+      author: 'New Author',
+      tier: 'medium',
+    });
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Medium challenge updated.',
+    });
+  });
+
+  it('rejects when the challenge id is missing', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+
+    const response = await forms.request('http://localhost/mod-edit-challenge-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Some quote here for the board',
+        author: 'Author',
+        difficulty: 'medium',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(applyChallengeEditMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.showToast).toContain('Re-open the menu');
+  });
+
+  it('rejects unsupported tier values', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+
+    const response = await forms.request('http://localhost/mod-edit-challenge-submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        levelId: 'lvl_0042',
+        text: 'Some quote here for the board',
+        author: 'Author',
+        difficulty: 'impossible',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(applyChallengeEditMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Choose a tier from the list.',
     });
   });
 });

@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
-import type { UiResponse } from '@devvit/web/shared';
+import type { MenuItemRequest, UiResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
 import {
   formatModeratorRerollError,
+  prepareChallengeEdit,
   publishLastGeneratedChallenge,
   rerollAndPublish,
 } from '../core/admin';
+import { tierDisplayName } from '../core/tier-fitter';
 import { hasAdminAccess } from '../core/admin-auth';
 import {
   challengeTypeDisplayOrder,
@@ -156,6 +158,76 @@ menu.post('/mod-post-last-generated', async (c) => {
       200
     );
   }
+});
+
+menu.post('/mod-edit-challenge', async (c) => {
+  const deny = await requireAdmin();
+  if (deny) {
+    return c.json<UiResponse>(deny, 200);
+  }
+  const body = await c.req.json<MenuItemRequest>();
+  const prepared = await prepareChallengeEdit(body.targetId);
+  if (!prepared.ok) {
+    return c.json<UiResponse>({ showToast: prepared.error }, 200);
+  }
+  const edit = prepared.context;
+  const tierOptions = (['warmup', 'medium', 'hard', 'expert'] as const).map(
+    (tier) => ({ label: tierDisplayName(tier), value: tier })
+  );
+  return c.json<UiResponse>(
+    {
+      showForm: {
+        name: 'mod_edit_challenge_form',
+        form: {
+          title: 'Edit Challenge',
+          description: edit.boardLocked
+            ? `${edit.plays} player(s) already played this board, so the text and tier are locked. You can still fix the author credit.`
+            : 'Change the text, author, or tier. The board is rebuilt and checked before anything is saved.',
+          acceptLabel: 'Save Changes',
+          fields: [
+            {
+              type: 'string',
+              name: 'levelId',
+              label: 'Challenge ID',
+              defaultValue: edit.levelId,
+              disabled: true,
+            },
+            {
+              type: 'paragraph',
+              name: 'text',
+              label: 'Challenge text',
+              defaultValue: edit.text,
+              disabled: edit.boardLocked,
+              ...(edit.boardLocked
+                ? { helpText: 'Locked: players already solved this board.' }
+                : {}),
+            },
+            {
+              type: 'string',
+              name: 'author',
+              label: 'Author',
+              required: true,
+              defaultValue: edit.author,
+            },
+            {
+              type: 'select',
+              name: 'difficulty',
+              label: 'Tier',
+              required: true,
+              multiSelect: false,
+              defaultValue: [edit.tier],
+              options: tierOptions,
+              disabled: edit.boardLocked,
+              ...(edit.boardLocked
+                ? { helpText: 'Locked: players already solved this board.' }
+                : {}),
+            },
+          ],
+        },
+      },
+    },
+    200
+  );
 });
 
 menu.post('/mod-inject', async (c) => {

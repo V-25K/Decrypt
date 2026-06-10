@@ -115,6 +115,11 @@ const difficultyForTierKey: Record<CommunityTierKey, number> = {
   expert: 9,
 };
 
+// Advanced (manual) board building is parked for a future update — the
+// in-game UI never offers it. Server support stays intact so legacy manual
+// submissions still review and approve correctly.
+const advancedBoardModeEnabled: boolean = false;
+
 const communityDraftStorageKey = 'decrypt:community:create-draft:v1';
 
 type CommunityDraft = {
@@ -898,8 +903,9 @@ export const CommunityScreen = ({
 	  const [targetDifficulty, setTargetDifficulty] = useState(
 	    initialDraft?.targetDifficulty ?? 5
 	  );
-	  const [creationMode, setCreationMode] =
-	    useState<CommunityCreationMode>(initialDraft?.creationMode ?? 'auto');
+	  const [creationMode, setCreationMode] = useState<CommunityCreationMode>(
+	    advancedBoardModeEnabled ? (initialDraft?.creationMode ?? 'auto') : 'auto'
+	  );
 	  const [manualLayout, setManualLayout] =
 	    useState<CommunityManualLayout>(() => emptyManualLayout());
 	  const [manualTool, setManualTool] = useState<ManualLayoutTool>('reveal');
@@ -1557,18 +1563,6 @@ export const CommunityScreen = ({
               onSubmit={(event) => void handleSubmit(event)}
               data-testid="community-create-form"
             >
-              {!isEditingRequestedChanges && (
-                <div
-                  className="app-surface-subtle app-border rounded-lg border px-3 py-2.5"
-                  data-testid="community-create-teaser"
-                >
-                  <p className="app-text text-[11px] font-semibold leading-snug">
-                    Share a quote — Decrypt turns it into a number-cipher for
-                    players to crack. Get a creator reward when your challenge is
-                    loved (200+ plays, 70%+ likes).
-                  </p>
-                </div>
-              )}
               {isEditingRequestedChanges && (
                 <div className="app-surface-subtle app-border rounded-lg border px-3 py-3">
                   <div className="app-text text-xs font-black uppercase">
@@ -1610,7 +1604,14 @@ export const CommunityScreen = ({
                   {text.length}/{maxPuzzleTotalLength}
                 </span>
               </label>
-	              <div className={cn('grid gap-2', deviceTier === 'mobile' ? 'grid-cols-1' : 'grid-cols-2')}>
+	              <div
+	                className={cn(
+	                  'grid gap-2',
+	                  deviceTier === 'mobile' || !advancedBoardModeEnabled
+	                    ? 'grid-cols-1'
+	                    : 'grid-cols-2'
+	                )}
+	              >
 	                <label className="block">
                   <span className="app-text text-xs font-black uppercase">
                     Category
@@ -1629,45 +1630,47 @@ export const CommunityScreen = ({
                     ))}
 	                  </select>
                 </label>
-	                <div>
-	                  <span className="app-text text-xs font-black uppercase">
-	                    Board
-	                  </span>
-	                  <div className="mt-1">
-	                    {creationMode === 'auto' ? (
-	                      <button
-	                        type="button"
-	                        className="btn-3d btn-neutral min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
-	                        onClick={() => {
-	                          setCreationMode('manual');
-	                          setPreview(null);
-	                        }}
-	                        disabled={busy || isEditingRequestedChanges}
-	                        data-testid="community-mode-manual"
-	                      >
-	                        Customize board (advanced)
-	                      </button>
-	                    ) : (
-	                      <button
-	                        type="button"
-	                        className="btn-3d btn-primary min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
-	                        onClick={() => {
-	                          setCreationMode('auto');
-	                          setPreview(null);
-	                        }}
-	                        disabled={busy || isEditingRequestedChanges}
-	                        data-testid="community-mode-auto"
-	                      >
-	                        ‹ Back to quick build
-	                      </button>
-	                    )}
-	                    <p className="app-text-muted mt-1 text-[10px] font-semibold leading-snug">
-	                      {creationMode === 'auto'
-	                        ? 'Decrypt builds a fair board for you.'
-	                        : 'Advanced: place reveals, blind tiles, and locks yourself.'}
-	                    </p>
+	                {advancedBoardModeEnabled && (
+	                  <div>
+	                    <span className="app-text text-xs font-black uppercase">
+	                      Board
+	                    </span>
+	                    <div className="mt-1">
+	                      {creationMode === 'auto' ? (
+	                        <button
+	                          type="button"
+	                          className="btn-3d btn-neutral min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
+	                          onClick={() => {
+	                            setCreationMode('manual');
+	                            setPreview(null);
+	                          }}
+	                          disabled={busy || isEditingRequestedChanges}
+	                          data-testid="community-mode-manual"
+	                        >
+	                          Customize board (advanced)
+	                        </button>
+	                      ) : (
+	                        <button
+	                          type="button"
+	                          className="btn-3d btn-primary min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
+	                          onClick={() => {
+	                            setCreationMode('auto');
+	                            setPreview(null);
+	                          }}
+	                          disabled={busy || isEditingRequestedChanges}
+	                          data-testid="community-mode-auto"
+	                        >
+	                          ‹ Back to quick build
+	                        </button>
+	                      )}
+	                      <p className="app-text-muted mt-1 text-[10px] font-semibold leading-snug">
+	                        {creationMode === 'auto'
+	                          ? 'Decrypt builds a fair board for you.'
+	                          : 'Advanced: place reveals, blind tiles, and locks yourself.'}
+	                      </p>
+	                    </div>
 	                  </div>
-	                </div>
+	                )}
 	              </div>
 		              {creationMode === 'auto' && (
 		                <div className="app-surface-subtle app-border rounded-lg border px-3 py-3">

@@ -116,6 +116,7 @@ vi.mock('./engagement', () => ({ getLevelEngagement: vi.fn() }));
 vi.mock('./quests', () => ({ updateQuestProgressOnAcclaim: vi.fn() }));
 
 import { validateQuoteForPhase1 } from './content';
+import { fitBoardToTier } from './tier-fitter';
 import { approveCommunitySubmission } from './community';
 import { keyCommunityCreatorStats, keyCommunitySubmission } from './keys';
 
@@ -205,5 +206,66 @@ describe('approveCommunitySubmission rewards', () => {
         call[1] === 'coinsEarned'
     );
     expect(coinsEarnedCalls).toHaveLength(0);
+  });
+
+  // Regression: a complex line the fitter accepted at Easy must approve even
+  // though the legacy text-profile gate would reject it ("crypto hardness is
+  // outside..."). The fitted board IS the proof of playability.
+  it('approves a fitted submission the legacy tier gate would reject', { timeout: 30_000 }, async () => {
+    const text = 'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG';
+    expect(validateQuoteForPhase1(text, 2).valid).toBe(false);
+
+    const fitted = fitBoardToTier({
+      text,
+      tier: 'warmup',
+      dateKey: '2026-06-10',
+      author: 'Tester',
+      challengeType: 'QUOTE',
+      logicalPercent: 100,
+    });
+    expect(fitted.fitted).toBe(true);
+    if (!fitted.fitted) {
+      return;
+    }
+
+    await redis.hSet(keyCommunitySubmission('sub_002'), {
+      authorId: 't2_creator',
+      authorName: 'creator',
+      title: 'Pangram puzzle',
+      text,
+      normalizedSig: 'sig-002',
+      tokenSig: 'tok-002',
+      category: 'QUOTE',
+      attribution: 'Source',
+      targetDifficulty: '2',
+      creationMode: 'auto',
+      manualLayout: '',
+      fittedLayout: JSON.stringify(fitted.layout),
+      suggestedTier: 'warmup',
+      status: 'pending',
+      submittedAt: '1000',
+      reviewedBy: '',
+      reviewedAt: '',
+      rejectionReason: '',
+      levelId: '',
+    });
+
+    const puzzlePrivate = {
+      levelId: 'lvl_0100',
+      dateKey: '2026-06-10',
+      targetText: text,
+    };
+    buildAndSaveManualPuzzleMock.mockResolvedValue({
+      levelId: 'lvl_0100',
+      signatureOwnerToken: 'token',
+      puzzlePrivate,
+      puzzlePublic: { levelId: 'lvl_0100' },
+    });
+    getPuzzlePrivateMock.mockResolvedValue(puzzlePrivate);
+    publishDailyPostMock.mockResolvedValue('t3_post2');
+    getUserProfileMock.mockResolvedValue({ coins: 0, unlockedFlairs: [] });
+
+    const approved = await approveCommunitySubmission('sub_002');
+    expect(approved.status).toBe('approved');
   });
 });

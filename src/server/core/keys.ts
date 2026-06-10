@@ -21,6 +21,10 @@ export const keyAIPoolDifficultyCursor = (tier: string, challengeType: string) =
   `decrypt:ai_pool:cursor:${tier}:${challengeType}`;
 export const keyPuzzlePublishedPost = (levelId: string) =>
   `decrypt:puzzle:${levelId}:published_post`;
+// Reverse of keyPuzzlePublishedPost, so post-scoped mod actions (e.g. Edit
+// Challenge) can resolve which level a post belongs to. Backfilled lazily
+// for posts published before this index existed.
+export const keyPostLevel = (postId: string) => `decrypt:post:${postId}:level`;
 export const keyDailyPostCreateLock = 'decrypt:lock:daily_post_create';
 export const keyPuzzleMapping = (levelId: string) =>
   `decrypt:puzzle:${levelId}:mapping`;

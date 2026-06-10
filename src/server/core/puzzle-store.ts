@@ -15,6 +15,7 @@ import {
   keyCommunitySubmission,
   keyCommunitySubmissionsRemoved,
   keyLevelIdCounter,
+  keyPostLevel,
   keyPublishedAutoDailyPuzzlesByDate,
   keyPublishedAutoDailyPuzzlesByDateInitialized,
   keyPuzzleMapping,
@@ -435,6 +436,36 @@ export const getPuzzlePublishedPostId = async (
   return value ?? null;
 };
 
+/**
+ * Resolves which level a published post belongs to. Posts created since the
+ * reverse index existed answer in one read; older posts fall back to a scan
+ * over the level index (mod-action frequency, so the cost is acceptable) and
+ * backfill the index for next time.
+ */
+export const getLevelIdForPost = async (postId: string): Promise<string | null> => {
+  const indexed = await redis.get(keyPostLevel(postId));
+  if (indexed) {
+    return indexed;
+  }
+  const levelIds = await getAllLevelIds();
+  if (levelIds.length === 0) {
+    return null;
+  }
+  const postIds = await redis.mGet(
+    levelIds.map((levelId) => keyPuzzlePublishedPost(levelId))
+  );
+  for (let index = 0; index < levelIds.length; index += 1) {
+    if (postIds[index] === postId) {
+      const levelId = levelIds[index];
+      if (levelId) {
+        await redis.set(keyPostLevel(postId), levelId);
+        return levelId;
+      }
+    }
+  }
+  return null;
+};
+
 export const isPuzzlePublishedVisible = async (levelId: string): Promise<boolean> => {
   const removedFromPlay = await isPuzzleRemovedFromPlay(levelId);
   if (removedFromPlay) {
@@ -483,6 +514,7 @@ export const setPuzzlePublishedPostId = async (
   dateKey?: string
 ): Promise<void> => {
   await redis.set(keyPuzzlePublishedPost(levelId), postId);
+  await redis.set(keyPostLevel(postId), levelId);
   const stored = await readJsonWithSchema(
     keyPuzzlePrivate(levelId),
     puzzlePrivateStoredSchema
