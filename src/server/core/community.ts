@@ -182,7 +182,6 @@ const parseRedisSortedSetScore = (score: unknown): number | null => {
 const communityMinLength = minPlayablePuzzleTotalLength;
 const communityMaxLength = maxPuzzleTotalLength;
 const communityTitleMaxLength = 60;
-const communityApprovalRewardCoins = 200;
 const communityMakerFlair = 'Puzzle Maker';
 const maxPendingCommunitySubmissionsPerUser = 3;
 const approvalLockTtlMs = 120_000;
@@ -1749,25 +1748,21 @@ export const withdrawCommunitySubmission = async (
   return next;
 };
 
-const rewardCreatorOnApproval = async (
+// Approval grants prestige only — the Puzzle Maker flair. All creator coin
+// payout comes from acclaim (the creator quest milestones), so approving a
+// challenge never mints currency by itself.
+const grantCreatorFlairOnApproval = async (
   submission: CommunitySubmission
 ): Promise<UserProfile> => {
   const profile = await getUserProfile(submission.authorId);
-  const unlockedFlairs = profile.unlockedFlairs.includes(communityMakerFlair)
-    ? profile.unlockedFlairs
-    : [...profile.unlockedFlairs, communityMakerFlair];
+  if (profile.unlockedFlairs.includes(communityMakerFlair)) {
+    return profile;
+  }
   const nextProfile: UserProfile = {
     ...profile,
-    coins: profile.coins + communityApprovalRewardCoins,
-    unlockedFlairs,
+    unlockedFlairs: [...profile.unlockedFlairs, communityMakerFlair],
   };
   await saveUserProfile(submission.authorId, nextProfile);
-  await Promise.all([
-    redis.hIncrBy(keyCommunityCreatorStats(submission.authorId), 'coinsEarned', communityApprovalRewardCoins),
-    redis.hSet(keyCommunitySubmission(submission.submissionId), {
-      approvalRewardPaidAt: `${Date.now()}`,
-    }),
-  ]);
   return nextProfile;
 };
 
@@ -2108,13 +2103,7 @@ export const approveCommunitySubmission = async (
       throw new Error('Submission not found.');
     }
     if (submission.status === 'approved') {
-      const rewardPaidAt = await redis.hGet(
-        keyCommunitySubmission(submissionId),
-        'approvalRewardPaidAt'
-      );
-      if (!rewardPaidAt) {
-        await rewardCreatorOnApproval(submission);
-      }
+      await grantCreatorFlairOnApproval(submission);
       await publishApprovedCommunityPost(submission);
       return submission;
     }
@@ -2171,13 +2160,7 @@ export const approveCommunitySubmission = async (
 	        ? Promise.resolve()
         : redis.hIncrBy(keyCommunityCreatorStats(submission.authorId), 'approved', 1),
     ]);
-    const rewardPaidAt = await redis.hGet(
-      keyCommunitySubmission(submissionId),
-      'approvalRewardPaidAt'
-    );
-    if (!rewardPaidAt) {
-      await rewardCreatorOnApproval(next);
-    }
+    await grantCreatorFlairOnApproval(next);
     const existingPostId = next.levelId
       ? await getPuzzlePublishedPostId(next.levelId)
       : null;

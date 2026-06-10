@@ -74,4 +74,29 @@ describe('quest catalog', () => {
     expect(milestoneReward.coins).toBe(125);
     expect(milestoneReward.flair).toBe('Treasure Room');
   });
+
+  // Snapshot of the trimmed top-tier payouts so future edits are deliberate:
+  // early tiers stay welcoming, late tiers no longer mint thousands of coins.
+  it('keeps the milestone reward curve at the trimmed amounts', () => {
+    const expectedCoinsById: Record<string, number> = {
+      milestone_wordsmith_1000: 450,
+      milestone_flawless_50: 450,
+      milestone_flawless_100: 650,
+      milestone_spent_50000: 500,
+      milestone_daily_top_20: 550,
+      milestone_daily_top_50: 1000,
+      milestone_daily_top_100: 1800,
+      milestone_endless_150: 450,
+      milestone_creator_acclaim_10: 800,
+    };
+    for (const [questId, coins] of Object.entries(expectedCoinsById)) {
+      expect(requireQuest(questId).reward.coins).toBe(coins);
+    }
+    const maxMilestoneCoins = Math.max(
+      ...questCatalog
+        .filter((quest) => quest.category === 'milestone')
+        .map((quest) => quest.reward.coins)
+    );
+    expect(maxMilestoneCoins).toBeLessThanOrEqual(1800);
+  });
 });

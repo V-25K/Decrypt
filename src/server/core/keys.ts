@@ -199,6 +199,11 @@ export const keyUserCoinHeartPurchases = (userId: string, dateKey: string) =>
 export const keyUserEndlessCursor = (userId: string) =>
   `decrypt:user:${userId}:endless:cursor`;
 
+// Per-day count of endless clears that already paid rewards, for the daily
+// reward taper. Short TTL — only today's value matters.
+export const keyUserEndlessRewardCount = (userId: string, dateKey: string) =>
+  `decrypt:user:${userId}:endless:reward_count:${dateKey}`;
+
 export const keyCommunitySubmission = (submissionId: string) =>
   `decrypt:community:submission:${submissionId}`;
 

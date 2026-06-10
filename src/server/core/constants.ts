@@ -1,5 +1,6 @@
 import { scorePenaltyEngine } from '../../shared/score-penalty-engine';
 import { fastSolveBonusSystem } from '../../shared/fast-solve-bonus-system';
+import { completionRewards } from '../../shared/economy';
 
 export const heartsPerRun = 3;
 export const heartRefillIntervalMs = 30 * 60 * 1000;
@@ -8,12 +9,16 @@ export const sessionTtlSeconds = 60 * 60;
 export const sessionInactivityThresholdMs = 10 * 60 * 1000;
 export const dailyDataTtlSeconds = 90 * 24 * 60 * 60;
 
-export const defaultCoinsReward = 35;
-export const flawlessBonusCoins = 15;
-export const communityJoinRewardCoins = 100;
-export const coinHeartRefillCost = 350;
-export const coinHeartTopUpCost = 150;
-export const maxCoinHeartPurchasesPerDay = 2;
+// Economy knobs live in src/shared/economy.ts; re-exported here so existing
+// call sites keep their import paths.
+export const defaultCoinsReward: number = completionRewards.baseCoins;
+export const flawlessBonusCoins: number = completionRewards.flawlessBonus;
+export {
+  communityJoinRewardCoins,
+  coinHeartRefillCost,
+  coinHeartTopUpCost,
+  maxCoinHeartPurchasesPerDay,
+} from '../../shared/economy';
 
 export const getDailyRetryScoreFactor = (retryCount: number): number => {
   return scorePenaltyEngine.calculatePenaltyFactor(retryCount);

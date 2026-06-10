@@ -107,9 +107,11 @@ import {
   keyCompletionFinalizeLock,
   keyUserCompleted,
   keyUserDailyRetryCounts,
+  keyUserEndlessRewardCount,
   keyUserProfile,
 } from './keys';
 import { recordShadowDifficultyOutcomeSafely } from './difficulty-shadow-rating';
+import { applyEndlessRewardTaper } from '../../shared/economy';
 
 const assertUserId = (): string => {
   const userId = context.userId;
@@ -1474,9 +1476,22 @@ export const completeSessionForLevel = async (params: {
       puzzle.difficulty
     );
     rewardCoins += fastSolveBonus;
-    
+
     if (params.mode === 'daily' && !isCurrentDaily) {
       rewardCoins = 0;
+    }
+
+    // Endless taper: full rewards for the first clears of the day, smaller
+    // bonuses after — keeps endless rewarding without infinite coin farming.
+    let endlessRewardTapered = false;
+    if (params.mode === 'endless') {
+      const rewardedRaw = await redis.get(
+        keyUserEndlessRewardCount(userId, currentDateKey)
+      );
+      const rewardedToday = rewardedRaw ? Number(rewardedRaw) || 0 : 0;
+      const taper = applyEndlessRewardTaper(rewardCoins, rewardedToday);
+      rewardCoins = taper.coins;
+      endlessRewardTapered = taper.tapered;
     }
 
     const baseScore = computeScore({
@@ -1517,6 +1532,14 @@ export const completeSessionForLevel = async (params: {
         });
       }
     });
+    if (params.mode === 'endless') {
+      // Journaled so a completion replay never double-counts the taper.
+      await runCompletionStep('count_endless_reward', async () => {
+        const counterKey = keyUserEndlessRewardCount(userId, currentDateKey);
+        await redis.incrBy(counterKey, 1);
+        await redis.expire(counterKey, 2 * 24 * 60 * 60);
+      });
+    }
     await runCompletionStep('save_inventory', async () => {
       await saveInventory(userId, inventory);
     });
@@ -1704,7 +1727,9 @@ export const completeSessionForLevel = async (params: {
         ? ''
         : isRecoveryRun
           ? 'Recovery clear complete. Retry penalty applied to your score.'
-          : null;
+          : endlessRewardTapered
+            ? 'You’ve earned today’s full endless rewards — smaller bonuses until tomorrow.'
+            : null;
 
     return {
       ok: true,
