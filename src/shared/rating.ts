@@ -3,6 +3,24 @@ export const startingGlobalRating = 500;
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+const finiteOr = (value: number, fallback: number): number =>
+  Number.isFinite(value) ? value : fallback;
+
+const clampFinite = (
+  value: number,
+  min: number,
+  max: number,
+  fallback: number
+): number => clamp(finiteOr(value, fallback), min, max);
+
+const nonnegativeInteger = (
+  value: number | null | undefined,
+  fallback = 0
+): number =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : fallback;
+
 export type RatingOutcome = 'win' | 'loss';
 
 export type RatingInput = {
@@ -34,7 +52,7 @@ const getChallengeRating = (params: {
   cryptoHardness?: number | null | undefined;
   isLogical?: boolean | undefined;
 }): number => {
-  const safeDifficulty = clamp(Math.floor(params.difficulty), 1, 10);
+  const safeDifficulty = clampFinite(Math.floor(params.difficulty), 1, 10, 5);
   const hardnessBonus =
     typeof params.cryptoHardness === 'number' && Number.isFinite(params.cryptoHardness)
       ? clamp(params.cryptoHardness, 0, 1) * 45
@@ -44,7 +62,7 @@ const getChallengeRating = (params: {
 };
 
 const getKFactor = (ratingGames: number): number => {
-  const games = Math.max(0, Math.floor(ratingGames));
+  const games = nonnegativeInteger(ratingGames);
   if (games < 20) {
     return 48;
   }
@@ -78,9 +96,9 @@ const getSpeedModifier = (params: {
 };
 
 const getWinQualityMultiplier = (params: RatingInput): number => {
-  const mistakes = Math.max(0, Math.floor(params.mistakes ?? 0));
-  const usedPowerups = Math.max(0, Math.floor(params.usedPowerups ?? 0));
-  const streakBonus = clamp(Math.max(0, Math.floor(params.currentWinStreak ?? 0)) * 0.03, 0, 0.18);
+  const mistakes = nonnegativeInteger(params.mistakes);
+  const usedPowerups = nonnegativeInteger(params.usedPowerups);
+  const streakBonus = clamp(nonnegativeInteger(params.currentWinStreak) * 0.03, 0, 0.18);
   const mistakeModifier = mistakes === 0 ? 0.1 : -clamp(mistakes * 0.04, 0, 0.16);
   const powerupModifier = usedPowerups === 0 ? 0.08 : -clamp(usedPowerups * 0.04, 0, 0.16);
   const speedModifier = getSpeedModifier(params);
@@ -92,7 +110,7 @@ const getWinQualityMultiplier = (params: RatingInput): number => {
 const getLossQualityMultiplier = (): number => 1;
 
 export const calculateRating = (params: RatingInput): RatingResult => {
-  const previousRating = Math.max(0, Math.round(params.playerRating));
+  const previousRating = Math.max(0, Math.round(finiteOr(params.playerRating, startingGlobalRating)));
   const challengeRating = getChallengeRating({
     difficulty: params.difficulty,
     cryptoHardness: params.cryptoHardness,
@@ -110,7 +128,7 @@ export const calculateRating = (params: RatingInput): RatingResult => {
   const roundedDelta = Math.round(
     clamp(rawDelta, params.outcome === 'win' ? -32 : -32, params.outcome === 'win' ? 40 : 0)
   );
-  const minWinDelta = challengeRating >= previousRating ? 1 : 0;
+  const minWinDelta = 1;
   const ratingDelta = params.outcome === 'win'
     ? Math.max(minWinDelta, roundedDelta)
     : roundedDelta;

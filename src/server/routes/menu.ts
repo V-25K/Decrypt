@@ -62,6 +62,7 @@ menu.post('/mod-clear-subreddit-data', async (c) => {
   if (deny) {
     return c.json<UiResponse>(deny, 200);
   }
+  const subredditName = (context.subredditName ?? '').trim();
   return c.json<UiResponse>(
     {
       showForm: {
@@ -69,7 +70,7 @@ menu.post('/mod-clear-subreddit-data', async (c) => {
         form: {
           title: 'Clear Subreddit Game Data',
           description:
-            'This permanently clears Decrypt player progress, sessions, puzzle keys, and related subreddit data. Type CLEAR to continue.',
+            'This permanently clears Decrypt player progress, sessions, puzzle keys, community submissions/ciphers, and related subreddit data. Two confirmations are required.',
           acceptLabel: 'Clear Data',
           cancelLabel: 'Cancel',
           fields: [
@@ -79,7 +80,15 @@ menu.post('/mod-clear-subreddit-data', async (c) => {
               label: 'Confirmation',
               required: true,
               placeholder: 'CLEAR',
-              helpText: 'This action cannot be undone.',
+              helpText: 'Type CLEAR to acknowledge the action cannot be undone.',
+            },
+            {
+              type: 'string',
+              name: 'subredditConfirmation',
+              label: 'Subreddit name',
+              required: true,
+              placeholder: subredditName || 'subreddit name',
+              helpText: `Type the exact subreddit name (${subredditName || 'this subreddit'}) to confirm you are wiping the right install.`,
             },
           ],
         },

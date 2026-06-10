@@ -3,8 +3,9 @@ import type { PaymentHandlerResponse } from '@devvit/web/server';
 import { context, redis } from '@devvit/web/server';
 import { OrderStatus } from '@devvit/protos/json/devvit/payments/v1alpha/order.js';
 import {
-  hasPurchasedSku,
+  claimOneTimeSku,
   markSkuPurchased,
+  releaseOneTimeClaim,
   unmarkSkuPurchased,
 } from '../core/state';
 import {
@@ -621,21 +622,42 @@ paymentsRoutes.post('/fulfill', async (c) => {
     let currentRecord = initialRecord;
     const grantedSkus: string[] = [];
     const markedOneTimeSkus: string[] = [];
+    const claimedOneTimeSkus: string[] = [];
 
     try {
       for (const product of order.products) {
-        if (
-          isOneTimeOfferSku(product.sku) &&
-          (await hasPurchasedSku(userId, product.sku))
-        ) {
-          continue;
+        const sku = product.sku;
+
+        if (isOneTimeOfferSku(sku)) {
+          // Per-(user, sku) guard. claimOneTimeSku first checks the durable
+          // `hasPurchasedSku` hash record (set by markSkuPurchased after a prior
+          // successful grant) and then NX-locks the in-flight slot, so it covers
+          // BOTH the "already owned on an earlier order" case and the concurrent
+          // "two distinct orders racing" case.
+          //
+          // We intentionally do NOT consult payments.getOrders() here: in this
+          // Devvit version every getOrders filter (sku, buyer, status, metadata)
+          // is annotated "@experimental - This currently does nothing", so a
+          // getOrders-based check cannot reliably scope to (user, sku) and would
+          // produce false positives that deny a legitimately-paid distinct
+          // one-time SKU. The Redis record + NX lock are the authoritative guard.
+          const claim = await claimOneTimeSku(userId, sku);
+          if (claim.alreadyOwned) {
+            continue;
+          }
+          if (!claim.claimed) {
+            throw new Error(
+              `Another fulfillment is in progress for one-time SKU ${sku}; retry shortly.`
+            );
+          }
+          claimedOneTimeSkus.push(sku);
         }
 
         await applyBundle({
           userId,
-          sku: product.sku,
+          sku,
         });
-        grantedSkus.push(product.sku);
+        grantedSkus.push(sku);
         currentRecord = buildOrderGrantRecord({
           userId,
           status: 'in_progress',
@@ -644,9 +666,13 @@ paymentsRoutes.post('/fulfill', async (c) => {
         });
         await persistOrderGrantRecord(order.id, currentRecord);
 
-        if (isOneTimeOfferSku(product.sku)) {
-          await markSkuPurchased(userId, product.sku);
-          markedOneTimeSkus.push(product.sku);
+        if (isOneTimeOfferSku(sku)) {
+          await markSkuPurchased(userId, sku);
+          markedOneTimeSkus.push(sku);
+          // The hash field is now the authoritative record; release the in-flight
+          // claim so subsequent orders for the same SKU short-circuit on
+          // hasPurchasedSku immediately rather than waiting for the lock to expire.
+          await releaseOneTimeClaim(userId, sku);
           currentRecord = buildOrderGrantRecord({
             userId,
             status: 'in_progress',
@@ -684,6 +710,19 @@ paymentsRoutes.post('/fulfill', async (c) => {
           grantedSkus,
           markedOneTimeSkus,
         });
+        // Release any claims this invocation acquired but never marked (i.e.,
+        // applyBundle/markSkuPurchased threw before commit). Best-effort: the
+        // claim has a short TTL, so a failure here resolves itself within ~120s.
+        const claimsToRelease = claimedOneTimeSkus.filter(
+          (sku) => !markedOneTimeSkus.includes(sku)
+        );
+        for (const sku of claimsToRelease) {
+          try {
+            await releaseOneTimeClaim(userId, sku);
+          } catch (_releaseError) {
+            // Lock TTL bounds recovery; nothing else to do here.
+          }
+        }
         await Promise.all([
           redis.del(keyOrderGrantRecord(order.id)),
           redis.del(keyGrantedOrderSkus(order.id)),

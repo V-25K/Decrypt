@@ -9,7 +9,6 @@ const {
   computeObstructionBudgetSpentMock,
   computePhraseDifficultyProfileMock,
   createValidationPipelineMock,
-  clearStagedLevelIdMock,
   deriveSeedMock,
   difficultyToTierMock,
   formatDateKeyMock,
@@ -19,7 +18,6 @@ const {
   getPuzzleMappingMock,
   getPuzzlePrivateMock,
   getPuzzlePublishedPostIdMock,
-  getStagedLevelIdMock,
   injectManualPuzzleMock,
   mulberry32Mock,
   peekNextLevelIdMock,
@@ -34,7 +32,6 @@ const {
   computeObstructionBudgetSpentMock: vi.fn(),
   computePhraseDifficultyProfileMock: vi.fn(),
   createValidationPipelineMock: vi.fn(),
-  clearStagedLevelIdMock: vi.fn(),
   deriveSeedMock: vi.fn(),
   difficultyToTierMock: vi.fn(),
   formatDateKeyMock: vi.fn(),
@@ -44,7 +41,6 @@ const {
   getPuzzleMappingMock: vi.fn(),
   getPuzzlePrivateMock: vi.fn(),
   getPuzzlePublishedPostIdMock: vi.fn(),
-  getStagedLevelIdMock: vi.fn(),
   injectManualPuzzleMock: vi.fn(),
   mulberry32Mock: vi.fn(),
   peekNextLevelIdMock: vi.fn(),
@@ -52,17 +48,15 @@ const {
   deletePuzzleDataMock: vi.fn(),
 }));
 
-			vi.mock('./puzzle-store', () => ({
-			  clearStagedLevelId: clearStagedLevelIdMock,
+				vi.mock('./puzzle-store', () => ({
         deletePuzzleData: deletePuzzleDataMock,
-			  getAutoDailyLevelIdsForDate: getAutoDailyLevelIdsForDateMock,
-			  getPuzzleMapping: getPuzzleMappingMock,
-			  getNextLevelId: vi.fn(),
-		  peekNextLevelId: peekNextLevelIdMock,
-		  getPuzzlePrivate: getPuzzlePrivateMock,
-		  getPuzzlePublishedPostId: getPuzzlePublishedPostIdMock,
-		  getStagedLevelId: getStagedLevelIdMock,
-	  reserveUsedSignature: vi.fn(),
+				  getAutoDailyLevelIdsForDate: getAutoDailyLevelIdsForDateMock,
+				  getPuzzleMapping: getPuzzleMappingMock,
+				  getNextLevelId: vi.fn(),
+			  peekNextLevelId: peekNextLevelIdMock,
+			  getPuzzlePrivate: getPuzzlePrivateMock,
+			  getPuzzlePublishedPostId: getPuzzlePublishedPostIdMock,
+		  reserveUsedSignature: vi.fn(),
   savePuzzle: vi.fn(),
   clearUsedSignature: vi.fn(),
 }));
@@ -174,7 +168,6 @@ afterEach(() => {
   computeObstructionBudgetSpentMock.mockReset();
   computePhraseDifficultyProfileMock.mockReset();
   createValidationPipelineMock.mockReset();
-  clearStagedLevelIdMock.mockReset();
   deletePuzzleDataMock.mockReset();
   deriveSeedMock.mockReset();
   difficultyToTierMock.mockReset();
@@ -185,7 +178,6 @@ afterEach(() => {
   getPuzzleMappingMock.mockReset();
   getPuzzlePrivateMock.mockReset();
   getPuzzlePublishedPostIdMock.mockReset();
-  getStagedLevelIdMock.mockReset();
   injectManualPuzzleMock.mockReset();
   mulberry32Mock.mockReset();
   peekNextLevelIdMock.mockReset();
@@ -216,7 +208,7 @@ describe('daily publish activation flows', () => {
   });
 
   it('publishLastGeneratedChallenge repairs activation when the post already exists', async () => {
-    getStagedLevelIdMock.mockResolvedValue('lvl_0101');
+    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0101']);
     getPuzzlePrivateMock.mockResolvedValue({
       dateKey: '2026-03-07',
     });
@@ -226,7 +218,6 @@ describe('daily publish activation flows', () => {
 
     expect(activateDailyPuzzleMock).toHaveBeenCalledWith('lvl_0101');
     expect(publishAndActivateDailyPostMock).not.toHaveBeenCalled();
-    expect(clearStagedLevelIdMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       levelId: 'lvl_0101',
       dateKey: '2026-03-07',
@@ -235,38 +226,32 @@ describe('daily publish activation flows', () => {
     });
   });
 
-  it('publishLastGeneratedChallenge finds an unpublished tomorrow daily when the staged pointer is missing', async () => {
-    getStagedLevelIdMock.mockResolvedValue(null);
-    getAutoDailyLevelIdsForDateMock
-      .mockResolvedValueOnce(['lvl_0200', 'lvl_0201'])
-      .mockResolvedValueOnce([]);
+  it('publishLastGeneratedChallenge finds an unpublished daily for today', async () => {
+    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0200', 'lvl_0201']);
     getPuzzlePrivateMock.mockResolvedValue({
-      dateKey: '2026-03-08',
+      dateKey: '2026-03-07',
       difficulty: 5,
       challengeType: 'QUOTE',
       author: 'AUTHOR',
       targetText: 'TEXT',
       words: ['TEXT'],
     });
-    getPuzzlePublishedPostIdMock
-      .mockResolvedValueOnce('t3_existing200')
-      .mockResolvedValueOnce(null);
+    getPuzzlePublishedPostIdMock.mockResolvedValue(null);
     publishAndActivateDailyPostMock.mockResolvedValue('t3_new201');
 
     const result = await publishLastGeneratedChallenge();
 
     expect(publishAndActivateDailyPostMock).toHaveBeenCalledWith({
-      levelId: 'lvl_0200',
-      dateKey: '2026-03-08',
+      levelId: 'lvl_0201',
+      dateKey: '2026-03-07',
       runAs: 'APP',
     });
     expect(result).toMatchObject({
-      levelId: 'lvl_0200',
-      dateKey: '2026-03-08',
+      levelId: 'lvl_0201',
+      dateKey: '2026-03-07',
       postId: 't3_new201',
       alreadyPublished: false,
     });
-    expect(clearStagedLevelIdMock).not.toHaveBeenCalled();
   });
 
   it('injectAndPublishManualPuzzle uses the publish-and-activate path', async () => {
@@ -380,7 +365,7 @@ describe('manual publish preflight', () => {
     expect(buildManualPuzzleWithSolverFallbackMock).not.toHaveBeenCalled();
   });
 
-  it('keeps manual preferences from invalidating quotes that are still achievable at a recommended tier', async () => {
+  it('rejects selected manual preferences that fail the board probe', async () => {
     computePhraseDifficultyProfileMock.mockReturnValue({
       cryptoHardness: 0.4,
       uniqueLetterCount: 12,
@@ -438,9 +423,10 @@ describe('manual publish preflight', () => {
       challengeType: 'QUOTE',
     });
 
-    expect(result.valid).toBe(true);
-    expect(result.achievableTierRange).toEqual(['warmup', 'medium', 'hard']);
-    expect(result.reasons).toEqual([]);
+    expect(result.valid).toBe(false);
+    expect(result.achievableTierRange).toEqual(['warmup', 'medium']);
+    expect(result.reasons[0]).toContain('Could not build a fair hard puzzle');
+    expect(result.reasons[0]).toContain('Achievable tiers from preview: warmup, medium');
   });
 
   it('surfaces precise convergence failures for fair-build preflight misses', async () => {
@@ -505,7 +491,7 @@ describe('manual publish preflight', () => {
     expect(result.reasons[0]).toContain('Could not build a fair medium puzzle');
     expect(result.reasons[0]).toContain('Natural fit:');
     expect(result.reasons[0]).toContain('did not converge within 5 adjustment steps');
-    expect(result.reasons[0]).toContain('Achievable tiers from preview: medium, hard');
+    expect(result.reasons[0]).toContain('Achievable tiers from preview: hard');
   });
 
   it('blocks direct adjusted publish calls when preflight fails', async () => {

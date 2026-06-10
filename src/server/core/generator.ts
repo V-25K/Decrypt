@@ -15,7 +15,7 @@ import {
   sanitizeAuthor,
   sanitizePhrase,
 } from './content';
-import { buildPuzzle, buildPublicPuzzle } from './puzzle';
+import { buildPuzzle, buildPublicPuzzle, maxPrefilledCountForDifficulty } from './puzzle';
 import { runDummySolver } from './dummy-solver';
 import {
   computeAdaptiveHardnessBounds,
@@ -23,6 +23,7 @@ import {
 } from './difficulty-calibration';
 import {
   clearUsedSignature,
+  getAllLevelIds,
   getAutoDailyLevelIdsForDate,
   getRecentUsedSignatureEntries,
   peekNextLevelId,
@@ -30,20 +31,17 @@ import {
   PuzzleLevelAllocationConflictError,
   getPuzzlePublicationReceipt,
   getPuzzlePublishedPostId,
-  getStagedLevelId,
   getPuzzlePrivate,
-  clearStagedLevelId,
+  isOfficialDailyPuzzleSource,
   reserveUsedSignature,
   savePuzzle,
   setPuzzlePublicationReceipt,
   setPuzzlePublishedPostId,
-  setStagedLevelId,
   setDailyPointer,
   transferUsedSignatureReservation,
 } from './puzzle-store';
 import {
   keyDailyChallengeTypeSeed,
-  keyDailyStageLock,
   keyPuzzleGenerationLock,
   keyPuzzlePublishLock,
 } from './keys';
@@ -180,31 +178,6 @@ export class PuzzlePublishedPostUnavailableError extends Error {
     this.reason = params.reason;
     this.removedBy = params.removedBy;
     this.removedByCategory = params.removedByCategory;
-  }
-}
-
-/** Thrown when publishStagedPuzzle finds no staged puzzle pointer or the puzzle data is missing. */
-export class PuzzleNotStagedError extends Error {
-  constructor(detail?: string) {
-    super(detail ?? 'No staged puzzle is ready to publish.');
-    this.name = 'PuzzleNotStagedError';
-  }
-}
-
-/** Thrown when the staged puzzle's dateKey doesn't match the expected publish date. */
-export class PuzzleDateMismatchError extends Error {
-  readonly levelId: string;
-  readonly puzzleDateKey: string;
-  readonly expectedDateKey: string;
-
-  constructor(params: { levelId: string; puzzleDateKey: string; expectedDateKey: string }) {
-    super(
-      `Staged puzzle ${params.levelId} is for ${params.puzzleDateKey}, not ${params.expectedDateKey}.`
-    );
-    this.name = 'PuzzleDateMismatchError';
-    this.levelId = params.levelId;
-    this.puzzleDateKey = params.puzzleDateKey;
-    this.expectedDateKey = params.expectedDateKey;
   }
 }
 
@@ -352,9 +325,6 @@ const commitPublishedPostState = async (params: {
 
 const puzzlePublishLockExpiration = (): Date =>
   new Date(Date.now() + 60 * 1000);
-
-const dailyStageLockExpiration = (): Date =>
-  new Date(Date.now() + 5 * 60 * 1000);
 
 const createLockToken = (): string => `${Date.now()}:${crypto.randomUUID()}`;
 
@@ -530,12 +500,58 @@ const getDailyChallengeTypeSeed = async (dateKey: string): Promise<number> => {
   return seed;
 };
 
-const formatDailyTitle = (levelId: string): string => {
+const formatTitleFromLevelId = (levelId: string): string => {
   const match = levelId.match(/(\d+)$/);
   if (!match || !match[1]) {
     return `Daily Cipher ${levelId}`;
   }
   return `Daily Cipher #${Number(match[1])}`;
+};
+
+const getAutoDailySequenceNumber = async (levelId: string): Promise<number | null> => {
+  const levelIds = await getAllLevelIds();
+  const autoDailyPuzzles: Array<{ levelId: string; createdAt: number }> = [];
+
+  for (const candidateLevelId of levelIds) {
+    const puzzle = await getPuzzlePrivate(candidateLevelId);
+    if (!puzzle || !isOfficialDailyPuzzleSource(puzzle.source)) {
+      continue;
+    }
+    autoDailyPuzzles.push({
+      levelId: candidateLevelId,
+      createdAt: puzzle.createdAt,
+    });
+  }
+
+  const target = autoDailyPuzzles.find((puzzle) => puzzle.levelId === levelId);
+  if (!target) {
+    return null;
+  }
+
+  autoDailyPuzzles.sort((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+    return left.levelId.localeCompare(right.levelId);
+  });
+
+  const index = autoDailyPuzzles.findIndex((puzzle) => puzzle.levelId === target.levelId);
+  return index >= 0 ? index + 1 : null;
+};
+
+const formatDailyTitle = async (levelId: string): Promise<string> => {
+  try {
+    const dailySequenceNumber = await getAutoDailySequenceNumber(levelId);
+    if (dailySequenceNumber !== null) {
+      return `Daily Cipher #${dailySequenceNumber}`;
+    }
+  } catch (error) {
+    console.warn('[formatDailyTitle] Falling back to level id title', {
+      levelId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return formatTitleFromLevelId(levelId);
 };
 
 const buildDailyPostData = async (
@@ -676,6 +692,10 @@ const stabilizeManualPuzzleReveals = (
   puzzle: PuzzlePrivate
 ): { puzzlePrivate: PuzzlePrivate; puzzlePublic: PuzzlePublic } | null => {
   const requiredSolveRatio = requiredSolveRatioForDifficulty(puzzle.difficulty);
+  const maxPrefills = maxPrefilledCountForDifficulty(puzzle.difficulty);
+  if (puzzle.prefilledIndices.length > maxPrefills) {
+    return null;
+  }
   const trySolve = (revealedIndices: number[]) =>
     runDummySolver({
       puzzle,
@@ -720,6 +740,9 @@ const stabilizeManualPuzzleReveals = (
     .map((entry) => entry.firstIndex);
 
   for (const index of candidateIndices) {
+    if (revealedSet.size >= maxPrefills) {
+      return null;
+    }
     revealedSet.add(index);
     const revealedIndices = [...revealedSet].sort((a, b) => a - b);
     const candidatePuzzle: PuzzlePrivate = {
@@ -1283,7 +1306,7 @@ export const publishDailyPost = async (params: {
     if (!subredditName) {
       throw new Error('subredditName is required');
     }
-    const title = params.title ?? formatDailyTitle(params.levelId);
+    const title = params.title ?? await formatDailyTitle(params.levelId);
     const runAs = params.runAs ?? 'APP';
     const postData =
       params.postData ??
@@ -1463,154 +1486,6 @@ export const publishAndActivateDailyPost = async (params: {
   await activateDailyPuzzle(params.levelId);
   console.log('[publishAndActivateDailyPost] Activation complete', { levelId: params.levelId });
   return postId;
-};
-
-export const stagePuzzleForTomorrow = async (): Promise<{
-  dateKey: string;
-  levelIds: string[];
-}> => {
-  const now = new Date();
-  now.setUTCDate(now.getUTCDate() + 1);
-  const dateKey = formatDateKey(now);
-  const existingLevelIdsBeforeLock = await getAutoDailyLevelIdsForDate(dateKey);
-  if (existingLevelIdsBeforeLock.length >= 2) {
-    return {
-      dateKey,
-      levelIds: existingLevelIdsBeforeLock,
-    };
-  }
-
-  const lockToken = createLockToken();
-  const lockAcquired = await redis.set(keyDailyStageLock(dateKey), lockToken, {
-    nx: true,
-    expiration: dailyStageLockExpiration(),
-  });
-  if (!lockAcquired) {
-    return {
-      dateKey,
-      levelIds: existingLevelIdsBeforeLock,
-    };
-  }
-
-  try {
-    const existingLevelIds = await getAutoDailyLevelIdsForDate(dateKey);
-    const generatedLevelIds: string[] = [];
-
-    while (existingLevelIds.length + generatedLevelIds.length < 2) {
-      const generated = await generatePuzzleForDate(now);
-      generatedLevelIds.push(generated.levelId);
-    }
-
-    // Only set the staged pointer once after all generation is done.
-    // Setting it on each iteration silently overwrites the first puzzle's pointer.
-    const lastGeneratedId = generatedLevelIds[generatedLevelIds.length - 1];
-    if (lastGeneratedId) {
-      await setStagedLevelId(lastGeneratedId);
-    }
-
-    return {
-      dateKey,
-      levelIds: [...existingLevelIds, ...generatedLevelIds],
-    };
-  } finally {
-    const activeToken = await redis.get(keyDailyStageLock(dateKey));
-    if (activeToken === lockToken) {
-      await redis.del(keyDailyStageLock(dateKey));
-    }
-  }
-};
-
-export const publishStagedPuzzle = async (): Promise<{
-  levelId: string;
-  dateKey: string;
-  postId: string;
-}> => {
-  const todayDateKey = formatDateKey(new Date());
-  const stagedLevelId = await getStagedLevelId();
-  const stagedPuzzle = stagedLevelId ? await getPuzzlePrivate(stagedLevelId) : null;
-  const stagedPointerMissingPuzzle = stagedLevelId !== null && stagedPuzzle === null;
-  const clearStagedPointerIfConsumed = async (levelId: string, dateKey: string): Promise<void> => {
-    if (stagedLevelId === levelId && dateKey === todayDateKey) {
-      await clearStagedLevelId();
-    }
-  };
-
-  if (stagedPointerMissingPuzzle) {
-    await clearStagedLevelId();
-  }
-
-  if (stagedPuzzle?.dateKey === todayDateKey) {
-    const existingPostId = await getPuzzlePublishedPostId(stagedPuzzle.levelId);
-    if (!existingPostId) {
-      const postId = await publishAndActivateDailyPost({
-        levelId: stagedPuzzle.levelId,
-        dateKey: stagedPuzzle.dateKey,
-        runAs: 'APP',
-      });
-      await clearStagedPointerIfConsumed(stagedPuzzle.levelId, stagedPuzzle.dateKey);
-      return {
-        levelId: stagedPuzzle.levelId,
-        dateKey: stagedPuzzle.dateKey,
-        postId,
-      };
-    }
-  }
-
-  const todayLevelIds = await getAutoDailyLevelIdsForDate(todayDateKey);
-  for (const levelId of todayLevelIds) {
-    if (levelId === stagedPuzzle?.levelId) {
-      continue;
-    }
-    const existingPostId = await getPuzzlePublishedPostId(levelId);
-    if (existingPostId) {
-      continue;
-    }
-    const postId = await publishAndActivateDailyPost({
-      levelId,
-      dateKey: todayDateKey,
-      runAs: 'APP',
-    });
-    return {
-      levelId,
-      dateKey: todayDateKey,
-      postId,
-    };
-  }
-
-  if (stagedPuzzle?.dateKey === todayDateKey) {
-    const existingPostId = await getPuzzlePublishedPostId(stagedPuzzle.levelId);
-    if (existingPostId) {
-      await activateDailyPuzzle(stagedPuzzle.levelId);
-      await clearStagedPointerIfConsumed(stagedPuzzle.levelId, stagedPuzzle.dateKey);
-      return {
-        levelId: stagedPuzzle.levelId,
-        dateKey: stagedPuzzle.dateKey,
-        postId: existingPostId,
-      };
-    }
-  }
-
-  if (stagedPointerMissingPuzzle) {
-    throw new PuzzleNotStagedError(`Staged puzzle ${stagedLevelId} could not be found.`);
-  }
-
-  if (!stagedLevelId) {
-    throw new PuzzleNotStagedError();
-  }
-
-  if (!stagedPuzzle) {
-    throw new PuzzleNotStagedError(`Staged puzzle ${stagedLevelId} could not be found.`);
-  }
-
-  if (stagedPuzzle.dateKey !== todayDateKey) {
-    throw new PuzzleDateMismatchError({
-      levelId: stagedPuzzle.levelId,
-      puzzleDateKey: stagedPuzzle.dateKey,
-      expectedDateKey: todayDateKey,
-    });
-  }
-
-  throw new PuzzleNotStagedError();
 };
 
 export const injectManualPuzzle = async (params: {

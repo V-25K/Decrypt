@@ -1,9 +1,9 @@
 export type PowerupType = 'hammer' | 'wand' | 'shield' | 'rocket';
 
-export interface PowerupPricingConfig {
+export type PowerupPricingConfig = {
   baseValues: Record<PowerupType, number>; // Letters revealed per coin
   rocketMultiplier: number; // 2x hammer cost instead of 4x
-}
+};
 
 /**
  * PowerupPricingEngine implements the new powerup pricing system

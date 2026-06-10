@@ -1,15 +1,23 @@
 import {
   communityActionResponseSchema,
+  communityCreatorProgressResponseSchema,
   communitySubmissionListResponseSchema,
   communitySubmissionPreviewInputSchema,
   communitySubmissionPreviewSchema,
   communitySubmissionInputSchema,
   communitySubmitRequestedEditInputSchema,
+  communityVoteInputSchema,
+  communityVoteResponseSchema,
+  communityVoteStateInputSchema,
+  communityVoteStateResponseSchema,
   communityWithdrawInputSchema,
 } from '../../../shared/community';
 import {
+  getCommunityVoteState,
+  getMyCommunityCreatorProgress,
   listMyCommunitySubmissions,
   previewCommunitySubmission,
+  recordCommunityVote,
   submitCommunitySubmission,
   submitRequestedCommunityEdit,
   withdrawCommunitySubmission,
@@ -60,4 +68,27 @@ export const communityRouter = router({
         submission,
       });
     }),
+  vote: authedProcedure
+    .input(communityVoteInputSchema)
+    .output(communityVoteResponseSchema)
+    .mutation(async ({ input }) =>
+      communityVoteResponseSchema.parse(
+        await recordCommunityVote({ levelId: input.levelId, vote: input.vote })
+      )
+    ),
+  getVoteState: authedProcedure
+    .input(communityVoteStateInputSchema)
+    .output(communityVoteStateResponseSchema)
+    .query(async ({ input }) =>
+      communityVoteStateResponseSchema.parse(
+        await getCommunityVoteState(input.levelId)
+      )
+    ),
+  getMyCreatorProgress: authedProcedure
+    .output(communityCreatorProgressResponseSchema)
+    .query(async () =>
+      communityCreatorProgressResponseSchema.parse(
+        await getMyCommunityCreatorProgress()
+      )
+    ),
 });

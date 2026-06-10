@@ -1,8 +1,8 @@
-export interface RetryCostConfig {
+export type RetryCostConfig = {
   maxRetryCoins: number; // 4 puzzles worth (140 coins)
   scalingType: 'linear' | 'exponential';
   difficultyMultiplier: number;
-}
+};
 
 /**
  * RetryCostCalculator implements the new retry cost system

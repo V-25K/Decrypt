@@ -1,8 +1,13 @@
-export interface FastSolveBonusConfig {
+export type FastSolveBonusConfig = {
   thresholdSeconds: number; // 30 seconds
   bonusPercentage: number; // 50%
   difficultyScaling: boolean;
-}
+};
+
+const clampDifficulty = (difficulty: number): number =>
+  Number.isFinite(difficulty)
+    ? Math.max(1, Math.min(10, Math.round(difficulty)))
+    : 5;
 
 /**
  * FastSolveBonusSystem implements the new fast solve bonus system
@@ -30,8 +35,13 @@ export class FastSolveBonusSystem {
    * Calculate bonus for a solve time
    */
   calculateBonus(solveSeconds: number, baseScore: number, difficulty: number = 5): number {
-    if (solveSeconds < 0 || baseScore < 0) {
-      throw new Error('Solve time and base score must be non-negative');
+    if (
+      !Number.isFinite(solveSeconds) ||
+      !Number.isFinite(baseScore) ||
+      solveSeconds < 0 ||
+      baseScore < 0
+    ) {
+      throw new Error('Solve time and base score must be finite and non-negative');
     }
 
     const threshold = this.getThresholdForDifficulty(difficulty);
@@ -56,7 +66,8 @@ export class FastSolveBonusSystem {
     }
 
     // Scale threshold based on difficulty (harder puzzles get more time)
-    const difficultyFactor = 1 + (difficulty - 5) * 0.1;
+    const safeDifficulty = clampDifficulty(difficulty);
+    const difficultyFactor = 1 + (safeDifficulty - 5) * 0.1;
     return Math.round(this.config.thresholdSeconds * difficultyFactor);
   }
 

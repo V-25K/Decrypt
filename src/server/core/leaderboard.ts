@@ -1,4 +1,5 @@
 import { redis, reddit } from '@devvit/web/server';
+import { z } from 'zod';
 import {
   keyAllTimeLevelsLeaderboard,
   keyAllTimeLogicLeaderboard,
@@ -37,7 +38,30 @@ type RatingOutcomeReceipt = {
   ratingDelta: number;
   ratingAfter: number;
   ts: number;
+  globalScoreAfter?: number;
+  ratingGamesAfter?: number;
+  ratingWinsAfter?: number;
+  ratingLossesAfter?: number;
+  globalWinStreakAfter?: number;
 };
+
+const ratingOutcomeReceiptSchema = z.object({
+  ratingDelta: z.number(),
+  ratingAfter: z.number(),
+  ts: z.number(),
+  globalScoreAfter: z.number().optional(),
+  ratingGamesAfter: z.number().optional(),
+  ratingWinsAfter: z.number().optional(),
+  ratingLossesAfter: z.number().optional(),
+  globalWinStreakAfter: z.number().optional(),
+});
+
+const normalizeOptionalNonnegativeInteger = (
+  value: number | undefined
+): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : undefined;
 
 const encodeRatingOutcomeReceipt = (
   receipt: RatingOutcomeReceipt
@@ -50,18 +74,27 @@ const parseRatingOutcomeReceipt = (
     return null;
   }
   try {
-    const parsed = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof parsed.ratingDelta === 'number' &&
-      typeof parsed.ratingAfter === 'number' &&
-      typeof parsed.ts === 'number'
-    ) {
+    const parsed = ratingOutcomeReceiptSchema.safeParse(JSON.parse(raw));
+    if (parsed.success) {
       return {
-        ratingDelta: Math.trunc(parsed.ratingDelta),
-        ratingAfter: Math.max(0, Math.trunc(parsed.ratingAfter)),
-        ts: Math.max(0, Math.trunc(parsed.ts)),
+        ratingDelta: Math.trunc(parsed.data.ratingDelta),
+        ratingAfter: Math.max(0, Math.trunc(parsed.data.ratingAfter)),
+        ts: Math.max(0, Math.trunc(parsed.data.ts)),
+        globalScoreAfter: normalizeOptionalNonnegativeInteger(
+          parsed.data.globalScoreAfter
+        ),
+        ratingGamesAfter: normalizeOptionalNonnegativeInteger(
+          parsed.data.ratingGamesAfter
+        ),
+        ratingWinsAfter: normalizeOptionalNonnegativeInteger(
+          parsed.data.ratingWinsAfter
+        ),
+        ratingLossesAfter: normalizeOptionalNonnegativeInteger(
+          parsed.data.ratingLossesAfter
+        ),
+        globalWinStreakAfter: normalizeOptionalNonnegativeInteger(
+          parsed.data.globalWinStreakAfter
+        ),
       };
     }
   } catch (_error) {
@@ -115,9 +148,15 @@ export const computeScore = (params: {
   mistakes: number;
   usedPowerups: number;
 }): number => {
-  const safeSolveSeconds = Math.max(0, Math.floor(params.solveSeconds));
-  const safeMistakes = Math.max(0, Math.floor(params.mistakes));
-  const safePowerups = Math.max(0, Math.floor(params.usedPowerups));
+  const safeSolveSeconds = Number.isFinite(params.solveSeconds)
+    ? Math.max(0, Math.floor(params.solveSeconds))
+    : 0;
+  const safeMistakes = Number.isFinite(params.mistakes)
+    ? Math.max(0, Math.floor(params.mistakes))
+    : 0;
+  const safePowerups = Number.isFinite(params.usedPowerups)
+    ? Math.max(0, Math.floor(params.usedPowerups))
+    : 0;
   const speedPoints = Math.round(1200 / (1 + safeSolveSeconds / 120));
   const mistakeFactor = Math.pow(0.9, safeMistakes);
   const powerupFactor = Math.pow(0.95, safePowerups);
@@ -493,28 +532,6 @@ export const recordGlobalWin = async (params: {
     ]);
   }
 
-  const outcomeInserted = await redis.hSetNX(
-    keyUserRatingOutcomes(params.userId),
-    `win:${params.levelId}`,
-    String(Date.now())
-  );
-  if (outcomeInserted !== 1) {
-    const nextProfile: UserProfile = {
-      ...params.profile,
-      globalScore: params.profile.globalScore + globalScoreDelta,
-    };
-    await redis.zAdd(keyGlobalRatingLeaderboard, {
-      member: params.userId,
-      score: nextProfile.globalRating,
-    });
-    return {
-      profile: nextProfile,
-      ratingDelta: 0,
-      ratingAfter: nextProfile.globalRating,
-      globalScoreDelta,
-    };
-  }
-
   const result = calculateRating({
     playerRating: params.profile.globalRating,
     ratingGames: params.profile.ratingGames,
@@ -529,7 +546,7 @@ export const recordGlobalWin = async (params: {
     currentWinStreak: params.profile.globalWinStreak,
     isRecoveryRun: params.isRecoveryRun,
   });
-  const nextProfile: UserProfile = {
+  const ratedProfile: UserProfile = {
     ...params.profile,
     globalRating: result.nextRating,
     globalScore: params.profile.globalScore + globalScoreDelta,
@@ -537,14 +554,80 @@ export const recordGlobalWin = async (params: {
     ratingWins: params.profile.ratingWins + 1,
     globalWinStreak: params.profile.globalWinStreak + 1,
   };
+  const outcomeInserted = await redis.hSetNX(
+    keyUserRatingOutcomes(params.userId),
+    `win:${params.levelId}`,
+    encodeRatingOutcomeReceipt({
+      ratingDelta: result.ratingDelta,
+      ratingAfter: ratedProfile.globalRating,
+      ts: Date.now(),
+      globalScoreAfter: ratedProfile.globalScore,
+      ratingGamesAfter: ratedProfile.ratingGames,
+      ratingWinsAfter: ratedProfile.ratingWins,
+      ratingLossesAfter: ratedProfile.ratingLosses,
+      globalWinStreakAfter: ratedProfile.globalWinStreak,
+    })
+  );
+  if (outcomeInserted !== 1) {
+    const existingReceipt = await getRatingOutcomeReceipt(
+      params.userId,
+      `win:${params.levelId}`
+    );
+    const existingRatingGamesAfter = existingReceipt?.ratingGamesAfter;
+    const existingGlobalScoreAfter = existingReceipt?.globalScoreAfter;
+    const shouldHydrateRating =
+      existingReceipt !== null &&
+      typeof existingRatingGamesAfter === 'number' &&
+      params.profile.ratingGames < existingRatingGamesAfter;
+    const shouldHydrateScore =
+      existingReceipt !== null &&
+      typeof existingGlobalScoreAfter === 'number' &&
+      params.profile.globalScore < existingGlobalScoreAfter;
+    const nextProfile: UserProfile = {
+      ...params.profile,
+      globalRating: shouldHydrateRating
+        ? existingReceipt.ratingAfter
+        : params.profile.globalRating,
+      globalScore: shouldHydrateScore
+        ? existingGlobalScoreAfter
+        : params.profile.globalScore + globalScoreDelta,
+      ratingGames: shouldHydrateRating
+        ? existingRatingGamesAfter
+        : params.profile.ratingGames,
+      ratingWins:
+        shouldHydrateRating && typeof existingReceipt.ratingWinsAfter === 'number'
+        ? existingReceipt.ratingWinsAfter
+        : params.profile.ratingWins,
+      ratingLosses:
+        shouldHydrateRating && typeof existingReceipt.ratingLossesAfter === 'number'
+        ? existingReceipt.ratingLossesAfter
+        : params.profile.ratingLosses,
+      globalWinStreak:
+        shouldHydrateRating &&
+        typeof existingReceipt.globalWinStreakAfter === 'number'
+        ? existingReceipt.globalWinStreakAfter
+        : params.profile.globalWinStreak,
+    };
+    await redis.zAdd(keyGlobalRatingLeaderboard, {
+      member: params.userId,
+      score: nextProfile.globalRating,
+    });
+    return {
+      profile: nextProfile,
+      ratingDelta: shouldHydrateRating ? existingReceipt.ratingDelta : 0,
+      ratingAfter: nextProfile.globalRating,
+      globalScoreDelta,
+    };
+  }
+
   await redis.zAdd(keyGlobalRatingLeaderboard, {
     member: params.userId,
-    score: nextProfile.globalRating,
+    score: ratedProfile.globalRating,
   });
   return {
-    profile: nextProfile,
+    profile: ratedProfile,
     ratingDelta: result.ratingDelta,
-    ratingAfter: nextProfile.globalRating,
+    ratingAfter: ratedProfile.globalRating,
     globalScoreDelta,
   };
 };
@@ -1058,12 +1141,26 @@ export const awardDailyTopRank = async (
   dateKey: string
 ): Promise<{ awarded: boolean; userId: string | null }> => {
   const awardedKey = keyDailyRankAwarded(dateKey);
-  const alreadyAwarded = await redis.get(awardedKey);
-  if (alreadyAwarded) {
+  // Fast path: if a finalized record already exists, return it.
+  // 'pending' is the transient in-flight state held by the NX claim below
+  // between read and finalize; for non-claimant callers we treat it as
+  // "not yet awarded" (i.e. don't double-award and don't race the writer).
+  const existing = await redis.get(awardedKey);
+  if (existing && existing !== 'pending') {
     return {
       awarded: false,
-      userId: alreadyAwarded === 'none' ? null : alreadyAwarded,
+      userId: existing === 'none' ? null : existing,
     };
+  }
+  // NX-claim the slot. If two scheduler invocations (cron + manual reroll,
+  // for example) reach this point concurrently, only one acquires; the other
+  // bails out without re-awarding the quest progress.
+  const claimed = await redis.set(awardedKey, 'pending', {
+    nx: true,
+    expiration: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+  });
+  if (!claimed) {
+    return { awarded: false, userId: null };
   }
   const topEntries = await redis.zRange(keyDailyLeaderboard(dateKey), 0, 0, {
     by: 'rank',
@@ -1077,9 +1174,11 @@ export const awardDailyTopRank = async (
     return { awarded: false, userId: null };
   }
   const topUserId = topEntry.member;
-  await updateQuestProgressOnDailyTopRank({ userId: topUserId });
+  // Finalize the slot BEFORE the quest update so that even if the quest call
+  // throws, a retry sees the finalized record and does not re-award.
   await redis.set(awardedKey, topUserId, {
     expiration: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
   });
+  await updateQuestProgressOnDailyTopRank({ userId: topUserId });
   return { awarded: true, userId: topUserId };
 };

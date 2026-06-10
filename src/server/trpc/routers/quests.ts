@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { questClaimInputSchema } from '../../../shared/game';
+import {
+  questClaimInputSchema,
+  questStatusResponseSchema,
+} from '../../../shared/game';
 import { formatDateKey } from '../../core/serde';
 import { claimQuest, getClaimedQuestIds, getQuestStatus } from '../../core/quests';
 import { router } from '../base';
@@ -15,7 +18,7 @@ export const questsRouter = router({
         getQuestStatus({ userId, dateKey }),
         getClaimedQuestIds({ userId, dateKey }),
       ]);
-      return {
+      return questStatusResponseSchema.parse({
         dailyDateKey: dateKey,
         progress: {
           ...status.lifetime,
@@ -26,7 +29,7 @@ export const questsRouter = router({
           dailyShareCount: status.daily.dailyShareCount,
         },
         claimedQuestIds,
-      };
+      });
     }),
   claim: authedProcedure.input(questClaimInputSchema).mutation(async ({ input, ctx }) => {
     const dateKey = formatDateKey(new Date());

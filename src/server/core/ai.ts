@@ -192,57 +192,7 @@ const parseChallengeType = (raw: string | undefined): ChallengeType | null => {
   return parsed.success ? parsed.data : null;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
-
-const readErrorField = (error: unknown, field: string): unknown =>
-  isRecord(error) ? error[field] : undefined;
-
-const redactSensitiveText = (value: string): string =>
-  value
-    .replace(
-      /([?&](?:key|api[_-]?key)=)([^&\s"'`]+)/gi,
-      '$1[REDACTED]'
-    )
-    .replace(
-      /((?:^|[\s"'`:=]))(AIza[0-9A-Za-z\-_]{16,})\b/g,
-      '$1[REDACTED_API_KEY]'
-    )
-    .replace(
-      /((?:key|api[_-]?key)\s*[:=]\s*)([^,\s}"'`]+)/gi,
-      '$1[REDACTED]'
-    );
-
-const describeRequestError = (error: unknown): string => {
-  if (error instanceof Error) {
-    const parts = [
-      `name=${redactSensitiveText(error.name ?? 'Error')}`,
-      `message=${redactSensitiveText(error.message)}`,
-    ];
-    const code = readErrorField(error, 'code');
-    const errno = readErrorField(error, 'errno');
-    const details = readErrorField(error, 'details');
-    const causeField = readErrorField(error, 'cause');
-    if (code !== undefined) {
-      parts.push(`code=${redactSensitiveText(String(code))}`);
-    }
-    if (errno !== undefined) {
-      parts.push(`errno=${redactSensitiveText(String(errno))}`);
-    }
-    if (details !== undefined) {
-      parts.push(`details=${redactSensitiveText(String(details))}`);
-    }
-    if (causeField !== undefined) {
-      const cause =
-        causeField instanceof Error
-          ? `${redactSensitiveText(causeField.name)}: ${redactSensitiveText(causeField.message)}`
-          : redactSensitiveText(String(causeField));
-      parts.push(`cause=${cause}`);
-    }
-    return parts.join(' ');
-  }
-  return `value=${redactSensitiveText(String(error))}`;
-};
+import { describeRequestError } from './redaction.ts';
 
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -286,16 +236,17 @@ export const assertGeminiApiReady = async (apiKey: string): Promise<void> => {
   const endpoint = new URL(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash'
   );
-  endpoint.searchParams.set('key', normalizedKey);
 
   let response: Response;
   try {
-    // Gemini host is fixed; only the API key query parameter varies.
+    // Gemini host is fixed; the API key travels in the x-goog-api-key header
+    // (not the URL) so it can't leak via HTTP intermediaries' access logs.
     // fallow-ignore-next-line security-sink
     response = await fetch(endpoint.toString(), {
       method: 'GET',
       headers: {
         Accept: 'application/json',
+        'x-goog-api-key': normalizedKey,
       },
     });
   } catch (error) {
@@ -502,7 +453,6 @@ export const generatePuzzlePhraseBatch = async (params: {
   const endpoint = new URL(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
   );
-  endpoint.searchParams.set('key', params.apiKey);
   
   const instruction =
     `Return JSON array with exactly ${params.batchSize} candidates. ` +
@@ -526,12 +476,14 @@ export const generatePuzzlePhraseBatch = async (params: {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      // Gemini host is fixed; only the API key query parameter varies.
+      // Gemini host is fixed; the API key travels in the x-goog-api-key header
+      // (not the URL) so it can't leak via HTTP intermediaries' access logs.
       // fallow-ignore-next-line security-sink
       response = await fetch(endpoint.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': params.apiKey,
         },
         body: JSON.stringify({
           safetySettings: geminiSafetySettingsForMode(params.safetyMode),

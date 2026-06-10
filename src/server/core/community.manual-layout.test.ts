@@ -237,6 +237,29 @@ describe('community manual layout preview', () => {
 	    );
 	  });
 
+	  it('points creators at specific marks when a manual layout is not publishable', async () => {
+	    const preview = await previewCommunitySubmission({
+	      title: 'Manual puzzle',
+	      text: 'THE QUICK BROWN FOX JUMPS',
+	      category: 'QUOTE',
+	      attribution: 'Tester',
+	      targetDifficulty: 2,
+	      creationMode: 'manual',
+	      manualLayout: {
+	        prefilledIndices: [0],
+	        prefilledWordIndices: [],
+	        blindIndices: [1],
+	        lockIndices: [],
+	        lockKeyIndices: [],
+	        padlocks: [{ padlockId: 1, lockedIndices: [10], keyIndices: [4] }],
+	      },
+	    });
+
+	    const actions = preview.manualLayoutGuidance?.suggestedActions.join(' ') ?? '';
+	    expect(actions).toContain('Remove the ? from');
+	    expect(actions).toContain('Remove the padlock from');
+	  });
+
 	  it('allows a manual padlock key to also be a question-mark tile', async () => {
 	    const preview = await previewCommunitySubmission({
 	      title: 'Manual puzzle',
@@ -259,7 +282,7 @@ describe('community manual layout preview', () => {
 	    expect(preview.puzzlePreview?.tiles.find((tile) => tile.index === 5)?.isBlind).toBe(true);
 	  });
 
-	  it('expands one locked cipher tile to matching letters unless they are blind or bound', async () => {
+	  it('keeps a manual padlock on the exact locked tile the creator selected', async () => {
 	    const preview = await previewCommunitySubmission({
 	      title: 'Manual puzzle',
 	      text: 'HAPPY HUNTERS HIDE HISTORY',
@@ -279,11 +302,33 @@ describe('community manual layout preview', () => {
 
 	    const lockedIndices =
 	      preview.puzzlePreview?.tiles
-	        .filter((tile) => tile.lockChainId === 1)
+	        .filter((tile) => tile.lockChainId === 1 && tile.isLocked)
 	        .map((tile) => tile.index)
 	        .sort((left, right) => left - right) ?? [];
-	    expect(lockedIndices).toEqual([0, 6, 19]);
+	    expect(lockedIndices).toEqual([6]);
 	    expect(lockedIndices).not.toContain(14);
+	  });
+
+	  it('explains when a manual padlock has too many locked tiles', async () => {
+	    const preview = await previewCommunitySubmission({
+	      title: 'Manual puzzle',
+	      text: 'THE QUICK BROWN FOX JUMPS',
+	      category: 'QUOTE',
+	      attribution: 'Tester',
+	      targetDifficulty: 5,
+	      creationMode: 'manual',
+	      manualLayout: {
+	        prefilledIndices: [0],
+	        prefilledWordIndices: [],
+	        blindIndices: [],
+	        lockIndices: [],
+	        lockKeyIndices: [],
+	        padlocks: [{ padlockId: 1, lockedIndices: [10, 16], keyIndices: [4] }],
+	      },
+	    });
+
+	    expect(preview.valid).toBe(false);
+	    expect(preview.reasons).toContain('Lock 1 can lock only one tile.');
 	  });
 
 	  it('explains when a manual padlock has too many keys', async () => {

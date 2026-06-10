@@ -64,7 +64,7 @@ describe('rating model', () => {
     expect(clean.ratingDelta).toBeGreaterThan(assisted.ratingDelta);
   });
 
-  it('allows zero ELO for high-rated players farming easy wins', () => {
+  it('awards at least one Elo for very easy wins by high-rated players', () => {
     const result = calculateRating({
       playerRating: 1200,
       ratingGames: 120,
@@ -76,7 +76,8 @@ describe('rating model', () => {
       targetTimeSeconds: 60,
     });
 
-    expect(result.ratingDelta).toBe(0);
+    expect(result.ratingDelta).toBe(1);
+    expect(result.nextRating).toBe(1201);
   });
 
   it('still awards positive ELO for matched or harder wins', () => {
@@ -123,5 +124,54 @@ describe('rating model', () => {
 
     expect(streak.ratingDelta).toBeGreaterThan(noStreak.ratingDelta);
     expect(streak.ratingDelta).toBeLessThanOrEqual(40);
+  });
+
+  it('matches the expected Elo formula for baseline wins and losses', () => {
+    const expectedScore = 1 / (1 + 10 ** ((575 - 500) / 400));
+    const expectedWinDelta = Math.round(48 * (1 - expectedScore) * 1.18);
+    const expectedLossDelta = Math.round(48 * (0 - expectedScore));
+
+    const win = calculateRating({
+      playerRating: 500,
+      ratingGames: 0,
+      outcome: 'win',
+      difficulty: 5,
+      mistakes: 0,
+      usedPowerups: 0,
+    });
+    const loss = calculateRating({
+      playerRating: 500,
+      ratingGames: 0,
+      outcome: 'loss',
+      difficulty: 5,
+    });
+
+    expect(win.challengeRating).toBe(575);
+    expect(win.expectedScore).toBeCloseTo(expectedScore, 8);
+    expect(win.qualityMultiplier).toBeCloseTo(1.18, 8);
+    expect(win.ratingDelta).toBe(expectedWinDelta);
+    expect(loss.ratingDelta).toBe(expectedLossDelta);
+  });
+
+  it('keeps rating arithmetic finite for non-finite optional inputs', () => {
+    const result = calculateRating({
+      playerRating: Number.NaN,
+      ratingGames: Number.NaN,
+      outcome: 'win',
+      difficulty: Number.NaN,
+      cryptoHardness: Number.NaN,
+      solveSeconds: Number.NaN,
+      targetTimeSeconds: Number.NaN,
+      mistakes: Number.NaN,
+      usedPowerups: Number.NaN,
+      currentWinStreak: Number.NaN,
+    });
+
+    expect(Number.isFinite(result.previousRating)).toBe(true);
+    expect(Number.isFinite(result.challengeRating)).toBe(true);
+    expect(Number.isFinite(result.expectedScore)).toBe(true);
+    expect(Number.isFinite(result.qualityMultiplier)).toBe(true);
+    expect(Number.isFinite(result.ratingDelta)).toBe(true);
+    expect(Number.isFinite(result.nextRating)).toBe(true);
   });
 });

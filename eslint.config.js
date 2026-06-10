@@ -105,7 +105,19 @@ export default defineConfig([
   {
     files: ['**/*.{ts,tsx}'],
     rules: {
-      '@typescript-eslint/no-unused-vars': ['off'],
+      // Surface unused identifiers but allow the conventional `_`-prefix opt-out
+      // for intentionally unused params, destructured vars, and caught errors.
+      // 'error': the tree is clean (0 warnings), so unused identifiers now fail
+      // lint to keep new drift out.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+        },
+      ],
       'no-unused-vars': ['off'],
     },
     languageOptions: {

@@ -26,12 +26,16 @@ import { trpc } from '../trpc';
 import type { DeviceTier, RouterOutputs } from '../app/types';
 import { cn } from '../utils';
 import { tabButtonClass } from '../app/ui';
+import { groupPuzzleTilesIntoWordRuns } from '../app/puzzle-tile-groups';
 import { UiSprite } from '../components/UiSprite';
 
 type CommunitySubmission =
   RouterOutputs['community']['listMine']['submissions'][number];
 
 type CommunityPreview = RouterOutputs['community']['previewSubmission'];
+
+type CreatorAcclaim =
+  RouterOutputs['community']['getMyCreatorProgress']['levels'][number];
 
 type ManualLayoutTool = 'reveal' | 'blind' | 'lock' | 'key';
 type CreateStep = 'edit' | 'preview';
@@ -110,7 +114,7 @@ const readCommunityDraft = (): CommunityDraft | null => {
     return null;
   }
   try {
-    const raw = window.sessionStorage.getItem(communityDraftStorageKey);
+    const raw = window.localStorage.getItem(communityDraftStorageKey);
     if (!raw) {
       return null;
     }
@@ -141,7 +145,7 @@ const writeCommunityDraft = (draft: CommunityDraft): void => {
     return;
   }
   try {
-    window.sessionStorage.setItem(communityDraftStorageKey, JSON.stringify(draft));
+    window.localStorage.setItem(communityDraftStorageKey, JSON.stringify(draft));
   } catch (_error) {
     // Storage can be unavailable in embedded/private contexts.
   }
@@ -152,7 +156,7 @@ const clearCommunityDraft = (): void => {
     return;
   }
   try {
-    window.sessionStorage.removeItem(communityDraftStorageKey);
+    window.localStorage.removeItem(communityDraftStorageKey);
   } catch (_error) {
     // Ignore storage failures; the submitted state is still reset in memory.
   }
@@ -177,24 +181,6 @@ const toggleNumber = (values: number[], value: number): number[] =>
   values.includes(value)
     ? values.filter((entry) => entry !== value)
     : [...values, value].sort((a, b) => a - b);
-
-const sameCipherTileIndices = (
-  puzzlePreview: CommunityPreview['puzzlePreview'],
-  tileIndex: number
-): number[] => {
-  if (!puzzlePreview) {
-    return [tileIndex];
-  }
-  const selectedTile = puzzlePreview.tiles.find((tile) => tile.index === tileIndex);
-  if (!selectedTile?.isLetter || selectedTile.cipherNumber === null) {
-    return [tileIndex];
-  }
-  return puzzlePreview.tiles
-    .filter(
-      (tile) => tile.isLetter && tile.cipherNumber === selectedTile.cipherNumber
-    )
-    .map((tile) => tile.index);
-};
 
 const getManualPadlocks = (
   layout: CommunityManualLayout
@@ -256,12 +242,47 @@ const nextManualPadlockId = (padlocks: CommunityManualPadlock[]): number =>
   ) + 1;
 
 
+const AcclaimProgressNote = ({ acclaim }: { acclaim: CreatorAcclaim }) => {
+  if (acclaim.acclaimed) {
+    return (
+      <div
+        className="mt-2 rounded-md bg-violet-400/20 px-2 py-1.5 text-xs font-black text-violet-100"
+        data-testid="community-acclaim-badge"
+      >
+        🏆 Acclaimed — players love this one! Claim your creator reward in Quests.
+      </div>
+    );
+  }
+  const { progress } = acclaim;
+  const likePct = Math.round(progress.likeRatio * 100);
+  return (
+    <div
+      className="mt-2 rounded-md bg-violet-400/12 px-2 py-1.5 text-[11px] font-semibold leading-snug text-violet-100"
+      data-testid="community-acclaim-progress"
+    >
+      <span className="font-black">{progress.qualifiedPlays}/200 plays</span>
+      {progress.totalVotes > 0 && (
+        <>
+          {' · '}
+          {likePct}% liked ({progress.totalVotes}{' '}
+          {progress.totalVotes === 1 ? 'vote' : 'votes'})
+        </>
+      )}
+      <div className="app-text-muted mt-0.5 text-[10px] font-semibold">
+        Reach 200 plays with 70%+ likes to earn a creator reward.
+      </div>
+    </div>
+  );
+};
+
 const SubmissionCard = ({
   submission,
   action,
+  acclaim,
 }: {
   submission: CommunitySubmission;
   action?: ReactNode;
+  acclaim?: CreatorAcclaim | undefined;
 }) => (
   <article
     className={cn(
@@ -296,6 +317,9 @@ const SubmissionCard = ({
           <p className="app-text-muted mt-2 text-xs font-semibold">
             Withdrawn by you.
           </p>
+        )}
+        {submission.status === 'approved' && acclaim && (
+          <AcclaimProgressNote acclaim={acclaim} />
         )}
         {submission.levelId && (
           <p className="app-text-soft mt-2 text-[11px] font-black uppercase">
@@ -359,7 +383,7 @@ const PreviewPanel = ({
   const selectedPadlockStatus = selectedPadlock
     ? selectedPadlock.lockedIndices.length === 0 &&
       selectedPadlock.keyIndices.length === 0
-      ? 'Set locked tiles'
+      ? 'Set locked tile'
       : selectedPadlock.lockedIndices.length > 0 &&
           selectedPadlock.keyIndices.length === 0
         ? 'Add key tiles'
@@ -370,26 +394,26 @@ const PreviewPanel = ({
   const manualStep =
     manualTool === 'reveal'
       ? {
-          label: 'Step 1',
-          title: 'Choose starter letters',
-          detail: 'Tap letters players should see at the start.',
+          label: 'Step 1 of 3',
+          title: 'Reveal starter letters',
+          detail: 'Tap letters to show them when the puzzle begins. More reveals make it easier — leave it blank for a tougher solve.',
         }
       : manualTool === 'blind'
         ? {
-            label: 'Step 2',
-            title: 'Add question marks',
-            detail: 'Tap letters that should hide their cipher number.',
+            label: 'Step 2 of 3',
+            title: 'Hide letters',
+            detail: 'Tap letters to hide behind a “?”. Hidden letters make the puzzle harder. This step is optional.',
           }
         : manualTool === 'lock'
           ? {
-              label: 'Step 2',
-              title: `Pick locked tiles for Lock ${selectedPadlock?.padlockId ?? 1}`,
-              detail: 'Tapping one cipher number selects its matching tiles.',
+              label: `Step 3 of 3 · Lock ${selectedPadlock?.padlockId ?? 1}`,
+              title: 'Lock a tile',
+              detail: 'Tap the letter this lock should cover. Players must find its key to open it.',
             }
           : {
-              label: 'Step 3',
-              title: `Pick key tiles for Lock ${selectedPadlock?.padlockId ?? 1}`,
-              detail: 'Choose one or two letters that unlock this padlock.',
+              label: `Step 3 of 3 · Lock ${selectedPadlock?.padlockId ?? 1}`,
+              title: 'Pick the key',
+              detail: 'Tap 1–2 letters that open this lock when revealed.',
             };
   const manualHelp =
     manualTool === 'reveal'
@@ -413,17 +437,17 @@ const PreviewPanel = ({
         : manualTool === 'key'
           ? {
               title: 'How Key Tiles work',
-              steps: [
-                'Choose the lock you want to edit.',
-                'Pick one or two key letters for that lock.',
-                'When players reveal a key tile, it unlocks only the matching locked tiles.',
-              ],
+	              steps: [
+	                'Choose the lock you want to edit.',
+	                'Pick one or two key letters for that lock.',
+	                'When players reveal a key tile, it unlocks only that lock.',
+	              ],
             }
           : {
               title: 'How Padlocks work',
               steps: [
                 'Choose or add a lock.',
-                'Mark the letters that should start locked.',
+                'Mark the one letter that should start locked.',
                 'Switch to Key Tiles and pick one or two letters that unlock that lock.',
               ],
             };
@@ -450,6 +474,9 @@ const PreviewPanel = ({
   const previewReady =
     preview.valid &&
     (creationMode !== 'manual' || manualProblems.length === 0);
+  const previewTileGroups = preview.puzzlePreview
+    ? groupPuzzleTilesIntoWordRuns(preview.puzzlePreview.tiles)
+    : [];
 			  return (
 			    <section className="app-surface-subtle app-border rounded-lg border px-3 py-3">
 		      <div className="app-text text-sm font-black">
@@ -470,8 +497,8 @@ const PreviewPanel = ({
 	        )}
 	      >
 	        {previewReady
-	          ? 'This challenge is ready to submit.'
-	          : manualProblems[0] ?? 'Check the board setup before submitting.'}
+	          ? '✓ Looks great — ready to share!'
+	          : manualProblems[0] ?? 'A couple of tweaks needed before sharing.'}
 	      </div>
 	      {manualProblems.length > 1 && (
 	        <ul className="mt-2 space-y-1 text-xs font-semibold text-red-200">
@@ -501,6 +528,16 @@ const PreviewPanel = ({
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {creationMode !== 'manual' && preview.suggestions.length > 0 && (
+        <div className="mt-2 rounded-md bg-amber-300/15 px-3 py-2 text-xs font-semibold leading-snug text-amber-100">
+          <div className="font-black">Try this</div>
+          <ul className="mt-1 space-y-1">
+            {preview.suggestions.slice(0, 3).map((suggestion) => (
+              <li key={suggestion}>{suggestion}</li>
+            ))}
+          </ul>
         </div>
       )}
       {creationMode === 'manual' && preview.puzzlePreview && (
@@ -541,7 +578,7 @@ const PreviewPanel = ({
 	                      ? manualTool === 'lock' || manualTool === 'key'
 	                      : manualTool === tool
 	                  ),
-	                  'min-h-[34px] px-3 text-[10px]'
+	                  'min-h-[40px] flex-1 px-1 text-[10px]'
 	                )}
 		                onClick={() => {
 		                  if (tool === 'lock' && padlocks.length === 0) {
@@ -550,21 +587,21 @@ const PreviewPanel = ({
 		                  }
 		                  onManualToolChange(tool);
 		                }}
-		                title={
+			                title={
 		                  tool === 'reveal'
 		                    ? 'Show this letter when the puzzle starts.'
 		                    : tool === 'blind'
 		                      ? 'Hide this tile behind a question mark.'
 		                      : tool === 'lock'
-		                        ? 'Lock matching letter tiles until a key is found.'
+		                        ? 'Lock one letter tile until a key is found.'
 		                        : 'Mark a tile as a key for the selected lock.'
 		                }
 		              >
 		                {tool === 'reveal'
-		                  ? 'Reveal Letter'
+		                  ? '1 · Reveal'
 		                  : tool === 'blind'
-		                    ? 'Blind Tile'
-		                    : 'Padlock'}
+		                    ? '2 · Hide'
+		                    : '3 · Locks'}
 			              </button>
 			            ))}
 			          </div>
@@ -572,7 +609,7 @@ const PreviewPanel = ({
 			            <div className="app-surface app-border rounded-md border px-2 py-2">
 			              <div className="flex flex-wrap items-center justify-between gap-2">
 			                <span className="app-text text-[10px] font-black uppercase">
-			                  Padlocks
+			                  Locks
 			                </span>
 			                <div className="flex gap-1.5">
 			                  {selectedPadlock && (
@@ -581,7 +618,7 @@ const PreviewPanel = ({
 			                      className="btn-3d btn-neutral rounded-md px-2 py-1 text-[10px] font-black uppercase"
 			                      onClick={onRemoveSelectedPadlock}
 			                    >
-			                      - Padlock
+			                      Remove lock
 			                    </button>
 			                  )}
 			                  <button
@@ -589,7 +626,7 @@ const PreviewPanel = ({
 			                    className="btn-3d btn-neutral rounded-md px-2 py-1 text-[10px] font-black uppercase"
 			                    onClick={onAddPadlock}
 			                  >
-			                    + Padlock
+			                    + Add lock
 			                  </button>
 			                </div>
 			              </div>
@@ -601,14 +638,14 @@ const PreviewPanel = ({
 			                    className={cn(tabButtonClass(manualTool === 'lock'), 'text-[10px]')}
 			                    onClick={() => onManualToolChange('lock')}
 			                  >
-			                    Locked Tiles
+				                  1 · Lock a tile
 			                  </button>
 			                  <button
 			                    type="button"
 			                    className={cn(tabButtonClass(manualTool === 'key'), 'text-[10px]')}
 			                    onClick={() => onManualToolChange('key')}
 			                  >
-			                    Key Tiles
+			                    2 · Pick key
 			                  </button>
 				                </div>
 	                <p className="app-text-muted mt-2 text-[11px] font-semibold leading-snug">
@@ -625,7 +662,7 @@ const PreviewPanel = ({
 			                      tabButtonClass(
 			                        selectedPadlock?.padlockId === padlock.padlockId
 			                      ),
-			                      'min-h-[30px] px-2 text-[10px]'
+			                      'min-h-[38px] px-2 text-[10px]'
 			                    )}
 			                    onClick={() => onSelectedPadlockChange(padlock.padlockId)}
 			                  >
@@ -638,8 +675,8 @@ const PreviewPanel = ({
 			              </div>
 			              {padlocks.length === 0 && (
 			                <p className="app-text-muted mt-2 text-[11px] font-semibold leading-snug">
-			                  Add a padlock, mark its locked tiles, then switch to Key Tiles for the same padlock.
-			                </p>
+				                  Add a lock, tap the tile it covers, then pick its key tile.
+				                </p>
 			              )}
 			            </div>
 			          )}
@@ -665,7 +702,7 @@ const PreviewPanel = ({
 	              </span>
 	              <span className="inline-flex items-center gap-1">
 	                <span className="h-2.5 w-2.5 rounded-sm bg-sky-400" />
-	                Blind
+	                Hidden
 	              </span>
 	              <span className="inline-flex items-center gap-1">
 	                <span className="h-2.5 w-2.5 rounded-sm bg-rose-400" />
@@ -677,14 +714,31 @@ const PreviewPanel = ({
 	              </span>
 	            </div>
 	          )}
-	        <div className="flex flex-wrap justify-center gap-1.5">
-	          {preview.puzzlePreview.tiles.map((tile) =>
-	            tile.isLetter ? (
-	              <button
-	                key={tile.index}
-	                type="button"
+		        <div className="flex w-full max-w-full flex-wrap content-start justify-center gap-x-1 gap-y-1 sm:gap-x-1.5 sm:gap-y-1.5">
+		          {previewTileGroups.map((group) => {
+		            if (!group.isWord) {
+		              const separatorTile = group.tiles[0];
+		              return separatorTile ? (
+	              <span
+	                key={group.key}
+	                className="app-text inline-flex min-h-[34px] min-w-[6px] items-end justify-center text-sm font-black sm:min-h-[42px] sm:text-base"
+	              >
+	                {separatorTile.displayChar}
+	              </span>
+		            ) : null;
+		            }
+
+		            return (
+		              <span
+		                key={group.key}
+		                className="inline-flex max-w-full flex-wrap items-end justify-center gap-1 sm:gap-1.5"
+		              >
+		                {group.tiles.map((tile) => (
+		              <button
+		                key={tile.index}
+		                type="button"
 		                className={cn(
-		                  'app-surface app-border inline-flex min-h-[34px] min-w-[30px] flex-col items-center justify-center rounded-md border px-1 font-black',
+		                  'app-surface app-border inline-flex min-h-[34px] min-w-[26px] flex-col items-center justify-center rounded-md border px-0.5 font-black sm:min-h-[42px] sm:min-w-[34px] sm:px-1',
 		                  manualMode &&
 		                    prefilledSet.has(tile.index)
 		                    ? 'ring-2 ring-amber-300'
@@ -721,9 +775,9 @@ const PreviewPanel = ({
             onToggleManualTile(tile.index, tile.cipherNumber ?? null);
           }
         }}
-			              >
-			                <span className="flex h-5 items-center justify-center text-base leading-none">
-			                  {(manualMode
+		              >
+				                <span className="flex h-5 items-center justify-center text-base leading-none">
+				                  {(manualMode
 			                    ? lockedByTile.has(tile.index)
 			                    : tile.isLocked) ? (
 			                    <span className="relative flex h-5 w-5 items-center justify-center">
@@ -755,18 +809,13 @@ const PreviewPanel = ({
 		                  ) : (
 		                    tile.cipherNumber ?? ''
 		                  )}
-		                </span>
-	              </button>
-	            ) : (
-              <span
-                key={tile.index}
-                className="app-text inline-flex min-h-[34px] min-w-[10px] items-end justify-center text-base font-black"
-              >
-                {tile.displayChar}
-              </span>
-            )
-          )}
-        </div>
+				                </span>
+		              </button>
+		                ))}
+		              </span>
+		            );
+		          })}
+	        </div>
         </div>
       )}
     </section>
@@ -812,6 +861,9 @@ export const CommunityScreen = ({
   const [busy, setBusy] = useState(false);
   const [mine, setMine] = useState<CommunitySubmission[]>([]);
   const [mineLoading, setMineLoading] = useState(false);
+  const [creatorProgress, setCreatorProgress] = useState<
+    Map<string, CreatorAcclaim>
+  >(() => new Map());
 	  const [reviewStatus, setReviewStatus] =
 	    useState<CommunitySubmissionStatus>('pending');
 	  const [reviewItems, setReviewItems] = useState<CommunitySubmission[]>([]);
@@ -868,8 +920,14 @@ export const CommunityScreen = ({
   const loadMine = useCallback(async () => {
     setMineLoading(true);
     try {
-      const result = await trpc.community.listMine.query();
+      const [result, progress] = await Promise.all([
+        trpc.community.listMine.query(),
+        trpc.community.getMyCreatorProgress.query(),
+      ]);
       setMine(result.submissions);
+      setCreatorProgress(
+        new Map(progress.levels.map((entry) => [entry.levelId, entry]))
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not load your submissions.');
     } finally {
@@ -931,7 +989,7 @@ export const CommunityScreen = ({
 
 	  const hasManualPreview = creationMode === 'manual' && preview !== null;
 	  const canSubmit =
-	    isEditingRequestedChanges ||
+	    (isEditingRequestedChanges && creationMode !== 'manual') ||
 	    (preview?.valid === true && previewFingerprint === inputFingerprint);
   const visibleMine = useMemo(
     () =>
@@ -996,7 +1054,11 @@ export const CommunityScreen = ({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const friendlyMessage = getFriendlyValidationMessage(!isEditingRequestedChanges);
+    // Manual revisions must clear a valid preview (the board builder) just like
+    // a fresh manual submission; auto revisions stay text-only.
+    const friendlyMessage = getFriendlyValidationMessage(
+      !isEditingRequestedChanges || creationMode === 'manual'
+    );
     if (friendlyMessage) {
       showToast(friendlyMessage);
       return;
@@ -1010,6 +1072,7 @@ export const CommunityScreen = ({
               title,
               text,
               attribution,
+              manualLayout: creationMode === 'manual' ? manualLayout : null,
             })
           : await trpc.community.submit.mutate(input);
       showToast(result.message);
@@ -1209,52 +1272,40 @@ export const CommunityScreen = ({
 			          },
 			          keyStackPadlocks
 			        );
-			      }
-			      if (manualTool === 'lock') {
-			        const lockFamily = sameCipherTileIndices(
-			          preview?.puzzlePreview ?? null,
-			          tileIndex
-			        );
-			        const lockFamilySet = new Set(lockFamily);
-			        const prefilledSet = new Set(current.prefilledIndices);
-			        const blindSet = new Set(current.blindIndices);
-			        const otherBoundSet = new Set<number>();
-			        for (const padlock of padlocks) {
-			          for (const index of padlock.keyIndices) {
+				      }
+				      if (manualTool === 'lock') {
+				        const prefilledSet = new Set(current.prefilledIndices);
+				        const blindSet = new Set(current.blindIndices);
+				        const otherBoundSet = new Set<number>();
+				        for (const padlock of padlocks) {
+				          for (const index of padlock.keyIndices) {
 			            otherBoundSet.add(index);
 			          }
 			          if (padlock.padlockId !== activePadlockId) {
 			            for (const index of padlock.lockedIndices) {
 			              otherBoundSet.add(index);
-			            }
-			          }
-			        }
-			        const wasLocked =
-			          activePadlock?.lockedIndices.some((index) =>
-			            lockFamilySet.has(index)
-			          ) ?? false;
-			        const lockableFamily = lockFamily.filter(
-			          (index) =>
-			            !prefilledSet.has(index) &&
-			            !blindSet.has(index) &&
-			            !otherBoundSet.has(index)
-			        );
-			        const nextPadlocks = padlocks.map((padlock) => {
-			          if (padlock.padlockId !== activePadlockId) {
-			            return padlock;
-			          }
-			          const remainingLocked = padlock.lockedIndices.filter(
-			            (index) => !lockFamilySet.has(index)
-			          );
-			          return {
-			            ...padlock,
-			            lockedIndices: wasLocked
-			              ? remainingLocked
-			              : Array.from(new Set([...remainingLocked, ...lockableFamily])).sort(
-			                  (a, b) => a - b
-			                ),
-			          };
-			        });
+				            }
+				          }
+				        }
+				        const wasLocked =
+				          activePadlock?.lockedIndices.includes(tileIndex) ?? false;
+				        const canLock =
+				          !prefilledSet.has(tileIndex) &&
+				          !blindSet.has(tileIndex) &&
+				          !otherBoundSet.has(tileIndex);
+				        const nextPadlocks = padlocks.map((padlock) => {
+				          if (padlock.padlockId !== activePadlockId) {
+				            return padlock;
+				          }
+				          return {
+				            ...padlock,
+				            lockedIndices: wasLocked
+				              ? []
+				              : canLock
+				                ? [tileIndex]
+				                : padlock.lockedIndices,
+				          };
+				        });
 			        return syncManualPadlocks(
 			          {
 			            ...current,
@@ -1365,6 +1416,18 @@ export const CommunityScreen = ({
               onSubmit={(event) => void handleSubmit(event)}
               data-testid="community-create-form"
             >
+              {!isEditingRequestedChanges && (
+                <div
+                  className="app-surface-subtle app-border rounded-lg border px-3 py-2.5"
+                  data-testid="community-create-teaser"
+                >
+                  <p className="app-text text-[11px] font-semibold leading-snug">
+                    Share a quote — Decrypt turns it into a number-cipher for
+                    players to crack. Get a creator reward when your challenge is
+                    loved (200+ plays, 70%+ likes).
+                  </p>
+                </div>
+              )}
               {isEditingRequestedChanges && (
                 <div className="app-surface-subtle app-border rounded-lg border px-3 py-3">
                   <div className="app-text text-xs font-black uppercase">
@@ -1427,33 +1490,41 @@ export const CommunityScreen = ({
                 </label>
 	                <div>
 	                  <span className="app-text text-xs font-black uppercase">
-	                    Build Mode
+	                    Board
 	                  </span>
-	                  <div className="mt-1 grid grid-cols-2 gap-2">
-		                    <button
-		                      type="button"
-		                      className={tabButtonClass(creationMode === 'auto')}
-	                      onClick={() => {
-	                        setCreationMode('auto');
-	                        setPreview(null);
-	                      }}
-		                      disabled={busy || isEditingRequestedChanges}
-	                      data-testid="community-mode-auto"
-	                    >
-	                      Auto
-	                    </button>
-		                    <button
-		                      type="button"
-		                      className={tabButtonClass(creationMode === 'manual')}
-	                      onClick={() => {
-	                        setCreationMode('manual');
-	                        setPreview(null);
-	                      }}
-		                      disabled={busy || isEditingRequestedChanges}
-	                      data-testid="community-mode-manual"
-	                    >
-	                      Manual
-	                    </button>
+	                  <div className="mt-1">
+	                    {creationMode === 'auto' ? (
+	                      <button
+	                        type="button"
+	                        className="btn-3d btn-neutral min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
+	                        onClick={() => {
+	                          setCreationMode('manual');
+	                          setPreview(null);
+	                        }}
+	                        disabled={busy || isEditingRequestedChanges}
+	                        data-testid="community-mode-manual"
+	                      >
+	                        Customize board (advanced)
+	                      </button>
+	                    ) : (
+	                      <button
+	                        type="button"
+	                        className="btn-3d btn-primary min-h-[40px] w-full rounded-lg px-3 text-[11px] font-black uppercase"
+	                        onClick={() => {
+	                          setCreationMode('auto');
+	                          setPreview(null);
+	                        }}
+	                        disabled={busy || isEditingRequestedChanges}
+	                        data-testid="community-mode-auto"
+	                      >
+	                        ‹ Back to quick build
+	                      </button>
+	                    )}
+	                    <p className="app-text-muted mt-1 text-[10px] font-semibold leading-snug">
+	                      {creationMode === 'auto'
+	                        ? 'Decrypt builds a fair board for you.'
+	                        : 'Advanced: place reveals, blind tiles, and locks yourself.'}
+	                    </p>
 	                  </div>
 	                </div>
 	              </div>
@@ -1512,7 +1583,7 @@ export const CommunityScreen = ({
                   {attribution.length}/28
                 </span>
               </label>
-              {isEditingRequestedChanges ? (
+              {isEditingRequestedChanges && creationMode !== 'manual' ? (
                 <button
                   type="submit"
                   className="btn-3d btn-primary w-full rounded-xl px-3 py-2 text-sm font-black uppercase"
@@ -1530,9 +1601,22 @@ export const CommunityScreen = ({
                     disabled={busy}
                     data-testid="community-preview-button"
                   >
-                    Preview
+                    {isEditingRequestedChanges ? 'Preview & Edit Board' : 'Preview'}
                   </button>
                 </div>
+              )}
+              {!isEditingRequestedChanges && (
+                <p
+                  className="app-text-muted text-[10px] font-semibold leading-snug"
+                  data-testid="community-review-note"
+                >
+                  A moderator reviews each new challenge — track its status under
+                  “My Ciphers.”
+                  {mine.filter((entry) => entry.status === 'pending').length > 0 &&
+                    ` (${
+                      mine.filter((entry) => entry.status === 'pending').length
+                    } of 3 review slots in use)`}
+                </p>
               )}
             </form>
           )}
@@ -1640,6 +1724,11 @@ export const CommunityScreen = ({
 	                <SubmissionCard
                   key={submission.submissionId}
                   submission={submission}
+                  acclaim={
+                    submission.levelId
+                      ? creatorProgress.get(submission.levelId)
+                      : undefined
+                  }
                   action={
                     submission.status === 'pending' ? (
                       <button

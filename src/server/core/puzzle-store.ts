@@ -1,6 +1,6 @@
 import { redis } from '@devvit/web/server';
 import { z } from 'zod';
-import { type PuzzlePrivate, type PuzzlePublic } from '../../shared/game';
+import { type PuzzlePrivate, type PuzzlePublic, type PuzzleSource } from '../../shared/game';
 import {
   puzzlePrivateSchema,
   puzzlePrivateStoredSchema,
@@ -20,7 +20,6 @@ import {
   keyPuzzleMapping,
   keyPuzzlePublicationReceipt,
   keyPuzzlePublishedPost,
-  keyPuzzleStaged,
   keyPuzzlePrivate,
   keyPuzzlePublic,
   keyPuzzlesByDate,
@@ -38,6 +37,13 @@ const puzzleMappingSchema = z.record(z.string(), z.number());
 const transactionCommitted = (result: unknown): boolean =>
   result !== null && result !== undefined;
 const maxSavePuzzleRetries = 3;
+const officialDailySources = new Set<PuzzleSource>([
+  'AUTO_DAILY',
+  'MANUAL_INJECTED',
+]);
+
+export const isOfficialDailyPuzzleSource = (source: PuzzleSource): boolean =>
+  officialDailySources.has(source);
 
 export class PuzzleLevelAllocationConflictError extends Error {
   readonly expectedLevelId: string;
@@ -481,7 +487,7 @@ export const setPuzzlePublishedPostId = async (
     keyPuzzlePrivate(levelId),
     puzzlePrivateStoredSchema
   );
-  if (!stored || stored.source !== 'AUTO_DAILY') {
+  if (!stored || !isOfficialDailyPuzzleSource(stored.source)) {
     return;
   }
   const effectiveDateKey = dateKey ?? stored.dateKey;
@@ -610,19 +616,6 @@ export const deletePuzzleData = async (params: {
   await cleanupPuzzlePersistence(params);
 };
 
-export const setStagedLevelId = async (levelId: string): Promise<void> => {
-  await redis.set(keyPuzzleStaged, levelId);
-};
-
-export const getStagedLevelId = async (): Promise<string | null> => {
-  const value = await redis.get(keyPuzzleStaged);
-  return value ?? null;
-};
-
-export const clearStagedLevelId = async (): Promise<void> => {
-  await redis.del(keyPuzzleStaged);
-};
-
 export const getAllLevelIds = async (): Promise<string[]> => {
   const entries = await redis.zRange(keyPuzzlesIndex, 0, -1, { by: 'rank' });
   return entries.map((entry) => entry.member);
@@ -678,7 +671,11 @@ export const getAutoDailyLevelIdsForDate = async (
   const autoDailyLevelIds: string[] = [];
   for (const levelId of levelIds) {
     const puzzle = await getPuzzlePrivate(levelId);
-    if (!puzzle || puzzle.dateKey !== dateKey || puzzle.source !== 'AUTO_DAILY') {
+    if (
+      !puzzle ||
+      puzzle.dateKey !== dateKey ||
+      !isOfficialDailyPuzzleSource(puzzle.source)
+    ) {
       continue;
     }
     autoDailyLevelIds.push(levelId);
@@ -719,7 +716,12 @@ export const countPublishedAutoDailyPuzzlesForDate = async (
     const levelId = levelIds[index];
     const postId = postIds[index];
     const puzzle = puzzles[index];
-    if (!levelId || !postId || !puzzle || puzzle.source !== 'AUTO_DAILY') {
+    if (
+      !levelId ||
+      !postId ||
+      !puzzle ||
+      !isOfficialDailyPuzzleSource(puzzle.source)
+    ) {
       continue;
     }
     count += 1;

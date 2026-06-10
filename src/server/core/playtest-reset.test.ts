@@ -9,11 +9,13 @@ const {
   getTrackedUserDailyDataDatesMock,
   hashState,
   stringState,
+  sortedSetState,
 } = vi.hoisted(() => ({
   delMock: vi.fn(async (key: string) => {
     const deletedString = stringState.delete(key);
     const deletedHash = hashState.delete(key);
-    return deletedString || deletedHash ? 1 : 0;
+    const deletedSortedSet = sortedSetState.delete(key);
+    return deletedString || deletedHash || deletedSortedSet ? 1 : 0;
   }),
   getAllLevelIdsMock: vi.fn(),
   getIndexedSessionKeysMock: vi.fn(),
@@ -22,6 +24,7 @@ const {
   getTrackedUserDailyDataDatesMock: vi.fn(),
   hashState: new Map<string, Record<string, string>>(),
   stringState: new Map<string, string>(),
+  sortedSetState: new Map<string, Array<{ member: string; score: number }>>(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -30,6 +33,7 @@ vi.mock('@devvit/web/server', () => ({
     get: vi.fn(async (key: string) => stringState.get(key) ?? null),
     hGetAll: vi.fn(async (key: string) => hashState.get(key) ?? {}),
     hKeys: vi.fn(async (key: string) => Object.keys(hashState.get(key) ?? {})),
+    zRange: vi.fn(async (key: string) => sortedSetState.get(key) ?? []),
   },
 }));
 
@@ -63,6 +67,19 @@ import {
   keyModeratorAccessCacheIndex,
   keyOrderGrantRecord,
   keyPaymentOrderIndex,
+  keyCommunityApprovalLock,
+  keyCommunityCreatorStats,
+  keyCommunityPendingSignatures,
+  keyCommunityPuzzlePlays,
+  keyCommunityRemovedLevels,
+  keyCommunitySubmission,
+  keyCommunitySubmissionsApproved,
+  keyCommunitySubmissionsByAuthor,
+  keyCommunitySubmissionsByLevel,
+  keyCommunitySubmissionsPending,
+  keyCommunitySubmissionsRejected,
+  keyCommunitySubmissionsRemoved,
+  keyPuzzlePrivate,
   keyProcessedOrder,
   keyRefundProcessedOrder,
   keySessionIndex,
@@ -87,6 +104,7 @@ describe('clearSubredditGameData', () => {
     getTrackedUserDailyDataDatesMock.mockReset();
     hashState.clear();
     stringState.clear();
+    sortedSetState.clear();
   });
 
   it('clears indexed daily data, payment records, and moderator cache keys', async () => {
@@ -153,5 +171,83 @@ describe('clearSubredditGameData', () => {
     expect(hashState.has(keyModeratorAccessCacheIndex)).toBe(false);
     expect(hashState.has(keyKnownUsersIndex)).toBe(false);
     expect(hashState.has(keySessionIndex)).toBe(false);
+  });
+
+  it('clears community cipher submissions from creator and review indexes', async () => {
+    getKnownUserIdsMock.mockResolvedValue(['creator_1']);
+    getIndexedSessionKeysMock.mockResolvedValue([]);
+    getAllLevelIdsMock.mockResolvedValue([]);
+    getTrackedUserDailyDataDatesMock.mockResolvedValue([]);
+    getPuzzlePrivateMock.mockResolvedValue({ dateKey: '2026-04-03' });
+
+    sortedSetState.set(keyCommunitySubmissionsByAuthor('creator_1'), [
+      { member: 'sub_pending', score: 1 },
+      { member: 'sub_withdrawn', score: 2 },
+    ]);
+    sortedSetState.set(keyCommunitySubmissionsPending, [
+      { member: 'sub_pending', score: 1 },
+    ]);
+    sortedSetState.set(keyCommunitySubmissionsApproved, [
+      { member: 'sub_approved', score: 3 },
+    ]);
+    sortedSetState.set(keyCommunitySubmissionsRejected, [
+      { member: 'sub_rejected', score: 4 },
+    ]);
+    sortedSetState.set(keyCommunitySubmissionsRemoved, [
+      { member: 'sub_removed', score: 5 },
+    ]);
+    hashState.set(keyCommunitySubmissionsByLevel, {
+      lvl_community_1: 'sub_approved',
+    });
+    hashState.set(keyCommunityRemovedLevels, {
+      lvl_community_2: 'sub_removed',
+    });
+    hashState.set(keyCommunityPendingSignatures, {
+      PENDINGTEXT: 'sub_pending',
+    });
+    for (const [submissionId, levelId] of [
+      ['sub_pending', ''],
+      ['sub_withdrawn', ''],
+      ['sub_approved', 'lvl_community_1'],
+      ['sub_rejected', ''],
+      ['sub_removed', 'lvl_community_2'],
+    ]) {
+      hashState.set(keyCommunitySubmission(submissionId), {
+        authorId: 'creator_1',
+        levelId,
+      });
+      stringState.set(keyCommunityApprovalLock(submissionId), 'lock');
+    }
+    hashState.set(keyCommunityCreatorStats('creator_1'), { submitted: '5' });
+    hashState.set(keyCommunityPuzzlePlays('lvl_community_1'), { totalPlays: '7' });
+    hashState.set(keyCommunityPuzzlePlays('lvl_community_2'), { totalPlays: '3' });
+    stringState.set(keyPuzzlePrivate('lvl_community_1'), '{"levelId":"lvl_community_1"}');
+    stringState.set(keyPuzzlePrivate('lvl_community_2'), '{"levelId":"lvl_community_2"}');
+
+    await clearSubredditGameData();
+
+    expect(sortedSetState.has(keyCommunitySubmissionsByAuthor('creator_1'))).toBe(false);
+    expect(sortedSetState.has(keyCommunitySubmissionsPending)).toBe(false);
+    expect(sortedSetState.has(keyCommunitySubmissionsApproved)).toBe(false);
+    expect(sortedSetState.has(keyCommunitySubmissionsRejected)).toBe(false);
+    expect(sortedSetState.has(keyCommunitySubmissionsRemoved)).toBe(false);
+    expect(hashState.has(keyCommunitySubmissionsByLevel)).toBe(false);
+    expect(hashState.has(keyCommunityRemovedLevels)).toBe(false);
+    expect(hashState.has(keyCommunityPendingSignatures)).toBe(false);
+    expect(hashState.has(keyCommunityCreatorStats('creator_1'))).toBe(false);
+    expect(hashState.has(keyCommunityPuzzlePlays('lvl_community_1'))).toBe(false);
+    expect(hashState.has(keyCommunityPuzzlePlays('lvl_community_2'))).toBe(false);
+    for (const submissionId of [
+      'sub_pending',
+      'sub_withdrawn',
+      'sub_approved',
+      'sub_rejected',
+      'sub_removed',
+    ]) {
+      expect(hashState.has(keyCommunitySubmission(submissionId))).toBe(false);
+      expect(stringState.has(keyCommunityApprovalLock(submissionId))).toBe(false);
+    }
+    expect(stringState.has(keyPuzzlePrivate('lvl_community_1'))).toBe(false);
+    expect(stringState.has(keyPuzzlePrivate('lvl_community_2'))).toBe(false);
   });
 });

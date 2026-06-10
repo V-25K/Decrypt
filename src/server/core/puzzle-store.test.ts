@@ -66,11 +66,13 @@ vi.mock('@devvit/web/server', () => ({
 import {
   countPublishedAutoDailyPuzzlesForDate,
   countPuzzlesForDate,
+  getAutoDailyLevelIdsForDate,
   getNextLevelId,
   peekNextLevelId,
   getPuzzleMapping,
   getRecentUsedSignatureEntries,
   savePuzzle,
+  setPuzzlePublishedPostId,
 } from './puzzle-store';
 
 afterEach(() => {
@@ -228,6 +230,93 @@ describe('countPuzzlesForDate', () => {
       '[countPuzzlesForDate] date index missing for 2026-04-10, running full scan'
     );
     errorSpy.mockRestore();
+  });
+});
+
+describe('getAutoDailyLevelIdsForDate', () => {
+  it('returns official daily levels while excluding community levels', async () => {
+    const storedPuzzles: Record<string, string> = {
+      'decrypt:puzzle:lvl_0001:private': JSON.stringify({
+        levelId: 'lvl_0001',
+        dateKey: '2026-04-10',
+        source: 'AUTO_DAILY',
+        targetText: 'TEST ONE',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: { A: 1 },
+        reverseMapping: { '1': 'A' },
+        tiles: [{ index: 0, char: 'T', isLetter: true, wordIndex: 0 }],
+        words: ['TEST'],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 5,
+        isLogical: false,
+        createdAt: 111,
+      }),
+      'decrypt:puzzle:lvl_0002:private': JSON.stringify({
+        levelId: 'lvl_0002',
+        dateKey: '2026-04-10',
+        source: 'COMMUNITY',
+        targetText: 'TEST TWO',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: { B: 2 },
+        reverseMapping: { '2': 'B' },
+        tiles: [{ index: 0, char: 'T', isLetter: true, wordIndex: 0 }],
+        words: ['TEST'],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 5,
+        isLogical: false,
+        createdAt: 222,
+      }),
+      'decrypt:puzzle:lvl_0003:private': JSON.stringify({
+        levelId: 'lvl_0003',
+        dateKey: '2026-04-10',
+        source: 'MANUAL_INJECTED',
+        targetText: 'TEST THREE',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: { C: 3 },
+        reverseMapping: { '3': 'C' },
+        tiles: [{ index: 0, char: 'T', isLetter: true, wordIndex: 0 }],
+        words: ['TEST'],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 5,
+        isLogical: false,
+        createdAt: 333,
+      }),
+    };
+    zCardMock.mockResolvedValue(3);
+    zRangeMock.mockResolvedValue([
+      { member: 'lvl_0001', score: 111 },
+      { member: 'lvl_0002', score: 222 },
+      { member: 'lvl_0003', score: 333 },
+    ]);
+    getMock.mockImplementation(async (key: string) => storedPuzzles[key] ?? null);
+
+    const levelIds = await getAutoDailyLevelIdsForDate('2026-04-10');
+
+    expect(levelIds).toEqual(['lvl_0001', 'lvl_0003']);
   });
 });
 
@@ -515,7 +604,7 @@ describe('getPuzzleMapping', () => {
 });
 
 describe('countPublishedAutoDailyPuzzlesForDate', () => {
-  it('returns indexed count when the published AUTO_DAILY index is initialized', async () => {
+  it('returns indexed count when the published official daily index is initialized', async () => {
     zCardMock.mockResolvedValue(2);
     getMock.mockResolvedValue('1');
 
@@ -525,7 +614,7 @@ describe('countPublishedAutoDailyPuzzlesForDate', () => {
     expect(mGetMock).not.toHaveBeenCalled();
   });
 
-  it('backfills the published AUTO_DAILY index when missing', async () => {
+  it('backfills the published official daily index when missing', async () => {
     const storedPuzzles: Record<string, string> = {
       'decrypt:puzzle:lvl_0001:private': JSON.stringify({
         levelId: 'lvl_0001',
@@ -553,7 +642,7 @@ describe('countPublishedAutoDailyPuzzlesForDate', () => {
       'decrypt:puzzle:lvl_0002:private': JSON.stringify({
         levelId: 'lvl_0002',
         dateKey: '2026-04-10',
-        source: 'AUTO_DAILY',
+        source: 'MANUAL_INJECTED',
         targetText: 'TEST TWO',
         author: 'AUTHOR',
         challengeType: 'QUOTE',
@@ -573,10 +662,33 @@ describe('countPublishedAutoDailyPuzzlesForDate', () => {
         isLogical: false,
         createdAt: 222,
       }),
+      'decrypt:puzzle:lvl_0003:private': JSON.stringify({
+        levelId: 'lvl_0003',
+        dateKey: '2026-04-10',
+        source: 'COMMUNITY',
+        targetText: 'TEST THREE',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: { C: 3 },
+        reverseMapping: { '3': 'C' },
+        tiles: [{ index: 0, char: 'T', isLetter: true, wordIndex: 0 }],
+        words: ['TEST'],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 5,
+        isLogical: false,
+        createdAt: 333,
+      }),
     };
     zCardMock
       .mockResolvedValueOnce(0)
-      .mockResolvedValueOnce(2);
+      .mockResolvedValueOnce(3);
     getMock.mockImplementation(async (key: string) => {
       if (key === 'decrypt:puzzles:auto_daily_published_initialized:2026-04-10') {
         return null;
@@ -587,6 +699,7 @@ describe('countPublishedAutoDailyPuzzlesForDate', () => {
       .mockResolvedValueOnce([
         { member: 'lvl_0001', score: 111 },
         { member: 'lvl_0002', score: 222 },
+        { member: 'lvl_0003', score: 333 },
       ]);
     mGetMock.mockResolvedValue(['t3_one', 't3_two']);
 
@@ -601,9 +714,52 @@ describe('countPublishedAutoDailyPuzzlesForDate', () => {
       member: 'lvl_0002',
       score: 222,
     });
+    expect(zAddMock).not.toHaveBeenCalledWith(
+      'decrypt:puzzles:auto_daily_published:2026-04-10',
+      expect.objectContaining({
+        member: 'lvl_0003',
+      })
+    );
     expect(setMock).toHaveBeenCalledWith(
       'decrypt:puzzles:auto_daily_published_initialized:2026-04-10',
       '1'
     );
+  });
+
+  it('indexes a published manual injection as an official daily post', async () => {
+    getMock.mockResolvedValue(JSON.stringify({
+      levelId: 'lvl_0002',
+      dateKey: '2026-04-10',
+      source: 'MANUAL_INJECTED',
+      targetText: 'TEST TWO',
+      author: 'AUTHOR',
+      challengeType: 'QUOTE',
+      cipherType: 'random',
+      shiftAmount: null,
+      mapping: { B: 2 },
+      reverseMapping: { '2': 'B' },
+      tiles: [{ index: 0, char: 'T', isLetter: true, wordIndex: 0 }],
+      words: ['TEST'],
+      prefilledIndices: [],
+      revealedIndices: [],
+      revealed_indices: [],
+      blindIndices: [],
+      goldIndex: null,
+      padlockChains: [],
+      difficulty: 5,
+      isLogical: false,
+      createdAt: 222,
+    }));
+
+    await setPuzzlePublishedPostId('lvl_0002', 't3_two', '2026-04-10');
+
+    expect(setMock).toHaveBeenCalledWith(
+      'decrypt:puzzle:lvl_0002:published_post',
+      't3_two'
+    );
+    expect(zAddMock).toHaveBeenCalledWith('decrypt:puzzles:auto_daily_published:2026-04-10', {
+      member: 'lvl_0002',
+      score: 222,
+    });
   });
 });

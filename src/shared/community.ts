@@ -59,15 +59,17 @@ export type CommunityManualLayout = z.infer<
   typeof communityManualLayoutSchema
 >;
 
-export const communitySubmissionInputSchema = z.object({
-  title: z.string().min(1).max(80),
-  text: z.string().min(1).max(maxPuzzleTotalLength),
-  category: challengeTypeSchema,
-  attribution: z.string().min(1).max(80),
-  targetDifficulty: z.number().int().min(1).max(10).default(5),
-  creationMode: communityCreationModeSchema.default('auto'),
-  manualLayout: communityManualLayoutSchema.nullable().optional(),
-});
+export const communitySubmissionInputSchema = z
+  .object({
+    title: z.string().min(1).max(80),
+    text: z.string().min(1).max(maxPuzzleTotalLength),
+    category: challengeTypeSchema,
+    attribution: z.string().min(1).max(80),
+    targetDifficulty: z.number().int().min(1).max(10).default(5),
+    creationMode: communityCreationModeSchema.default('auto'),
+    manualLayout: communityManualLayoutSchema.nullable().optional(),
+  })
+  .strict();
 
 /**
  * Preview intentionally uses the same input as submission so players see the
@@ -142,16 +144,24 @@ export const communitySubmissionListResponseSchema = z.object({
   submissions: z.array(communitySubmissionSchema),
 });
 
-export const communityWithdrawInputSchema = z.object({
-  submissionId: z.string().min(1),
-});
+export const communityWithdrawInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+  })
+  .strict();
 
-export const communitySubmitRequestedEditInputSchema = z.object({
-  submissionId: z.string().min(1),
-  title: z.string().min(1).max(80),
-  text: z.string().min(1).max(maxPuzzleTotalLength),
-  attribution: z.string().min(1).max(80),
-});
+export const communitySubmitRequestedEditInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+    title: z.string().min(1).max(80),
+    text: z.string().min(1).max(maxPuzzleTotalLength),
+    attribution: z.string().min(1).max(80),
+    // Manual submissions may also correct their board layout during a revision
+    // (locks/blinds/reveals). Ignored for auto submissions. Re-validated
+    // server-side against the revised text.
+    manualLayout: communityManualLayoutSchema.nullable().optional(),
+  })
+  .strict();
 
 export const communityActionResponseSchema = z.object({
   success: z.boolean(),
@@ -159,21 +169,79 @@ export const communityActionResponseSchema = z.object({
   submission: communitySubmissionSchema.nullable(),
 });
 
-export const adminCommunityApproveInputSchema = z.object({
-  submissionId: z.string().min(1),
+export const adminCommunityApproveInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+  })
+  .strict();
+
+export const adminCommunityRejectInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+    reason: z.string().min(3).max(180),
+  })
+  .strict();
+
+export const adminCommunityRequestChangesInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+    reason: z.string().min(3).max(180),
+  })
+  .strict();
+
+export const adminCommunityRemoveInputSchema = z
+  .object({
+    submissionId: z.string().min(1),
+    reason: z.string().min(3).max(180).optional(),
+  })
+  .strict();
+
+// --- Creator Acclaim voting ---------------------------------------------------
+
+export const communityVoteInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    vote: z.enum(['like', 'dislike', 'clear']),
+  })
+  .strict();
+
+export const communityVoteResponseSchema = z.object({
+  likes: z.number().int().nonnegative(),
+  dislikes: z.number().int().nonnegative(),
+  myVote: z.enum(['like', 'dislike']).nullable(),
 });
 
-export const adminCommunityRejectInputSchema = z.object({
-  submissionId: z.string().min(1),
-  reason: z.string().min(3).max(180),
+export const communityVoteStateInputSchema = z
+  .object({ levelId: z.string().min(1) })
+  .strict();
+
+export const communityVoteStateResponseSchema = z.object({
+  isCommunity: z.boolean(),
+  isOwnChallenge: z.boolean(),
+  likes: z.number().int().nonnegative(),
+  dislikes: z.number().int().nonnegative(),
+  myVote: z.enum(['like', 'dislike']).nullable(),
 });
 
-export const adminCommunityRequestChangesInputSchema = z.object({
-  submissionId: z.string().min(1),
-  reason: z.string().min(3).max(180),
+// Mirrors AcclaimProgress in src/shared/acclaim.ts (kept in sync by tests).
+export const acclaimProgressSchema = z.object({
+  qualifiedPlays: z.number().int().nonnegative(),
+  likes: z.number().int().nonnegative(),
+  dislikes: z.number().int().nonnegative(),
+  totalVotes: z.number().int().nonnegative(),
+  likeRatio: z.number().min(0).max(1),
+  ratioLowerBound: z.number().min(0).max(1),
+  playsToGo: z.number().int().nonnegative(),
+  votesToGo: z.number().int().nonnegative(),
+  met: z.boolean(),
 });
 
-export const adminCommunityRemoveInputSchema = z.object({
-  submissionId: z.string().min(1),
-  reason: z.string().min(3).max(180).optional(),
+export const communityCreatorProgressResponseSchema = z.object({
+  levels: z.array(
+    z.object({
+      levelId: z.string().min(1),
+      acclaimed: z.boolean(),
+      progress: acclaimProgressSchema,
+    })
+  ),
 });

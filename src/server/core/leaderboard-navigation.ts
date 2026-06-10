@@ -10,13 +10,13 @@ import {
  * Navigation interface for leaderboard pagination
  * Provides methods for navigating between pages with consistent behavior
  */
-export interface LeaderboardNavigation {
+export type LeaderboardNavigation = {
   goToPage(page: number): Promise<LeaderboardPage>;
   nextPage(): Promise<LeaderboardPage | null>;
   previousPage(): Promise<LeaderboardPage | null>;
   goToFirstPage(): Promise<LeaderboardPage>;
   goToLastPage(): Promise<LeaderboardPage>;
-}
+};
 
 /**
  * Base navigation implementation that provides common navigation logic

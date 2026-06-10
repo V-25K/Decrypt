@@ -11,12 +11,20 @@ import {
   ObstructionCosts,
   BLIND_TILE_COST,
   estimateDifficultyFromObstructions,
+  maxPrefilledCountForDifficulty,
   PADLOCK_CHAIN_COST,
   PADLOCK_KEY_EASY_DISCOUNT,
   PREFILL_REMOVAL_COST,
 } from './puzzle';
 
 describe('puzzle', () => {
+  it('defines strict prefilled-letter caps by difficulty tier', () => {
+    expect(maxPrefilledCountForDifficulty(2)).toBe(4);
+    expect(maxPrefilledCountForDifficulty(5)).toBe(2);
+    expect(maxPrefilledCountForDifficulty(8)).toBe(1);
+    expect(maxPrefilledCountForDifficulty(10)).toBe(1);
+  });
+
   it('keeps expert starter clues to at most one prefilled tile', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0099',
@@ -49,6 +57,41 @@ describe('puzzle', () => {
 
     expect(firstWordIndices.length).toBeGreaterThan(1);
     expect(firstWordIndices.every((index) => prefilledSet.has(index))).toBe(false);
+  });
+
+  it('keeps starter clues tight across the harder tier curve', () => {
+    const text = 'EVERY CODE HIDES A CLUE AND EVERY CLUE REWARDS PATIENCE';
+    const warmup = buildPuzzle({
+      levelId: 'lvl_tighter_warmup',
+      dateKey: '2026-06-07',
+      text,
+      author: 'UNKNOWN',
+      difficulty: 2,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+    const medium = buildPuzzle({
+      levelId: 'lvl_tighter_medium',
+      dateKey: '2026-06-07',
+      text,
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+    const hard = buildPuzzle({
+      levelId: 'lvl_tighter_hard',
+      dateKey: '2026-06-07',
+      text,
+      author: 'UNKNOWN',
+      difficulty: 8,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+    });
+
+    expect(warmup.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(4);
+    expect(medium.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(2);
+    expect(hard.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(1);
   });
 
   it('keeps expert prefills tight on short phrases', () => {
@@ -212,6 +255,33 @@ describe('puzzle', () => {
     expect(new Set(blindLetters).size).toBe(blindLetters.length);
   });
 
+  it('lets warmup and medium boards carry real obstruction pressure', () => {
+    const text = 'STONE TONES LEAST STEAL STALE LETTERS SETTLE INTO TESTS';
+    const warmup = buildPuzzle({
+      levelId: 'lvl_obstructed_warmup',
+      dateKey: '2026-06-07',
+      text,
+      author: 'UNKNOWN',
+      difficulty: 2,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+    const medium = buildPuzzle({
+      levelId: 'lvl_obstructed_medium',
+      dateKey: '2026-06-07',
+      text,
+      author: 'UNKNOWN',
+      difficulty: 5,
+      logicalPercent: 10,
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: true,
+    });
+
+    expect(computeObstructionBudgetSpent(warmup.puzzlePrivate)).toBeGreaterThan(0);
+    expect(computeObstructionBudgetSpent(medium.puzzlePrivate)).toBeGreaterThan(0);
+  });
+
   it('chooses gold index from medium-frequency letters when available', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0107',
@@ -298,7 +368,7 @@ describe('obstruction budget system', () => {
     });
 
     // Easier/helper-rich text now earns more obstruction room instead of less.
-    expect(budget.total).toBe(24);
+    expect(budget.total).toBe(67);
     expect(budget.spent).toBe(0);
   });
 
@@ -313,7 +383,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.5,
     });
 
-	    expect(budget.total).toBe(59);
+	    expect(budget.total).toBe(102);
 	    expect(budget.spent).toBe(0);
 	  });
 
@@ -351,7 +421,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.8,
     });
 
-    expect(budget.total).toBe(95);
+    expect(budget.total).toBe(125);
     expect(budget.spent).toBe(0);
   });
 
@@ -366,7 +436,7 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.9,
     });
 
-    expect(budget.total).toBe(27);
+    expect(budget.total).toBe(70);
     expect(budget.spent).toBe(0);
   });
 
@@ -381,16 +451,16 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.4,
     });
 
-    expect(budget.total).toBe(59);
+    expect(budget.total).toBe(102);
     expect(budget.spent).toBe(0);
 
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(8);
-    expect(remainingBudget(budget)).toBe(51);
+    expect(remainingBudget(budget)).toBe(94);
 
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(26);
-    expect(remainingBudget(budget)).toBe(33);
+    expect(remainingBudget(budget)).toBe(76);
   });
 
   it('does not exceed total budget when spending', () => {
@@ -404,13 +474,15 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.2,
     });
 
-    expect(budget.total).toBe(19);
+    expect(budget.total).toBe(62);
 
     spendBudget(budget, 10);
     expect(budget.spent).toBe(10);
 
     spendBudget(budget, 10);
-    expect(budget.spent).toBe(19); // Clamped to total
+    expect(budget.spent).toBe(20);
+    spendBudget(budget, 100);
+    expect(budget.spent).toBe(62); // Clamped to total
     expect(remainingBudget(budget)).toBe(0);
   });
 
@@ -459,25 +531,25 @@ describe('obstruction budget system', () => {
       cryptoHardness: 0.6,
     });
 
-    expect(budget.total).toBe(100);
+    expect(budget.total).toBe(130);
 
     // Add 2 padlocks
     spendBudget(budget, PADLOCK_CHAIN_COST);
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(36);
-    expect(remainingBudget(budget)).toBe(64);
+    expect(remainingBudget(budget)).toBe(94);
 
     // Add 3 blind tiles
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     spendBudget(budget, BLIND_TILE_COST);
     expect(budget.spent).toBe(60);
-    expect(remainingBudget(budget)).toBe(40);
+    expect(remainingBudget(budget)).toBe(70);
 
     // Add another padlock and confirm remaining budget still tracks correctly
     spendBudget(budget, PADLOCK_CHAIN_COST);
     expect(budget.spent).toBe(78);
-    expect(remainingBudget(budget)).toBe(22);
+    expect(remainingBudget(budget)).toBe(52);
   });
 
   it('computes non-zero spent budget for already-obstructed puzzles', () => {

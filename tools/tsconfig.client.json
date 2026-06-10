@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../dist/types/client",
+    "tsBuildInfoFile": "../dist/types/client/tsconfig.tsbuildinfo",
+    "customConditions": ["browser"],
+    "rootDir": "../src/client"
+  },
+  "include": ["../src/client/**/*"],
+  "exclude": [
+    "../src/client/**/*.test.ts",
+    "../src/client/**/*.test.tsx",
+    "../src/client/**/*.spec.ts",
+    "../src/client/**/*.spec.tsx",
+    "../src/client/**/*property*.ts",
+    "../src/client/**/*property*.tsx",
+    "../src/client/app/client-performance-integration.ts",
+    "../src/client/app/useRenderOptimization.ts"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.server.json"
+    },
+    {
+      "path": "./tsconfig.shared.json"
+    }
+  ]
+}

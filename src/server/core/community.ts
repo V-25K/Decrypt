@@ -62,9 +62,11 @@ import { createValidationPipeline } from './validation-pipeline';
 import { buildPuzzle, buildPublicPuzzle, estimateDifficultyFromObstructions } from './puzzle';
 import { formatDateKey } from './serde';
 import { getLevelEngagement, type LevelEngagement } from './engagement';
+import { logWarn } from './log';
 import { runDummySolver } from './dummy-solver';
 import { validatePuzzle } from './validation';
 import {
+  keyCommunityAcclaimAwarded,
   keyCommunityApprovalLock,
   keyCommunityCreatorStats,
   keyCommunityPendingSignatures,
@@ -77,6 +79,8 @@ import {
   keyCommunitySubmissionsPending,
   keyCommunitySubmissionsRejected,
   keyCommunitySubmissionsRemoved,
+  keyCommunityVotes,
+  keyLevelQualifiedPlayers,
   keyUserEndlessPlayed,
 } from './keys';
 import {
@@ -85,6 +89,12 @@ import {
   getUserProfile,
   saveUserProfile,
 } from './state';
+import {
+  acclaimProgress,
+  isAcclaimed,
+  type AcclaimProgress,
+} from '../../shared/acclaim';
+import { updateQuestProgressOnAcclaim } from './quests';
 
 type CommunitySubmissionInput = z.infer<typeof communitySubmissionInputSchema>;
 
@@ -206,10 +216,7 @@ const getCreatorAvatarUrl = async (username: string): Promise<string | null> => 
   try {
     return (await reddit.getSnoovatarUrl(username)) ?? null;
   } catch (error) {
-    console.warn('[community] Creator avatar lookup failed', {
-      username,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logWarn('community', 'creator avatar lookup failed', { username, error });
     return null;
   }
 };
@@ -397,11 +404,7 @@ const getHardnessBounds = async (): Promise<
   try {
     return await computeAdaptiveHardnessBounds();
   } catch (error) {
-    console.warn(
-      `Community validation using default hardness bounds: ${
-        error instanceof Error ? error.message : 'unknown'
-      }`
-    );
+    logWarn('community', 'validation using default hardness bounds', { error });
     return undefined;
   }
 };
@@ -434,14 +437,14 @@ const duplicateReasons = async (params: {
   const reasons: string[] = [];
   const existingOwner = await getUsedSignatureOwner(params.normalizedSig);
   if (existingOwner) {
-    reasons.push('This text already exists in the puzzle catalog.');
+    reasons.push('That quote is already in the game — try a different line.');
   }
   const pendingOwner = await redis.hGet(
     keyCommunityPendingSignatures,
     params.normalizedSig
   );
   if (pendingOwner) {
-    reasons.push('This text is already waiting for review.');
+    reasons.push('This quote is already waiting for review.');
   }
   const recent = await getRecentUsedSignatureEntries(dedupSignatureLookback);
   const nearDuplicate = isNearDuplicateSignature({
@@ -450,7 +453,8 @@ const duplicateReasons = async (params: {
     recent,
   });
   if (nearDuplicate.duplicate) {
-    reasons.push(`This text is too close to existing content (${nearDuplicate.reason ?? 'near duplicate'}).`);
+    // Keep this actionable and free of internal scoring jargon.
+    reasons.push('A very similar quote already exists — try a different line or rephrase it.');
   }
   return reasons;
 };
@@ -555,6 +559,27 @@ const buildCommunityTierFitMessage = (targetDifficulty: number): string => {
   return `This quote does not fit ${label}. Try a nearby tier, or edit the quote so the letter mix is easier to build.`;
 };
 
+const creatorFriendlyBuildError = (
+  error: unknown,
+  targetDifficulty: number
+): string => {
+  const label = communityTierLabel(targetDifficulty);
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes('DUMMY_SOLVER_UNSATISFIED') ||
+    message.toLowerCase().includes('solver')
+  ) {
+    return `The builder could not make a fair ${label} board from this line. Try a nearby tier, choose a line with more repeated/common letters, or switch to Manual and add starter reveals.`;
+  }
+  if (
+    message.toLowerCase().includes('validation failed') ||
+    message.toLowerCase().includes('board')
+  ) {
+    return `The builder could not make a publishable ${label} board from this line. Try a nearby tier or adjust the line so it has clearer repeated letters.`;
+  }
+  return `The builder could not prepare this ${label} board. Try previewing again, choosing a nearby tier, or editing the line.`;
+};
+
 const prefilledIndicesFromWords = (
   puzzle: PuzzlePrivate,
   wordIndices: number[]
@@ -573,55 +598,6 @@ const invalidManualTileIndices = (
     const tile = puzzle.tiles[index];
     return !tile || !tile.isLetter;
   });
-
-const expandManualPadlockLocks = (
-  puzzle: PuzzlePrivate,
-  padlocks: CommunityManualPadlock[],
-  prefilledIndices: number[],
-  blindIndices: number[]
-): CommunityManualPadlock[] => {
-  const prefilledSet = new Set(prefilledIndices);
-  const blindSet = new Set(blindIndices);
-  return padlocks.map((padlock) => {
-    const samePadlockKeySet = new Set(padlock.keyIndices);
-    const otherBoundSet = new Set<number>();
-    for (const other of padlocks) {
-      for (const index of other.keyIndices) {
-        otherBoundSet.add(index);
-      }
-      if (other.padlockId !== padlock.padlockId) {
-        for (const index of other.lockedIndices) {
-          otherBoundSet.add(index);
-        }
-      }
-    }
-
-    const expandedLocks: number[] = [];
-    for (const index of padlock.lockedIndices) {
-      const tile = puzzle.tiles[index];
-      if (!tile || !tile.isLetter) {
-        expandedLocks.push(index);
-        continue;
-      }
-      for (const candidate of puzzle.tiles) {
-        if (
-          candidate.isLetter &&
-          candidate.char === tile.char &&
-          !prefilledSet.has(candidate.index) &&
-          !blindSet.has(candidate.index) &&
-          !samePadlockKeySet.has(candidate.index) &&
-          !otherBoundSet.has(candidate.index)
-        ) {
-          expandedLocks.push(candidate.index);
-        }
-      }
-    }
-    return {
-      ...padlock,
-      lockedIndices: uniqueSortedNumbers(expandedLocks),
-    };
-  });
-};
 
 const validationReasonsForManualPuzzle = (puzzle: PuzzlePrivate): string[] =>
   validatePuzzle(puzzle).reasons.filter(
@@ -687,6 +663,75 @@ const creatorFriendlyValidationReasons = (
   return Array.from(new Set(reasons));
 };
 
+const describeManualTile = (puzzle: PuzzlePrivate, index: number): string | null => {
+  const tile = puzzle.tiles[index];
+  if (!tile || !tile.isLetter) {
+    return null;
+  }
+  const word = puzzle.words[tile.wordIndex];
+  return word ? `${tile.char} in "${word}"` : tile.char;
+};
+
+const firstDescribedTile = (
+  puzzle: PuzzlePrivate,
+  indices: number[]
+): string | null => {
+  for (const index of indices) {
+    const description = describeManualTile(puzzle, index);
+    if (description) {
+      return description;
+    }
+  }
+  return null;
+};
+
+const suggestedStarterReveal = (puzzle: PuzzlePrivate): string => {
+  const blocked = new Set([
+    ...puzzle.prefilledIndices,
+    ...puzzle.blindIndices,
+    ...(puzzle.lockIndices ?? []),
+  ]);
+  const candidates = puzzle.tiles
+    .filter((tile) => tile.isLetter && !blocked.has(tile.index))
+    .sort((left, right) => {
+      const leftWordLength = puzzle.words[left.wordIndex]?.length ?? 0;
+      const rightWordLength = puzzle.words[right.wordIndex]?.length ?? 0;
+      return rightWordLength - leftWordLength || left.index - right.index;
+    });
+  const description =
+    candidates[0] ? describeManualTile(puzzle, candidates[0].index) : null;
+  return description
+    ? `Reveal ${description}.`
+    : 'Add one starter reveal on an unsolved letter.';
+};
+
+const suggestedBlindTile = (puzzle: PuzzlePrivate): string => {
+  const blocked = new Set([
+    ...puzzle.prefilledIndices,
+    ...puzzle.blindIndices,
+    ...(puzzle.lockIndices ?? []),
+  ]);
+  for (const tile of puzzle.tiles) {
+    if (!tile.isLetter || blocked.has(tile.index)) {
+      continue;
+    }
+    const hasVisibleMatch = puzzle.tiles.some(
+      (other) =>
+        other.index !== tile.index &&
+        other.isLetter &&
+        other.char === tile.char &&
+        !blocked.has(other.index)
+    );
+    if (hasVisibleMatch) {
+      const description = describeManualTile(puzzle, tile.index);
+      if (description) {
+        return `Add a ? to ${description}.`;
+      }
+    }
+  }
+  return 'Add one ? to a repeated letter, then update the preview.';
+};
+
 const buildManualLayoutPuzzlePreview = async (params: {
   text: string;
   attribution: string;
@@ -697,6 +742,7 @@ const buildManualLayoutPuzzlePreview = async (params: {
 }): Promise<{
   puzzle: PuzzlePublic | null;
   puzzlePrivate: PuzzlePrivate | null;
+  guidancePuzzlePrivate: PuzzlePrivate | null;
   reasons: string[];
 }> => {
   try {
@@ -753,12 +799,7 @@ const buildManualLayoutPuzzlePreview = async (params: {
     const prefilledSet = new Set(prefilledIndices);
     const blindIndices = layout.blindIndices.filter((index) => !prefilledSet.has(index));
     const blindSet = new Set(blindIndices);
-    const manualPadlocks = expandManualPadlockLocks(
-      base.puzzlePrivate,
-      layout.padlocks,
-      prefilledIndices,
-      blindIndices
-    );
+    const manualPadlocks = layout.padlocks;
 
     const duplicatePadlockTiles = new Set<number>();
     const seenPadlockTiles = new Set<number>();
@@ -789,6 +830,9 @@ const buildManualLayoutPuzzlePreview = async (params: {
       if (padlock.lockedIndices.length > 0 && keyIndices.length === 0) {
         reasons.push(`Lock ${padlock.padlockId} needs one or two key tiles.`);
       }
+      if (padlock.lockedIndices.length > 1) {
+        reasons.push(`Lock ${padlock.padlockId} can lock only one tile.`);
+      }
       if (padlock.keyIndices.length > 2) {
         reasons.push(`Lock ${padlock.padlockId} can use at most two key tiles.`);
       }
@@ -798,7 +842,12 @@ const buildManualLayoutPuzzlePreview = async (params: {
       if (padlock.keyIndices.some((index) => rawLockedSet.has(index))) {
         reasons.push(`Lock ${padlock.padlockId} cannot use a locked tile as its own key.`);
       }
-      if (lockedIndices.length > 0 && keyIndices.length > 0 && keyIndices.length <= 2) {
+      if (
+        lockedIndices.length > 0 &&
+        padlock.lockedIndices.length <= 1 &&
+        keyIndices.length > 0 &&
+        keyIndices.length <= 2
+      ) {
         padlockChains.push({
           chainId: padlock.padlockId,
           keyIndices,
@@ -846,19 +895,21 @@ const buildManualLayoutPuzzlePreview = async (params: {
 	      reasons.push('This layout is too hard for the fairness checker. Add another revealed word or remove obstructions.');
 	    }
 	    return {
-      puzzle: buildPublicPuzzle(puzzlePrivate, [], undefined, {
-        disableFallbackStarter: true,
-      }),
-      puzzlePrivate: reasons.length === 0 ? puzzlePrivate : null,
-      reasons,
-    };
-  } catch (error) {
-    return {
-      puzzle: null,
-      puzzlePrivate: null,
-      reasons: [
-        error instanceof Error
-          ? `Could not build a custom preview: ${error.message}`
+	      puzzle: buildPublicPuzzle(puzzlePrivate, [], undefined, {
+	        disableFallbackStarter: true,
+	      }),
+	      puzzlePrivate: reasons.length === 0 ? puzzlePrivate : null,
+	      guidancePuzzlePrivate: puzzlePrivate,
+	      reasons,
+	    };
+	  } catch (error) {
+	    return {
+	      puzzle: null,
+	      puzzlePrivate: null,
+	      guidancePuzzlePrivate: null,
+	      reasons: [
+	        error instanceof Error
+	          ? `Could not build a custom preview: ${error.message}`
           : 'Could not build a custom preview.',
       ],
     };
@@ -874,16 +925,18 @@ const buildEphemeralPuzzlePreview = async (params: {
 }): Promise<{
   puzzle: PuzzlePublic | null;
   puzzlePrivate: PuzzlePrivate | null;
+  guidancePuzzlePrivate: PuzzlePrivate | null;
   reasons: string[];
 }> => {
   const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
   const phase1 = pipeline.phase1(params.text, params.targetDifficulty);
   if (!phase1.valid) {
-    return {
-      puzzle: null,
-      puzzlePrivate: null,
-      reasons: [buildCommunityTierFitMessage(params.targetDifficulty)],
-    };
+      return {
+        puzzle: null,
+        puzzlePrivate: null,
+        guidancePuzzlePrivate: null,
+        reasons: [buildCommunityTierFitMessage(params.targetDifficulty)],
+      };
   }
 
   try {
@@ -907,23 +960,24 @@ const buildEphemeralPuzzlePreview = async (params: {
       return {
         puzzle: null,
         puzzlePrivate: null,
+        guidancePuzzlePrivate: null,
         reasons: phase2.reasons,
       };
     }
-    return {
-      puzzle: built.puzzlePublic,
-      puzzlePrivate: built.puzzlePrivate,
-      reasons: [],
-    };
-  } catch (error) {
-    return {
-      puzzle: null,
-      puzzlePrivate: null,
-      reasons: [
-        error instanceof Error
-          ? `Could not build a fair preview: ${error.message}`
-          : 'Could not build a fair preview.',
-      ],
+	    return {
+	      puzzle: built.puzzlePublic,
+	      puzzlePrivate: built.puzzlePrivate,
+	      guidancePuzzlePrivate: built.puzzlePrivate,
+	      reasons: [],
+	    };
+	  } catch (error) {
+	    return {
+	      puzzle: null,
+	      puzzlePrivate: null,
+	      guidancePuzzlePrivate: null,
+	      reasons: [
+	        creatorFriendlyBuildError(error, params.targetDifficulty),
+	      ],
     };
   }
 };
@@ -946,33 +1000,51 @@ const buildManualLayoutGuidance = (params: {
   estimatedTier: DifficultyTier;
   difficultyExplanation: DifficultyBreakdown | null;
   puzzlePrivate: PuzzlePrivate | null;
+  layoutReasons?: string[];
 }): ManualLayoutGuidance => {
   const fairness = params.difficultyExplanation?.fairnessSummary;
   const fairnessFailed =
     fairness !== undefined && (!fairness.solvable || fairness.blindGuessRequired);
+  const layoutFailed = (params.layoutReasons?.length ?? 0) > 0;
   const blindCount = params.puzzlePrivate?.blindIndices.length ?? 0;
   const padlockCount = params.puzzlePrivate?.padlockChains.length ?? 0;
   const prefilledCount = params.puzzlePrivate?.prefilledIndices.length ?? 0;
+  const blindDescription = params.puzzlePrivate
+    ? firstDescribedTile(params.puzzlePrivate, params.puzzlePrivate.blindIndices)
+    : null;
+  const lockDescription = params.puzzlePrivate
+    ? firstDescribedTile(params.puzzlePrivate, params.puzzlePrivate.lockIndices ?? [])
+    : null;
+  const prefilledDescription = params.puzzlePrivate
+    ? firstDescribedTile(params.puzzlePrivate, params.puzzlePrivate.prefilledIndices)
+    : null;
   const anchorCoverage =
     params.difficultyExplanation?.humanFeatures.revealedAnchorCoverage ?? 0;
   const suggestedActions: string[] = [];
 
-  if (anchorCoverage < 0.35) {
-    suggestedActions.push('Add one revealed anchor word or common short word.');
+  if (params.puzzlePrivate && anchorCoverage < 0.35) {
+    suggestedActions.push(suggestedStarterReveal(params.puzzlePrivate));
   }
   if (blindCount > 0) {
-    suggestedActions.push('Remove one blind tile.');
+    suggestedActions.push(
+      blindDescription ? `Remove the ? from ${blindDescription}.` : 'Remove one ? tile.'
+    );
   }
   if (padlockCount > 0) {
-    suggestedActions.push('Remove one padlock.');
+    suggestedActions.push(
+      lockDescription ? `Remove the padlock from ${lockDescription}.` : 'Remove one padlock.'
+    );
   }
 
-  if (fairnessFailed) {
+  if (fairnessFailed || layoutFailed) {
     return {
       status: 'unfair',
       targetTier: params.targetTier,
       estimatedTier: params.estimatedTier,
-      messages: ['This layout is not fair enough to publish as-is.'],
+      messages:
+        params.layoutReasons && params.layoutReasons.length > 0
+          ? params.layoutReasons.slice(0, 3)
+          : ['This layout is not fair enough to publish as-is.'],
       suggestedActions:
         suggestedActions.length > 0
           ? suggestedActions
@@ -990,28 +1062,38 @@ const buildManualLayoutGuidance = (params: {
       messages: [
         `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
       ],
-      suggestedActions: [
-        ...(suggestedActions.length > 0
-          ? suggestedActions
-          : ['Add one revealed anchor word.']),
-        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
-      ],
-    };
-  }
+	      suggestedActions: [
+	        ...(suggestedActions.length > 0
+	          ? suggestedActions
+	          : params.puzzlePrivate
+	            ? [suggestedStarterReveal(params.puzzlePrivate)]
+	            : ['Add one starter reveal.']),
+	        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+	      ],
+	    };
+	  }
   if (estimatedRank < targetRank) {
     return {
       status: 'too_easy',
       targetTier: params.targetTier,
       estimatedTier: params.estimatedTier,
-      messages: [
-        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
-      ],
-      suggestedActions: [
-        ...(prefilledCount > 1 ? ['Remove one prefilled starter letter.'] : []),
-        'Add one blind tile or padlock only if the preview remains fair.',
-        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
-      ],
-    };
+	      messages: [
+	        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
+	      ],
+	      suggestedActions: [
+	        ...(prefilledCount > 1
+	          ? [
+	              prefilledDescription
+	                ? `Remove the starter reveal from ${prefilledDescription}.`
+	                : 'Remove one starter reveal.',
+	            ]
+	          : []),
+	        params.puzzlePrivate
+	          ? suggestedBlindTile(params.puzzlePrivate)
+	          : 'Add one ? tile only if the preview remains fair.',
+	        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+	      ],
+	    };
   }
 
   return {
@@ -1021,6 +1103,84 @@ const buildManualLayoutGuidance = (params: {
     messages: ['Manual layout matches the target tier.'],
     suggestedActions: [],
   };
+};
+
+const tierLabelForDifficulty = (difficulty: number): string =>
+  difficulty <= 3 ? 'Easy' : difficulty <= 5 ? 'Medium' : difficulty <= 8 ? 'Hard' : 'Expert';
+
+// Turn internal engine validation strings into plain, friendly, minimal copy.
+// Unknown / already-friendly reasons pass through unchanged.
+const humanizeCommunityReason = (
+  raw: string,
+  context: { tierLabel: string; creationMode: 'auto' | 'manual' }
+): string => {
+  const reason = raw.trim();
+  const isFairnessOrBuildFailure =
+    reason === 'Blind tile fairness check failed.' ||
+    reason === 'No starter clue on board.' ||
+    reason === 'This layout is not fair enough to publish as-is.' ||
+    reason.startsWith('Could not build a fair') ||
+    reason.startsWith('Target tier');
+  if (isFairnessOrBuildFailure) {
+    return context.creationMode === 'manual'
+      ? 'This board isn’t solvable yet. Reveal a letter, or remove a hidden tile or lock.'
+      : `This quote can’t make a fair ${context.tierLabel} puzzle. Try an easier tier, or a longer, more varied line.`;
+  }
+  if (
+    reason.startsWith('Could not verify buildability') ||
+    reason.startsWith('Could not build a custom preview')
+  ) {
+    return 'Couldn’t build a preview for this line. Try again, or use a different quote.';
+  }
+  if (reason === 'A multi-letter word is fully prefilled.') {
+    return 'A whole word is revealed — hide a letter or two so there’s something to solve.';
+  }
+  if (
+    reason === 'Padlock chain locks its own key tiles.' ||
+    reason === 'Padlock dependency loop detected.'
+  ) {
+    return 'These locks can’t be opened. Make sure each lock’s key isn’t inside another lock.';
+  }
+  if (reason.startsWith('Word length exceeds')) {
+    return `One word is too long for the board (max ${maxPuzzleWordLength} letters).`;
+  }
+  if (reason.startsWith('Total challenge length exceeds')) {
+    return `This line is too long (max ${maxPuzzleTotalLength} characters).`;
+  }
+  return reason;
+};
+
+// Player-facing "Try this" tips. Auto mode must never reference board tools
+// (blind tiles, reveals, anchors) the player cannot edit — only the text.
+const buildCommunitySuggestions = (params: {
+  creationMode: 'auto' | 'manual';
+  difficultyExplanation:
+    | { humanFeatures: { revealedAnchorCoverage?: number; anchorDensity?: number } }
+    | null
+    | undefined;
+}): string[] => {
+  const human = params.difficultyExplanation?.humanFeatures;
+  const anchorDensity = human?.anchorDensity;
+  const revealedAnchorCoverage = human?.revealedAnchorCoverage;
+  if (params.creationMode === 'manual') {
+    const tips: string[] = [];
+    if (revealedAnchorCoverage !== undefined && revealedAnchorCoverage < 0.35) {
+      tips.push('Reveal one common short word so players have a foothold.');
+    }
+    if (anchorDensity !== undefined && anchorDensity < 0.15) {
+      tips.push(
+        'Few natural anchors here — remove a blind tile or reveal a common letter if it plays too hard.'
+      );
+    }
+    return tips;
+  }
+  // Auto mode: the engine builds the board, so talk about the quote itself.
+  if (anchorDensity !== undefined && anchorDensity < 0.15) {
+    return [
+      'This line uses few familiar words. A phrase with a couple of common words is easier and more fun to crack.',
+    ];
+  }
+  return [];
 };
 
 export const previewCommunitySubmission = async (
@@ -1051,32 +1211,46 @@ export const previewCommunitySubmission = async (
         })
       : null;
   const preview =
-    input.creationMode === 'manual'
-      ? manualPreview ?? { puzzle: null, puzzlePrivate: null, reasons: [] }
-      : baseValid
-        ? await buildEphemeralPuzzlePreview({
+	    input.creationMode === 'manual'
+	      ? manualPreview ?? {
+	          puzzle: null,
+	          puzzlePrivate: null,
+	          guidancePuzzlePrivate: null,
+	          reasons: [],
+	        }
+	      : baseValid
+	        ? await buildEphemeralPuzzlePreview({
             text: sanitizedText,
             attribution: sanitizedAttribution,
             category: input.category,
             targetDifficulty: input.targetDifficulty,
             hardnessBoundsByTier,
           })
-        : { puzzle: null, puzzlePrivate: null, reasons: [] };
+	        : {
+	            puzzle: null,
+	            puzzlePrivate: null,
+	            guidancePuzzlePrivate: null,
+	            reasons: [],
+	          };
   const allReasons = [...reasons, ...duplicateFailures, ...preview.reasons];
   const previewPrivate = preview.puzzlePrivate;
+  const guidancePrivate =
+    input.creationMode === 'manual'
+      ? (preview.guidancePuzzlePrivate ?? previewPrivate)
+      : previewPrivate;
   const estimatedDifficulty =
-    input.creationMode === 'manual' && previewPrivate
-      ? previewPrivate.difficulty
+    input.creationMode === 'manual' && guidancePrivate
+      ? guidancePrivate.difficulty
       : input.targetDifficulty;
   const suggestedTier =
     input.creationMode === 'manual'
       ? difficultyToTier(estimatedDifficulty)
       : inferSuggestedTier(sanitizedText, hardnessBoundsByTier);
   const challengeEvaluation =
-    previewPrivate === null
+    guidancePrivate === null
       ? null
       : buildChallengeEvaluation({
-          puzzle: previewPrivate,
+          puzzle: guidancePrivate,
           targetDifficulty: estimatedDifficulty,
           targetTier: suggestedTier,
           optimizerSummary: {
@@ -1091,14 +1265,15 @@ export const previewCommunitySubmission = async (
     challengeEvaluation?.difficultyBreakdown ??
     previewPrivate?.difficultyBreakdown ??
     null;
-  const manualLayoutGuidance =
-    input.creationMode === 'manual'
-      ? buildManualLayoutGuidance({
-          targetTier: difficultyToTier(input.targetDifficulty),
-          estimatedTier: suggestedTier,
-          difficultyExplanation,
-          puzzlePrivate: previewPrivate,
-        })
+	  const manualLayoutGuidance =
+	    input.creationMode === 'manual'
+	      ? buildManualLayoutGuidance({
+	          targetTier: difficultyToTier(input.targetDifficulty),
+	          estimatedTier: suggestedTier,
+	          difficultyExplanation,
+	          puzzlePrivate: guidancePrivate,
+	          layoutReasons: preview.reasons,
+	        })
       : undefined;
 
   return {
@@ -1121,22 +1296,21 @@ export const previewCommunitySubmission = async (
       anchorDensity: difficultyExplanation?.humanFeatures.anchorDensity,
       solverSolvedRatio: difficultyExplanation?.fairnessSummary.solvedRatio,
     },
-    reasons: allReasons,
+    reasons: allReasons.map((reason) =>
+      humanizeCommunityReason(reason, {
+        tierLabel: tierLabelForDifficulty(input.targetDifficulty),
+        creationMode: input.creationMode,
+      })
+    ),
+    // No generic "try a clear line" filler — when invalid, the reason above
+    // already says what to fix. Only show actionable tips on a valid preview.
     suggestions:
       allReasons.length === 0
-        ? [
-            ...(difficultyExplanation?.humanFeatures.revealedAnchorCoverage !== undefined &&
-            difficultyExplanation.humanFeatures.revealedAnchorCoverage < 0.35
-              ? ['Add one revealed anchor word or a common short word to make the solve path clearer.']
-              : []),
-            ...(difficultyExplanation?.humanFeatures.anchorDensity !== undefined &&
-            difficultyExplanation.humanFeatures.anchorDensity < 0.15
-              ? ['This text has few natural anchors. Remove one blind tile or reveal a common letter if it feels too hard.']
-              : []),
-          ]
-        : [
-            `Try a clear, attributed line between ${communityMinLength} and ${communityMaxLength} characters.`,
-          ],
+        ? buildCommunitySuggestions({
+            creationMode: input.creationMode,
+            difficultyExplanation,
+          })
+        : [],
     puzzlePreview: preview.puzzle,
     difficultyExplanation: difficultyExplanation ?? undefined,
     challengeEvaluationSummary: challengeEvaluation?.summary,
@@ -1378,17 +1552,24 @@ const buildApprovedCommunityPuzzle = async (
 	          puzzlePublic: buildPublicPuzzle(built.puzzlePrivate, []),
 	        };
 	      }
-	      const base = buildManualPuzzleWithSolverFallback({
-	        levelId: nextLevelId,
-	        dateKey: formatDateKey(new Date()),
-	        text: submission.text,
-	        author: submission.attribution,
-	        challengeType: submission.category,
-	        source: 'COMMUNITY',
-	        difficulty: submission.targetDifficulty,
-	        logicalPercent: settings.logicalCipherPercent,
-	        previousMapping,
-	      });
+		      let base: ReturnType<typeof buildManualPuzzleWithSolverFallback>;
+		      try {
+		        base = buildManualPuzzleWithSolverFallback({
+		          levelId: nextLevelId,
+		          dateKey: formatDateKey(new Date()),
+		          text: submission.text,
+		          author: submission.attribution,
+		          challengeType: submission.category,
+		          source: 'COMMUNITY',
+		          difficulty: submission.targetDifficulty,
+		          logicalPercent: settings.logicalCipherPercent,
+		          previousMapping,
+		        });
+		      } catch (error) {
+		        throw new Error(
+		          creatorFriendlyBuildError(error, submission.targetDifficulty)
+		        );
+		      }
       return {
         puzzlePrivate: base.puzzlePrivate,
         puzzlePublic: buildPublicPuzzle(base.puzzlePrivate, []),
@@ -1719,6 +1900,7 @@ export const submitRequestedCommunityEdit = async (params: {
   title: string;
   text: string;
   attribution: string;
+  manualLayout?: CommunityManualLayout | null;
 }): Promise<CommunitySubmission> => {
   const userId = assertUserId();
   const submission = await getCommunitySubmission(params.submissionId);
@@ -1738,6 +1920,36 @@ export const submitRequestedCommunityEdit = async (params: {
   });
   if (validated.reasons.length > 0) {
     throw new Error(validated.reasons[0] ?? 'Revision is not valid.');
+  }
+  // Manual submissions can also correct their board layout in the revision.
+  // Re-validate the (possibly new) layout against the revised text so a mod's
+  // "fix the unfair lock" request is actually actionable, and recompute the
+  // difficulty/tier the same way the original manual submit does. Auto
+  // submissions ignore any provided layout and keep manualLayout null.
+  let nextManualLayout = submission.manualLayout;
+  let nextTargetDifficulty = submission.targetDifficulty;
+  let nextSuggestedTier = submission.suggestedTier;
+  if (submission.creationMode === 'manual') {
+    const revisedLayout = normalizeManualLayout(
+      params.manualLayout ?? submission.manualLayout
+    );
+    const manualPreview = await buildManualLayoutPuzzlePreview({
+      text: validated.sanitizedText,
+      attribution: validated.sanitizedAttribution,
+      category: submission.category,
+      manualLayout: revisedLayout,
+    });
+    if (!manualPreview.puzzlePrivate || manualPreview.reasons.length > 0) {
+      throw new Error(
+        manualPreview.reasons[0] ??
+          'The board layout no longer fits this text. Adjust the locks, blinds, or reveals and try again.'
+      );
+    }
+    const guidancePrivate =
+      manualPreview.guidancePuzzlePrivate ?? manualPreview.puzzlePrivate;
+    nextManualLayout = revisedLayout;
+    nextTargetDifficulty = guidancePrivate.difficulty;
+    nextSuggestedTier = difficultyToTier(guidancePrivate.difficulty);
   }
   const normalizedSig = normalizeContent(validated.sanitizedText);
   const tokenSig = contentTokenSignature(validated.sanitizedText);
@@ -1772,6 +1984,9 @@ export const submitRequestedCommunityEdit = async (params: {
     attribution: validated.sanitizedAttribution,
     normalizedSig,
     tokenSig,
+    manualLayout: nextManualLayout,
+    targetDifficulty: nextTargetDifficulty,
+    suggestedTier: nextSuggestedTier,
     status: 'pending',
     submittedAt,
     reviewedBy: null,
@@ -2052,6 +2267,217 @@ export const getNextCommunityEndlessLevelId = async (params: {
     : { levelId: null, reason: 'empty' };
 };
 
+// ---------------------------------------------------------------------------
+// Creator Acclaim — like/dislike voting on community challenges and the merit
+// gate that credits a creator's lifetimeAcclaimedChallenges milestone.
+// Threshold math lives in src/shared/acclaim.ts.
+// ---------------------------------------------------------------------------
+
+type CommunityVote = 'like' | 'dislike' | 'clear';
+type ResolvedVote = 'like' | 'dislike' | null;
+
+const communityVoteToValue = (vote: CommunityVote): '1' | '-1' | null =>
+  vote === 'like' ? '1' : vote === 'dislike' ? '-1' : null;
+
+const tallyCommunityVotes = (
+  voteHash: Record<string, string>
+): { likes: number; dislikes: number } => {
+  let likes = 0;
+  let dislikes = 0;
+  for (const value of Object.values(voteHash)) {
+    if (value === '1') {
+      likes += 1;
+    } else if (value === '-1') {
+      dislikes += 1;
+    }
+  }
+  return { likes, dislikes };
+};
+
+const getCommunityLevelAuthorId = async (
+  levelId: string
+): Promise<string | null> => {
+  const submissionId = await redis.hGet(keyCommunitySubmissionsByLevel, levelId);
+  if (!submissionId) {
+    return null;
+  }
+  const submission = await getCommunitySubmission(submissionId);
+  return submission?.authorId ?? null;
+};
+
+// Qualified plays from real players, excluding the creator's own plays.
+const getCommunityQualifiedPlayCount = async (
+  levelId: string,
+  excludeUserId: string | null
+): Promise<number> => {
+  const total = await redis.zCard(keyLevelQualifiedPlayers(levelId));
+  if (!excludeUserId) {
+    return total;
+  }
+  const creatorScore = await redis.zScore(
+    keyLevelQualifiedPlayers(levelId),
+    excludeUserId
+  );
+  const creatorCounted =
+    creatorScore === undefined || creatorScore === null ? 0 : 1;
+  return Math.max(0, total - creatorCounted);
+};
+
+// Credits the creator's acclaim milestone the first time a level clears the bar.
+const evaluateCommunityAcclaim = async (params: {
+  levelId: string;
+  authorId: string | null;
+  likes: number;
+  dislikes: number;
+}): Promise<void> => {
+  if (!params.authorId) {
+    return;
+  }
+  const qualifiedPlays = await getCommunityQualifiedPlayCount(
+    params.levelId,
+    params.authorId
+  );
+  if (
+    !isAcclaimed({
+      qualifiedPlays,
+      likes: params.likes,
+      dislikes: params.dislikes,
+    })
+  ) {
+    return;
+  }
+  const claimed = await redis.set(
+    keyCommunityAcclaimAwarded(params.levelId),
+    '1',
+    { nx: true }
+  );
+  if (!claimed) {
+    return; // already credited for this level
+  }
+  await redis.hIncrBy(keyCommunityCreatorStats(params.authorId), 'acclaimed', 1);
+  await updateQuestProgressOnAcclaim({ userId: params.authorId });
+};
+
+export const recordCommunityVote = async (params: {
+  levelId: string;
+  vote: CommunityVote;
+}): Promise<{ likes: number; dislikes: number; myVote: ResolvedVote }> => {
+  const userId = assertUserId();
+  const puzzle = await getPuzzlePrivate(params.levelId);
+  if (!puzzle || puzzle.source !== 'COMMUNITY') {
+    throw new Error('Voting is only available on community challenges.');
+  }
+  const authorId = await getCommunityLevelAuthorId(params.levelId);
+  if (authorId && authorId === userId) {
+    throw new Error("You can't vote on your own challenge.");
+  }
+  const votesKey = keyCommunityVotes(params.levelId);
+  const desired = communityVoteToValue(params.vote);
+  const priorRaw = await redis.hGet(votesKey, userId);
+  const prior = priorRaw === '1' || priorRaw === '-1' ? priorRaw : null;
+  if (desired !== prior) {
+    if (desired === null) {
+      await redis.hDel(votesKey, [userId]);
+    } else {
+      await redis.hSet(votesKey, { [userId]: desired });
+    }
+  }
+  const { likes, dislikes } = tallyCommunityVotes(await redis.hGetAll(votesKey));
+  await evaluateCommunityAcclaim({
+    levelId: params.levelId,
+    authorId,
+    likes,
+    dislikes,
+  });
+  const myVote: ResolvedVote =
+    desired === '1' ? 'like' : desired === '-1' ? 'dislike' : null;
+  return { likes, dislikes, myVote };
+};
+
+export const getCommunityVoteState = async (
+  levelId: string
+): Promise<{
+  isCommunity: boolean;
+  isOwnChallenge: boolean;
+  likes: number;
+  dislikes: number;
+  myVote: ResolvedVote;
+}> => {
+  const userId = context.userId;
+  const puzzle = await getPuzzlePrivate(levelId);
+  if (!puzzle || puzzle.source !== 'COMMUNITY') {
+    return {
+      isCommunity: false,
+      isOwnChallenge: false,
+      likes: 0,
+      dislikes: 0,
+      myVote: null,
+    };
+  }
+  const authorId = await getCommunityLevelAuthorId(levelId);
+  const voteHash = await redis.hGetAll(keyCommunityVotes(levelId));
+  const { likes, dislikes } = tallyCommunityVotes(voteHash);
+  const myRaw = userId ? voteHash[userId] : undefined;
+  const myVote: ResolvedVote =
+    myRaw === '1' ? 'like' : myRaw === '-1' ? 'dislike' : null;
+  return {
+    isCommunity: true,
+    isOwnChallenge: Boolean(userId && authorId && userId === authorId),
+    likes,
+    dislikes,
+    myVote,
+  };
+};
+
+// Per-level acclaim progress for the creator's "My Ciphers" view (B5).
+export const getCommunityLevelAcclaimProgress = async (params: {
+  levelId: string;
+  authorId: string;
+}): Promise<AcclaimProgress> => {
+  const [qualifiedPlays, voteHash] = await Promise.all([
+    getCommunityQualifiedPlayCount(params.levelId, params.authorId),
+    redis.hGetAll(keyCommunityVotes(params.levelId)),
+  ]);
+  const { likes, dislikes } = tallyCommunityVotes(voteHash);
+  return acclaimProgress({ qualifiedPlays, likes, dislikes });
+};
+
+// Acclaim progress for every published (approved) challenge the caller owns,
+// so "My Ciphers" can show the journey toward the reward.
+export const getMyCommunityCreatorProgress = async (): Promise<{
+  levels: Array<{
+    levelId: string;
+    acclaimed: boolean;
+    progress: AcclaimProgress;
+  }>;
+}> => {
+  const userId = assertUserId();
+  const submissions = await listMyCommunitySubmissions(50);
+  const approved = submissions.filter(
+    (submission): submission is CommunitySubmission & { levelId: string } =>
+      submission.status === 'approved' &&
+      typeof submission.levelId === 'string' &&
+      submission.levelId.length > 0
+  );
+  const levels = await Promise.all(
+    approved.map(async (submission) => {
+      const [progress, awarded] = await Promise.all([
+        getCommunityLevelAcclaimProgress({
+          levelId: submission.levelId,
+          authorId: userId,
+        }),
+        redis.get(keyCommunityAcclaimAwarded(submission.levelId)),
+      ]);
+      return {
+        levelId: submission.levelId,
+        acclaimed: awarded === '1',
+        progress,
+      };
+    })
+  );
+  return { levels };
+};
+
 export const recordCommunityEndlessCompletion = async (params: {
   userId: string;
   levelId: string;
@@ -2074,6 +2500,17 @@ export const recordCommunityEndlessCompletion = async (params: {
       );
       if (owner) {
         await redis.hIncrBy(keyCommunityCreatorStats(owner.authorId), 'totalPlays', 1);
+        // A play can push a level over the qualified-play floor; re-check acclaim
+        // using the current vote tally so a play-driven crossing also credits.
+        const { likes, dislikes } = tallyCommunityVotes(
+          await redis.hGetAll(keyCommunityVotes(params.levelId))
+        );
+        await evaluateCommunityAcclaim({
+          levelId: params.levelId,
+          authorId: owner.authorId,
+          likes,
+          dislikes,
+        });
       }
     }
   }

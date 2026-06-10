@@ -3,8 +3,6 @@ import {
   getPuzzleMapping,
   getPuzzlePrivate,
   getPuzzlePublishedPostId,
-  getStagedLevelId,
-  clearStagedLevelId,
   deletePuzzleData,
   peekNextLevelId,
   reserveUsedSignature,
@@ -331,74 +329,38 @@ const findPendingGeneratedChallenge = async (): Promise<{
   levelId: string;
   puzzle: PuzzlePrivate;
   postId: string | null;
-  cameFromStagedPointer: boolean;
 } | null> => {
-  const stagedLevelId = await getStagedLevelId();
   let publishedFallback: {
     levelId: string;
     puzzle: PuzzlePrivate;
     postId: string;
-    cameFromStagedPointer: boolean;
   } | null = null;
-  const inspectedLevelIds = new Set<string>();
 
-  if (stagedLevelId) {
-    const stagedPuzzle = await getPuzzlePrivate(stagedLevelId);
-    if (!stagedPuzzle) {
-      await clearStagedLevelId();
-    } else {
-      inspectedLevelIds.add(stagedLevelId);
-      const stagedPostId = await getPuzzlePublishedPostId(stagedLevelId);
-      if (!stagedPostId) {
-        return {
-          levelId: stagedLevelId,
-          puzzle: stagedPuzzle,
-          postId: null,
-          cameFromStagedPointer: true,
-        };
-      }
-      publishedFallback = {
-        levelId: stagedLevelId,
-        puzzle: stagedPuzzle,
-        postId: stagedPostId,
-        cameFromStagedPointer: true,
+  const todayDateKey = formatDateKey(new Date());
+  const levelIds = await getAutoDailyLevelIdsForDate(todayDateKey);
+  for (let index = levelIds.length - 1; index >= 0; index -= 1) {
+    const levelId = levelIds[index];
+    if (!levelId) {
+      continue;
+    }
+    const puzzle = await getPuzzlePrivate(levelId);
+    if (!puzzle) {
+      continue;
+    }
+    const postId = await getPuzzlePublishedPostId(levelId);
+    if (!postId) {
+      return {
+        levelId,
+        puzzle,
+        postId: null,
       };
     }
-  }
-
-  const tomorrow = new Date();
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  const candidateDateKeys = [formatDateKey(tomorrow), formatDateKey(new Date())];
-
-  for (const dateKey of candidateDateKeys) {
-    const levelIds = await getAutoDailyLevelIdsForDate(dateKey);
-    for (let index = levelIds.length - 1; index >= 0; index -= 1) {
-      const levelId = levelIds[index];
-      if (!levelId || inspectedLevelIds.has(levelId)) {
-        continue;
-      }
-      inspectedLevelIds.add(levelId);
-      const puzzle = await getPuzzlePrivate(levelId);
-      if (!puzzle) {
-        continue;
-      }
-      const postId = await getPuzzlePublishedPostId(levelId);
-      if (!postId) {
-        return {
-          levelId,
-          puzzle,
-          postId: null,
-          cameFromStagedPointer: false,
-        };
-      }
-      if (!publishedFallback) {
-        publishedFallback = {
-          levelId,
-          puzzle,
-          postId,
-          cameFromStagedPointer: false,
-        };
-      }
+    if (!publishedFallback) {
+      publishedFallback = {
+        levelId,
+        puzzle,
+        postId,
+      };
     }
   }
 
@@ -438,9 +400,6 @@ export const publishLastGeneratedChallenge = async (): Promise<{
   }
   if (challenge.postId) {
     await activateDailyPuzzle(challenge.levelId);
-    if (challenge.cameFromStagedPointer) {
-      await clearStagedLevelId();
-    }
     return {
       levelId: challenge.levelId,
       dateKey: challenge.puzzle.dateKey,
@@ -455,9 +414,6 @@ export const publishLastGeneratedChallenge = async (): Promise<{
     dateKey: challenge.puzzle.dateKey,
     runAs: 'APP',
   });
-  if (challenge.cameFromStagedPointer) {
-    await clearStagedLevelId();
-  }
   return {
     levelId: challenge.levelId,
     dateKey: challenge.puzzle.dateKey,
@@ -969,15 +925,14 @@ export const preflightManualChallengeForPublish = async (params: {
   }
 
   const heuristicRange = orderTiersByFit(profile, hardnessBoundsByTier, validTiers);
-  const selectedTier = choosePreferredOrRecommendedTier({
+  const initialSelectedTier = choosePreferredOrRecommendedTier({
     achievableTiers: heuristicRange,
     preferredDifficulty: params.difficulty,
     fallbackTier: naturalTier,
   });
-  const selectedDifficulty = representativeDifficultyForTier(selectedTier);
   console.log(`${tracePrefix} heuristic range`, {
     heuristicRange,
-    selectedTier,
+    selectedTier: initialSelectedTier,
   });
   const duplicate = await pipeline.duplicate(text);
   if (duplicate.duplicate) {
@@ -1063,29 +1018,53 @@ export const preflightManualChallengeForPublish = async (params: {
       baseBudget,
       budgetRemaining: Math.max(0, baseBudget.total - baseBudget.spent),
     });
-    console.log(`${tracePrefix} probing tier`, {
-      tier: selectedTier,
+    console.log(`${tracePrefix} probing board-achievable tiers`, {
       heuristicRange,
     });
-    const probe = await probeTargetTierAchievability({
-      traceId,
-      basePuzzle: baseBuilt.puzzlePrivate,
-      baseBudget,
-      targetTier: selectedTier,
-      text,
-      pipeline,
-    });
-    console.log(`${tracePrefix} probe result`, {
-      tier: selectedTier,
-      valid: probe.valid,
-      reason: probe.reason,
-    });
+    const tierProbeResults: Partial<Record<DifficultyTier, { valid: boolean; reason?: string }>> = {};
+    for (const tier of heuristicRange) {
+      const probe = await probeTargetTierAchievability({
+        traceId,
+        basePuzzle: baseBuilt.puzzlePrivate,
+        baseBudget,
+        targetTier: tier,
+        text,
+        pipeline,
+      });
+      tierProbeResults[tier] = probe;
+      console.log(`${tracePrefix} probe result`, {
+        tier,
+        valid: probe.valid,
+        reason: probe.reason,
+      });
+    }
 
-    const isAchievable = probe.valid;
-    const targetProbeFailure = probe.reason ?? null;
+    const boardAchievableRange = heuristicRange.filter(
+      (tier) => tierProbeResults[tier]?.valid === true
+    );
+    const requestedTier =
+      typeof params.difficulty === 'number' ? difficultyToTier(params.difficulty) : null;
+    const selectedTier =
+      requestedTier ??
+      choosePreferredOrRecommendedTier({
+        achievableTiers: boardAchievableRange,
+        preferredDifficulty: params.difficulty,
+        fallbackTier: naturalTier,
+      });
+    const selectedDifficulty = representativeDifficultyForTier(selectedTier);
+    const selectedProbe = tierProbeResults[selectedTier];
+    const isAchievable =
+      requestedTier !== null ? selectedProbe?.valid === true : boardAchievableRange.length > 0;
+    const targetProbeFailure =
+      selectedProbe?.reason ??
+      (requestedTier !== null && !boardAchievableRange.includes(requestedTier)
+        ? `Target tier ${requestedTier} did not produce a valid board.`
+        : boardAchievableRange.length === 0
+          ? 'No supported tier produced a valid board.'
+          : null);
     console.log(`${tracePrefix} preflight complete`, {
       targetTier: selectedTier,
-      achievableTierRange: heuristicRange,
+      achievableTierRange: boardAchievableRange,
       isAchievable,
       targetProbeFailure,
     });
@@ -1102,20 +1081,20 @@ export const preflightManualChallengeForPublish = async (params: {
       },
     });
     return {
-      valid: isAchievable,
-      textProfile: profile,
-      naturalDifficulty: naturalTier,
-      achievableTierRange: heuristicRange,
-      reasons: isAchievable
-        ? []
-        : targetProbeFailure
+	      valid: isAchievable,
+	      textProfile: profile,
+	      naturalDifficulty: naturalTier,
+	      achievableTierRange: boardAchievableRange,
+	      reasons: isAchievable
+	        ? []
+	        : targetProbeFailure
           ? [
-              formatFairBuildFailureReason({
-                targetTier: selectedTier,
-                naturalTier,
-                targetProbeFailure,
-                achievableTierRange: heuristicRange,
-              }),
+	              formatFairBuildFailureReason({
+	                targetTier: selectedTier,
+	                naturalTier,
+	                targetProbeFailure,
+	                achievableTierRange: boardAchievableRange,
+	              }),
             ]
           : [],
       suggestions: isAchievable ? [] : generateSuggestions(profile, selectedDifficulty, naturalTier),
@@ -1126,8 +1105,8 @@ export const preflightManualChallengeForPublish = async (params: {
     };
   } catch (error) {
     console.error(`${tracePrefix} preview build failed`, {
-      requestedDifficulty: params.difficulty ?? null,
-      requestedTier: selectedTier,
+	      requestedDifficulty: params.difficulty ?? null,
+	      requestedTier: initialSelectedTier,
       naturalTier,
       heuristicRange,
       error: describePreviewError(error),

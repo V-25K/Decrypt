@@ -11,12 +11,11 @@ const {
   getDecryptSettingsMock,
   computeGlobalDailyBiasMock,
   computeAdaptiveHardnessBoundsMock,
-  clearStagedLevelIdMock,
+  getAllLevelIdsMock,
   getNextLevelIdMock,
   peekNextLevelIdMock,
   getPuzzleMappingMock,
   getPuzzlePublishedPostIdMock,
-  getStagedLevelIdMock,
   getPuzzlePrivateMock,
   getRecentUsedSignatureEntriesMock,
   deletePuzzleDataMock,
@@ -26,7 +25,6 @@ const {
   savePuzzleMock,
   setPuzzlePublicationReceiptMock,
   setPuzzlePublishedPostIdMock,
-  setStagedLevelIdMock,
   setDailyPointerMock,
   transferUsedSignatureReservationMock,
   validatePuzzleMock,
@@ -50,12 +48,11 @@ const {
   getDecryptSettingsMock: vi.fn(),
   computeGlobalDailyBiasMock: vi.fn(),
   computeAdaptiveHardnessBoundsMock: vi.fn(),
-  clearStagedLevelIdMock: vi.fn(),
+  getAllLevelIdsMock: vi.fn(),
   getNextLevelIdMock: vi.fn(),
   peekNextLevelIdMock: vi.fn(),
   getPuzzleMappingMock: vi.fn(),
   getPuzzlePublishedPostIdMock: vi.fn(),
-  getStagedLevelIdMock: vi.fn(),
   getPuzzlePrivateMock: vi.fn(),
   getRecentUsedSignatureEntriesMock: vi.fn(),
   deletePuzzleDataMock: vi.fn(),
@@ -65,7 +62,6 @@ const {
   savePuzzleMock: vi.fn(),
   setPuzzlePublicationReceiptMock: vi.fn(),
   setPuzzlePublishedPostIdMock: vi.fn(),
-  setStagedLevelIdMock: vi.fn(),
   setDailyPointerMock: vi.fn(),
   transferUsedSignatureReservationMock: vi.fn(),
   validatePuzzleMock: vi.fn(),
@@ -146,22 +142,22 @@ vi.mock('./endless-reservations', () => ({
 
 vi.mock('./puzzle-store', () => ({
   clearUsedSignature: clearUsedSignatureMock,
-  clearStagedLevelId: clearStagedLevelIdMock,
   deletePuzzleData: deletePuzzleDataMock,
+  getAllLevelIds: getAllLevelIdsMock,
   getAutoDailyLevelIdsForDate: getAutoDailyLevelIdsForDateMock,
   getNextLevelId: getNextLevelIdMock,
   peekNextLevelId: peekNextLevelIdMock,
   getPuzzleMapping: getPuzzleMappingMock,
   getPuzzlePublicationReceipt: getPuzzlePublicationReceiptMock,
   getPuzzlePublishedPostId: getPuzzlePublishedPostIdMock,
-  getStagedLevelId: getStagedLevelIdMock,
   getPuzzlePrivate: getPuzzlePrivateMock,
   getRecentUsedSignatureEntries: getRecentUsedSignatureEntriesMock,
+  isOfficialDailyPuzzleSource: (source: string) =>
+    source === 'AUTO_DAILY' || source === 'MANUAL_INJECTED',
   reserveUsedSignature: reserveUsedSignatureMock,
   savePuzzle: savePuzzleMock,
   setPuzzlePublicationReceipt: setPuzzlePublicationReceiptMock,
   setPuzzlePublishedPostId: setPuzzlePublishedPostIdMock,
-  setStagedLevelId: setStagedLevelIdMock,
   setDailyPointer: setDailyPointerMock,
   transferUsedSignatureReservation: transferUsedSignatureReservationMock,
 }));
@@ -176,8 +172,6 @@ import {
   injectManualPuzzle,
   publishDailyPost,
   publishAndActivateDailyPost,
-  publishStagedPuzzle,
-  stagePuzzleForTomorrow,
   PuzzleGenerationFailedError,
   PuzzleGenerationInProgressError,
 } from './generator';
@@ -214,12 +208,11 @@ afterEach(() => {
   getDecryptSettingsMock.mockReset();
   computeGlobalDailyBiasMock.mockReset();
   computeAdaptiveHardnessBoundsMock.mockReset();
-  clearStagedLevelIdMock.mockReset();
+  getAllLevelIdsMock.mockReset();
   getNextLevelIdMock.mockReset();
   peekNextLevelIdMock.mockReset();
   getPuzzleMappingMock.mockReset();
   getPuzzlePublishedPostIdMock.mockReset();
-  getStagedLevelIdMock.mockReset();
   getPuzzlePrivateMock.mockReset();
   getRecentUsedSignatureEntriesMock.mockReset();
   deletePuzzleDataMock.mockReset();
@@ -229,7 +222,6 @@ afterEach(() => {
   savePuzzleMock.mockReset();
   setPuzzlePublicationReceiptMock.mockReset();
   setPuzzlePublishedPostIdMock.mockReset();
-  setStagedLevelIdMock.mockReset();
   setDailyPointerMock.mockReset();
   transferUsedSignatureReservationMock.mockReset();
   validatePuzzleMock.mockReset();
@@ -247,6 +239,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  getAllLevelIdsMock.mockResolvedValue([]);
   getRecentUsedSignatureEntriesMock.mockResolvedValue([]);
   getAutoDailyLevelIdsForDateMock.mockResolvedValue([]);
   getPuzzlePublicationReceiptMock.mockResolvedValue(null);
@@ -357,7 +350,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -421,7 +413,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -471,7 +462,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -539,7 +529,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -585,7 +574,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -643,7 +631,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -708,7 +695,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -749,7 +735,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     getAutoDailyLevelIdsForDateMock.mockResolvedValue(
@@ -816,7 +801,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -886,7 +870,6 @@ describe('generatePuzzleForDate', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeGlobalDailyBiasMock.mockResolvedValue(0);
@@ -949,7 +932,6 @@ describe('injectManualPuzzle', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     getBundledEndlessReservationOwnerMock.mockReturnValue(null);
@@ -974,7 +956,6 @@ describe('injectManualPuzzle', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     peekNextLevelIdMock.mockResolvedValue('lvl_0043');
@@ -1017,7 +998,6 @@ describe('injectManualPuzzle', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     peekNextLevelIdMock.mockResolvedValue('lvl_0044');
@@ -1161,7 +1141,6 @@ describe('injectManualPuzzle', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     getBundledEndlessReservationOwnerMock.mockReturnValue('endless_0010');
@@ -1186,7 +1165,6 @@ describe('injectManualPuzzle', () => {
       geminiApiKey: 'api-key',
       contentSafetyMode: 'strict',
       logicalCipherPercent: 10,
-      publishHourUtc: 0,
       timezone: 'UTC',
     });
     computeAdaptiveHardnessBoundsMock.mockResolvedValue({
@@ -1219,8 +1197,8 @@ describe('injectManualPuzzle', () => {
 });
 
 describe('publishDailyPost', () => {
-  it('stores the published post id for the level', async () => {
-    submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });
+	  it('stores the published post id for the level', async () => {
+	    submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });
 
     const postId = await publishDailyPost({
       levelId: 'lvl_0003',
@@ -1248,10 +1226,69 @@ describe('publishDailyPost', () => {
           creatorAvatarUrl: expect.any(String),
         }),
 	      })
-	    );
-	  });
+		    );
+		  });
 
-  it('submits moderator-triggered publishes as the acting user when requested', async () => {
+  it('numbers daily titles from official daily order instead of the global level id', async () => {
+    submitCustomPostMock.mockResolvedValue({ id: 't3_daily124' });
+    getAllLevelIdsMock.mockResolvedValue([
+      'lvl_0001',
+      'lvl_0002',
+      'lvl_0003',
+      'lvl_0004',
+    ]);
+    getPuzzlePrivateMock.mockImplementation(async (levelId: string) => {
+      const puzzles: Record<string, { source: string; createdAt: number }> = {
+        lvl_0001: { source: 'AUTO_DAILY', createdAt: 100 },
+        lvl_0002: { source: 'MANUAL_INJECTED', createdAt: 200 },
+        lvl_0003: { source: 'COMMUNITY', createdAt: 300 },
+        lvl_0004: { source: 'MANUAL_INJECTED', createdAt: 400 },
+      };
+      const puzzle = puzzles[levelId];
+      if (!puzzle) {
+        return null;
+      }
+      return {
+        levelId,
+        dateKey: '2026-03-07',
+        targetText: 'TEST PHRASE',
+        author: 'AUTHOR',
+        challengeType: 'QUOTE',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: {},
+        reverseMapping: {},
+        tiles: [],
+        words: ['TEST'],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 5,
+        isLogical: false,
+        ...puzzle,
+      };
+    });
+
+    const postId = await publishDailyPost({
+      levelId: 'lvl_0004',
+      dateKey: '2026-03-07',
+    });
+
+    expect(postId).toBe('t3_daily124');
+    expect(submitCustomPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Daily Cipher #3',
+        textFallback: {
+          text: 'Daily Cipher #3. Open the interactive post to play.',
+        },
+      })
+    );
+  });
+	
+	  it('submits moderator-triggered publishes as the acting user when requested', async () => {
     submitCustomPostMock.mockResolvedValue({ id: 't3_daily123' });
 
     const postId = await publishDailyPost({
@@ -1512,155 +1549,3 @@ describe('publishAndActivateDailyPost', () => {
   });
 });
 
-describe('stagePuzzleForTomorrow', () => {
-  it('fills both AUTO_DAILY slots for tomorrow when none are pre-generated', async () => {
-    const challengeTypeSeed = 123456789;
-    const expectedQueue = buildChallengeTypeQueueFromSeed(challengeTypeSeed);
-    const baseType = expectedQueue[0] ?? 'QUOTE';
-
-    getDecryptSettingsMock.mockResolvedValue({
-      aiMaxRetries: 1,
-      geminiApiKey: 'api-key',
-      contentSafetyMode: 'strict',
-      logicalCipherPercent: 10,
-      publishHourUtc: 0,
-      timezone: 'UTC',
-    });
-    computeGlobalDailyBiasMock.mockResolvedValue(0);
-    peekNextLevelIdMock.mockResolvedValueOnce('lvl_0100').mockResolvedValueOnce('lvl_0101');
-    getPuzzlePrivateMock.mockResolvedValue(null);
-    reserveUsedSignatureMock.mockResolvedValue(true);
-    redisIncrByMock.mockResolvedValue(1);
-    redisGetMock.mockImplementation((key) => {
-      if (String(key).includes('daily_challenge_type_seed')) {
-        return `${challengeTypeSeed}`;
-      }
-      return null;
-    });
-    generatePuzzlePhraseMock.mockResolvedValue({
-      ...hardValidPhrase,
-      challengeType: baseType,
-    });
-    buildPuzzleMock.mockReturnValue({
-      puzzlePrivate: { targetText: hardValidPhrase.text },
-      puzzlePublic: {},
-    });
-
-    const result = await stagePuzzleForTomorrow();
-
-    expect(result).toEqual({
-      dateKey: expect.any(String),
-      levelIds: ['lvl_0100', 'lvl_0101'],
-    });
-    expect(savePuzzleMock).toHaveBeenCalledTimes(2);
-    // Staged pointer is set once after the loop with the last generated puzzle id,
-    // not on every iteration (Bug #5 fix — prevents first pointer being overwritten).
-    expect(setStagedLevelIdMock).toHaveBeenCalledTimes(1);
-    expect(setStagedLevelIdMock).toHaveBeenCalledWith('lvl_0101');
-  });
-
-  it('does not generate extra tomorrow dailies when another stage request already holds the date lock', async () => {
-    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0200']);
-    redisSetMock.mockImplementation((key) => {
-      const keyText = String(key);
-      if (keyText.includes('daily_stage_lock')) {
-        return false;
-      }
-      if (keyText.includes('puzzle_generation_lock')) {
-        return true;
-      }
-      if (keyText.includes('daily_challenge_type_seed')) {
-        return false;
-      }
-      return true;
-    });
-
-    const result = await stagePuzzleForTomorrow();
-
-    expect(result.levelIds).toEqual(['lvl_0200']);
-    expect(getNextLevelIdMock).not.toHaveBeenCalled();
-    expect(savePuzzleMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('publishStagedPuzzle', () => {
-  it('ignores a stale staged pointer and publishes another same-day AUTO_DAILY if available', async () => {
-    const todayDateKey = new Date().toISOString().slice(0, 10);
-    getStagedLevelIdMock.mockResolvedValue('lvl_missing');
-    getPuzzlePrivateMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        levelId: 'lvl_0004',
-        dateKey: todayDateKey,
-      });
-    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0004']);
-    getPuzzlePublishedPostIdMock.mockResolvedValue(null);
-    submitCustomPostMock.mockResolvedValue({ id: 't3_daily124' });
-
-    const result = await publishStagedPuzzle();
-
-    expect(clearStagedLevelIdMock).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({
-      levelId: 'lvl_0004',
-      dateKey: todayDateKey,
-      postId: 't3_daily124',
-    });
-  });
-
-  it('publishes another unpublished AUTO_DAILY for today when the staged pointer is already published', async () => {
-    const todayDateKey = new Date().toISOString().slice(0, 10);
-    getStagedLevelIdMock.mockResolvedValue('lvl_0003');
-    getPuzzlePrivateMock.mockResolvedValue({
-      levelId: 'lvl_0003',
-      dateKey: todayDateKey,
-    });
-    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0003', 'lvl_0004']);
-    getPuzzlePublishedPostIdMock
-      .mockResolvedValueOnce('t3_existing123')
-      .mockResolvedValueOnce(null);
-    submitCustomPostMock.mockResolvedValue({ id: 't3_daily124' });
-
-    const result = await publishStagedPuzzle();
-
-    expect(result).toEqual({
-      levelId: 'lvl_0004',
-      dateKey: todayDateKey,
-      postId: 't3_daily124',
-    });
-    expect(setDailyPointerMock).toHaveBeenCalledWith('lvl_0004');
-    expect(clearStagedLevelIdMock).not.toHaveBeenCalled();
-  });
-
-  it('returns the existing post id instead of reposting an already published staged puzzle', async () => {
-    const todayDateKey = new Date().toISOString().slice(0, 10);
-    getStagedLevelIdMock.mockResolvedValue('lvl_0003');
-    getPuzzlePrivateMock.mockResolvedValue({
-      levelId: 'lvl_0003',
-      dateKey: todayDateKey,
-    });
-    getAutoDailyLevelIdsForDateMock.mockResolvedValue(['lvl_0003']);
-    getPuzzlePublishedPostIdMock.mockResolvedValue('t3_existing123');
-
-    const result = await publishStagedPuzzle();
-
-    expect(result).toEqual({
-      levelId: 'lvl_0003',
-      dateKey: todayDateKey,
-      postId: 't3_existing123',
-    });
-    expect(submitCustomPostMock).not.toHaveBeenCalled();
-    expect(setDailyPointerMock).toHaveBeenCalledWith('lvl_0003');
-    expect(clearStagedLevelIdMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('throws instead of generating live content when no staged puzzle exists', async () => {
-    getStagedLevelIdMock.mockResolvedValue(null);
-
-    await expect(publishStagedPuzzle()).rejects.toThrow(
-      'No staged puzzle is ready to publish.'
-    );
-
-    expect(getNextLevelIdMock).not.toHaveBeenCalled();
-    expect(submitCustomPostMock).not.toHaveBeenCalled();
-  });
-});

@@ -362,3 +362,10 @@ export const disposeSfx = (): void => {
   primedHtmlAssets.clear();
   bootPrimed = false;
 };
+
+// Stops in-flight SFX playback without tearing down the audio graph.
+// Used by the visibilitychange handler to satisfy Devvit's inline-mode rule:
+// "Use the visibilityChange handler to mute any sounds if a user scrolls away."
+export const pauseAllSfx = (): void => {
+  stopAllSfxPlayback();
+};

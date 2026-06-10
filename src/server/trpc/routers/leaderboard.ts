@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import {
+  leaderboardEntrySchema,
   leaderboardGetInputSchema,
   leaderboardGetLevelInputSchema,
+  leaderboardGetResponseSchema,
   leaderboardRankSummarySchema,
   levelLeaderboardPageInputSchema,
   dailyLeaderboardPageInputSchema,
@@ -26,9 +28,9 @@ export const leaderboardRouter = router({
   getDaily: publicProcedure.input(leaderboardGetInputSchema).query(async ({ input }) => {
     const dateKey = input.dateKey ?? formatDateKey(new Date());
     const limit = input.limit ?? 10;
-    return {
+    return leaderboardGetResponseSchema.parse({
       entries: await getDailyTop(dateKey, limit),
-    };
+    });
   }),
   getDailyPage: publicProcedure
     .input(dailyLeaderboardPageInputSchema)
@@ -43,9 +45,9 @@ export const leaderboardRouter = router({
     .input(leaderboardGetLevelInputSchema)
     .query(async ({ input }) => {
       const limit = input.limit ?? 10;
-      return {
+      return leaderboardGetResponseSchema.parse({
         entries: await getLevelTop(input.levelId, limit),
-      };
+      });
     }),
   getLevelPage: publicProcedure
     .input(levelLeaderboardPageInputSchema)
@@ -55,6 +57,13 @@ export const leaderboardRouter = router({
     }),
 	  getAllTime: publicProcedure
     .input(z.object({ limit: z.number().int().positive().max(50).optional() }))
+    .output(
+      z.object({
+        levels: z.array(leaderboardEntrySchema),
+        global: z.array(leaderboardEntrySchema),
+        logic: z.array(leaderboardEntrySchema),
+      })
+    )
     .query(async ({ input }) => {
       const limit = input.limit ?? 10;
       return {

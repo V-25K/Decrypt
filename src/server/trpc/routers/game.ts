@@ -14,6 +14,7 @@ import {
   gamePreviewResponseSchema,
   gamePurchaseDailyRetryInputSchema,
   gamePurchaseDailyRetryResponseSchema,
+  puzzlePublicSchema,
   gameStartSessionInputSchema,
   gameStartSessionResponseSchema,
   gameSubmitGuessesInputSchema,
@@ -129,6 +130,7 @@ export const gameRouter = router({
     }),
   getCompletionReceipt: authedProcedure
     .input(z.object({ levelId: z.string().min(1) }))
+    .output(z.object({ solveSeconds: z.number().int().nonnegative().nullable() }))
     .query(async ({ input, ctx }) => {
       const receipt = await getShareCompletionReceipt(ctx.userId, input.levelId);
       return {
@@ -179,12 +181,15 @@ export const gameRouter = router({
     }),
   getCurrentView: publicProcedure
     .input(z.object({ levelId: z.string().min(1) }))
+    .output(puzzlePublicSchema)
     .query(async ({ input }) => {
       // revealedIndices are always sourced server-side from the stored session;
       // never accepted from the caller to prevent client-side tile reveal exploits.
-      return await getCurrentPuzzleView({
-        levelId: input.levelId,
-        revealedIndices: [],
-      });
+      return puzzlePublicSchema.parse(
+        await getCurrentPuzzleView({
+          levelId: input.levelId,
+          revealedIndices: [],
+        })
+      );
     }),
 });

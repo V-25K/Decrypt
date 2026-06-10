@@ -69,6 +69,52 @@ describe('mod-clear-subreddit-data-submit', () => {
     });
   });
 
+  it('rejects when the subreddit name confirmation is missing or wrong', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+
+    const response = await forms.request(
+      'http://localhost/mod-clear-subreddit-data-submit',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          confirmation: 'CLEAR',
+          subredditConfirmation: 'someothersubreddit',
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(clearSubredditGameDataMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      showToast: 'Type the subreddit name (decrypttest) to confirm.',
+    });
+  });
+
+  it('accepts case-insensitive subreddit name confirmation', async () => {
+    hasAdminAccessMock.mockResolvedValue(true);
+    clearSubredditGameDataMock.mockResolvedValue({
+      knownUsers: 0,
+      sessions: 0,
+      deletedKeys: 0,
+    });
+
+    const response = await forms.request(
+      'http://localhost/mod-clear-subreddit-data-submit',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          confirmation: 'CLEAR',
+          subredditConfirmation: 'DECRYPTTEST',
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(clearSubredditGameDataMock).toHaveBeenCalledTimes(1);
+  });
+
   it('clears subreddit game data after typed confirmation', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
     clearSubredditGameDataMock.mockResolvedValue({
@@ -80,7 +126,10 @@ describe('mod-clear-subreddit-data-submit', () => {
     const response = await forms.request('http://localhost/mod-clear-subreddit-data-submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ confirmation: 'CLEAR' }),
+      body: JSON.stringify({
+        confirmation: 'CLEAR',
+        subredditConfirmation: 'decrypttest',
+      }),
     });
 
     expect(response.status).toBe(200);
@@ -128,7 +177,7 @@ describe('mod-inject-submit', () => {
 
     const body = await response.json();
     expect(body.showForm.name).toBe('mod_inject_review_form');
-    expect(body.showForm.form.acceptLabel).toBe('Publish as Hard');
+    expect(body.showForm.form.acceptLabel).toBe('Publish Selected Tier');
     expect(body.showForm.form.description).toContain('Detected difficulty: Hard.');
     expect(body.showForm.form.description).toContain('Achievable range: Medium -> Hard.');
 
@@ -187,7 +236,7 @@ describe('mod-inject-submit', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.showForm.form.acceptLabel).toBe('Publish as Hard');
+    expect(body.showForm.form.acceptLabel).toBe('Publish Selected Tier');
 
     const difficultyField = body.showForm.form.fields.find(
       (field: { name: string }) => field.name === 'difficulty'

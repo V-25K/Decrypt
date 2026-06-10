@@ -127,6 +127,16 @@ export const updateQuestProgressOnDailyTopRank = async (params: {
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 
+// Credited once per community challenge that crosses the acclaim bar (see
+// src/server/core/community.ts evaluateCommunityAcclaim).
+export const updateQuestProgressOnAcclaim = async (params: {
+  userId: string;
+}): Promise<void> => {
+  const lifetime = await getLifetimeQuestProgress(params.userId);
+  lifetime.lifetimeAcclaimedChallenges += 1;
+  await saveLifetimeQuestProgress(params.userId, lifetime);
+};
+
 export const getQuestStatus = async (params: {
   userId: string;
   dateKey: string;

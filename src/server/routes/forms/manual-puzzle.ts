@@ -5,24 +5,23 @@ import {
   ManualChallengePreflightFailedError,
   preflightManualChallengeForPublish,
   type ManualChallengeValidationResult,
-} from '../core/admin';
-import { clearSubredditGameData } from '../core/playtest-reset';
+} from '../../core/admin';
 import {
   difficultyToTier,
   looksLikeAllowedAuthor,
   maxPuzzleAuthorLength,
   sanitizeAuthor,
   sanitizePhrase,
-} from '../core/content';
+} from '../../core/content';
 import {
   challengeTypeDisplayOrder,
   challengeTypeMetadata,
   challengeTypeSchema,
   challengeTypeSelectionHelpText,
   type ChallengeType,
-} from '../../shared/game';
-import { context } from '@devvit/web/server';
-import { hasAdminAccess } from '../core/admin-auth';
+} from '../../../shared/game';
+import { rejectWithoutAdminAccess } from './shared/auth';
+import { firstValue, normalizeLoose } from './shared/parse';
 
 type ModInjectFormRequest = {
   text: string;
@@ -35,10 +34,6 @@ type ModInjectReviewFormRequest = {
   author?: unknown;
   difficulty?: unknown;
   challengeType?: unknown;
-};
-
-type ModClearSubredditDataFormRequest = {
-  confirmation?: unknown;
 };
 
 type ManualPublishFailure = {
@@ -161,19 +156,6 @@ const formatPublishFailureToast = (params: {
   return message;
 };
 
-export const forms = new Hono();
-
-const rejectWithoutAdminAccess = async (c: Context): Promise<Response | null> => {
-  const allowed = await hasAdminAccess({
-    subredditName: context.subredditName,
-    username: context.username,
-  });
-  if (allowed) {
-    return null;
-  }
-  return c.json<UiResponse>({ showToast: 'Moderator access required.' }, 200);
-};
-
 const difficultyBandToValue: Record<string, number> = {
   warmup: 2,
   medium: 5,
@@ -209,23 +191,6 @@ const representativeDifficultyForTierLabel = (tier: string): number => {
     default:
       return representativeDifficultyByTier.medium;
   }
-};
-
-const normalizeLoose = (value: string): string =>
-  value.toUpperCase().replace(/\s+/g, ' ').trim();
-
-const firstValue = (value: unknown): string | null => {
-  if (Array.isArray(value)) {
-    const candidate = value[0];
-    return typeof candidate === 'string' ? candidate : null;
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return `${value}`;
-  }
-  return null;
 };
 
 const parseDifficulty = (raw: unknown): number | null | undefined => {
@@ -346,7 +311,7 @@ const buildReviewFormResponse = (params: {
         description:
           `Detected difficulty: ${formatTier(recommendedTier)}. ` +
           `Achievable range: ${formatTierRange(params.validation.achievableTierRange)}.`,
-        acceptLabel: `Publish as ${formatTier(recommendedTier)}`,
+        acceptLabel: 'Publish Selected Tier',
         fields: [
           {
             type: 'paragraph',
@@ -636,7 +601,9 @@ const buildManualPublishResultResponse = (params: {
   };
 };
 
-forms.post('/mod-inject-submit', async (c) => {
+export const manualPuzzleRoutes = new Hono();
+
+manualPuzzleRoutes.post('/mod-inject-submit', async (c) => {
   return handleManualPuzzleRequest<ModInjectFormRequest>(c, {
     actionLabel: 'injecting',
     fallbackPrefix: 'Failed to inject manual puzzle',
@@ -669,7 +636,7 @@ forms.post('/mod-inject-submit', async (c) => {
   });
 });
 
-forms.post('/mod-inject-review-submit', async (c) => {
+manualPuzzleRoutes.post('/mod-inject-review-submit', async (c) => {
   return handleManualPuzzleRequest<ModInjectReviewFormRequest>(c, {
     actionLabel: 'publishing reviewed',
     fallbackPrefix: 'Failed to publish manual puzzle',
@@ -716,39 +683,4 @@ forms.post('/mod-inject-review-submit', async (c) => {
       );
     },
   });
-});
-
-forms.post('/mod-clear-subreddit-data-submit', async (c) => {
-  const accessDenied = await rejectWithoutAdminAccess(c);
-  if (accessDenied) {
-    return accessDenied;
-  }
-  try {
-    const body = await c.req.json<ModClearSubredditDataFormRequest>();
-    const confirmation = firstValue(body.confirmation);
-    if (confirmation !== 'CLEAR') {
-      return c.json<UiResponse>(
-        { showToast: 'Type CLEAR to confirm clearing subreddit game data.' },
-        200
-      );
-    }
-    const result = await clearSubredditGameData();
-    return c.json<UiResponse>(
-      {
-        showToast:
-          `Cleared subreddit game data for ${result.knownUsers} player(s), ` +
-          `${result.sessions} session(s), and ${result.deletedKeys} key(s).`,
-      },
-      200
-    );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Error clearing subreddit game data: ${reason}`);
-    return c.json<UiResponse>(
-      {
-        showToast: `Failed to clear subreddit game data: ${reason}`,
-      },
-      200
-    );
-  }
 });

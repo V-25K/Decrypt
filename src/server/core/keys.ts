@@ -1,8 +1,6 @@
 export const keyDailyPointer = 'decrypt:state:daily_pointer';
 export const keyLevelIdCounter = 'decrypt:state:level_id_counter';
 export const keyPuzzleGenerationLock = 'decrypt:state:puzzle_generation_lock';
-export const keyDailyStageLock = (dateKey: string) =>
-  `decrypt:state:daily_stage_lock:${dateKey}`;
 export const keyAIPoolCandidateSequence = 'decrypt:state:ai_pool_candidate_sequence';
 export const keyAIPoolFillLock = 'decrypt:state:ai_pool_fill_lock';
 export const keyDailyTierCursor = (dateKey: string) =>
@@ -21,7 +19,6 @@ export const keyAIPoolReservedSignature = (normalizedSignature: string) =>
   `decrypt:ai_pool:reserved_signature:${normalizedSignature}`;
 export const keyAIPoolDifficultyCursor = (tier: string, challengeType: string) =>
   `decrypt:ai_pool:cursor:${tier}:${challengeType}`;
-export const keyPuzzleStaged = 'decrypt:puzzle:staged';
 export const keyPuzzlePublishedPost = (levelId: string) =>
   `decrypt:puzzle:${levelId}:published_post`;
 export const keyDailyPostCreateLock = 'decrypt:lock:daily_post_create';
@@ -190,6 +187,9 @@ export const keyGrantedOrderSkus = (orderId: string) =>
 export const keyOrderGrantRecord = (orderId: string) =>
   `decrypt:payments:order_grant_record:${orderId}`;
 
+export const keyOneTimeSkuClaimLock = (userId: string, sku: string) =>
+  `decrypt:user:${userId}:one_time_claim:${sku}`;
+
 export const keyModeratorAccessCache = (subredditName: string, username: string) =>
   `decrypt:cache:mod:${subredditName}:${username}`;
 
@@ -237,3 +237,14 @@ export const keyCommunityPuzzlePlays = (levelId: string) =>
 
 export const keyCommunityApprovalLock = (submissionId: string) =>
   `decrypt:community:approval_lock:${submissionId}`;
+
+// Per-(level) hash of voter userId -> '1' (like) | '-1' (dislike). Gives one
+// vote per user with toggle/idempotency. Aggregate like/dislike counters live
+// on keyCommunityPuzzlePlays(levelId) and are kept in sync with this hash.
+export const keyCommunityVotes = (levelId: string) =>
+  `decrypt:community:votes:${levelId}`;
+
+// NX flag: set the first time a level crosses the acclaim bar so the creator's
+// milestone is credited at most once per level.
+export const keyCommunityAcclaimAwarded = (levelId: string) =>
+  `decrypt:community:acclaim_awarded:${levelId}`;

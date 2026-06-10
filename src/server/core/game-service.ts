@@ -67,6 +67,7 @@ import {
 import { getDailyRetryQuote } from '../../shared/game-balance';
 import {
 	  computeScore,
+	  getRatingOutcomeReceipt,
 	  getUserRankSummary,
 	  incrementAllTimeLogic,
 	  recordAllTimeLevelScore,
@@ -155,6 +156,7 @@ const maxOptimisticRetries = 3;
 const completionLockTtlMs = 120_000;
 
 const continueScorePenalty = 50;
+const minimumCompletionScore = 1;
 
 const completionLockExpiration = (): Date =>
   new Date(Date.now() + completionLockTtlMs);
@@ -1487,7 +1489,7 @@ export const completeSessionForLevel = async (params: {
 	        ? applyDailyRetryPenalty(baseScore, dailyRetryCount)
 	        : baseScore;
 	    const score = Math.max(
-	      0,
+	      minimumCompletionScore,
 	      scoreBeforeContinuePenalty - (continuedLevel ? continueScorePenalty : 0)
 	    );
 
@@ -1573,7 +1575,48 @@ export const completeSessionForLevel = async (params: {
 	    let ratingDelta = 0;
 	    let ratingAfter = nextProfile.globalRating;
 	    let globalScoreAfter = nextProfile.globalScore;
+	    const hydrateJournaledGlobalWin = async (): Promise<void> => {
+	      const receipt = await getRatingOutcomeReceipt(
+	        userId,
+	        `win:${params.levelId}`
+	      );
+	      if (
+	        !receipt ||
+	        typeof receipt.ratingGamesAfter !== 'number' ||
+	        nextProfile.ratingGames >= receipt.ratingGamesAfter
+	      ) {
+	        return;
+	      }
+	      nextProfile = {
+	        ...nextProfile,
+	        globalRating: receipt.ratingAfter,
+	        globalScore:
+	          typeof receipt.globalScoreAfter === 'number' &&
+	          nextProfile.globalScore < receipt.globalScoreAfter
+	            ? receipt.globalScoreAfter
+	            : nextProfile.globalScore,
+	        ratingGames: receipt.ratingGamesAfter,
+	        ratingWins:
+	          typeof receipt.ratingWinsAfter === 'number'
+	            ? receipt.ratingWinsAfter
+	            : nextProfile.ratingWins,
+	        ratingLosses:
+	          typeof receipt.ratingLossesAfter === 'number'
+	            ? receipt.ratingLossesAfter
+	            : nextProfile.ratingLosses,
+	        globalWinStreak:
+	          typeof receipt.globalWinStreakAfter === 'number'
+	            ? receipt.globalWinStreakAfter
+	            : nextProfile.globalWinStreak,
+	      };
+	      ratingDelta = receipt.ratingDelta;
+	      ratingAfter = receipt.ratingAfter;
+	      globalScoreAfter = nextProfile.globalScore;
+	    };
 	    if (globalEligible) {
+	      if (hasStep('record_global_win')) {
+	        await hydrateJournaledGlobalWin();
+	      }
 	      await runCompletionStep('record_global_win', async () => {
 	        const ratingOutcome = await recordGlobalWin({
 	          userId,

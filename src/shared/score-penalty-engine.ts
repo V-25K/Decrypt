@@ -1,8 +1,8 @@
-export interface ScorePenaltyConfig {
+export type ScorePenaltyConfig = {
   maxPenalty: number; // 25% maximum
   penaltyType: 'logarithmic' | 'linear';
   firstRetryFree: boolean;
-}
+};
 
 /**
  * ScorePenaltyEngine implements the new score penalty system

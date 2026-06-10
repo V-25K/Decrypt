@@ -30,7 +30,7 @@ vi.mock('./share-receipts', () => ({
   getShareCompletionReceipt: vi.fn(),
 }));
 
-import { recordGlobalLoss, recordGlobalWin } from './leaderboard';
+import { computeScore, recordGlobalLoss, recordGlobalWin } from './leaderboard';
 
 const profileFixture = (): UserProfile => ({
   coins: 0,
@@ -113,6 +113,42 @@ afterEach(() => {
 });
 
 describe('global rating leaderboard writes', () => {
+  it('calculates challenge score with speed, mistake, and powerup multipliers', () => {
+    expect(computeScore({
+      solveSeconds: 0,
+      mistakes: 0,
+      usedPowerups: 0,
+    })).toBe(1300);
+    expect(computeScore({
+      solveSeconds: 120,
+      mistakes: 0,
+      usedPowerups: 0,
+    })).toBe(700);
+    expect(computeScore({
+      solveSeconds: 120,
+      mistakes: 1,
+      usedPowerups: 0,
+    })).toBe(630);
+    expect(computeScore({
+      solveSeconds: 120,
+      mistakes: 0,
+      usedPowerups: 1,
+    })).toBe(665);
+    expect(computeScore({
+      solveSeconds: 120,
+      mistakes: 1,
+      usedPowerups: 1,
+    })).toBe(599);
+  });
+
+  it('keeps challenge score finite and non-negative for bad numeric inputs', () => {
+    expect(computeScore({
+      solveSeconds: Number.NaN,
+      mistakes: Number.NaN,
+      usedPowerups: Number.NaN,
+    })).toBe(1300);
+  });
+
   it('updates global score and rating on a first win', async () => {
     hGetMock.mockResolvedValue(null);
     hSetNXMock.mockResolvedValue(1);
@@ -164,6 +200,70 @@ describe('global rating leaderboard writes', () => {
     expect(result.globalScoreDelta).toBe(150);
     expect(result.ratingDelta).toBe(0);
     expect(result.profile.globalRating).toBe(500);
+  });
+
+  it('does not subtract global score when a replay score is below the stored best', async () => {
+    hGetMock.mockResolvedValue('700');
+    hSetNXMock.mockResolvedValue(0);
+
+    const result = await recordGlobalWin({
+      userId: 'u1',
+      levelId: 'lvl_0001',
+      solveScore: 650,
+      profile: {
+        ...profileFixture(),
+        globalScore: 700,
+      },
+      puzzle: puzzleFixture(),
+      solveSeconds: 40,
+      mistakes: 0,
+      usedPowerups: 0,
+      isRecoveryRun: false,
+    });
+
+    expect(result.globalScoreDelta).toBe(0);
+    expect(result.profile.globalScore).toBe(700);
+    expect(zIncrByMock).not.toHaveBeenCalled();
+  });
+
+  it('hydrates a recorded win receipt when retrying after rating was journaled before profile save', async () => {
+    hGetMock
+      .mockResolvedValueOnce('500')
+      .mockResolvedValueOnce(JSON.stringify({
+        ratingDelta: 23,
+        ratingAfter: 523,
+        ts: 1717584000000,
+        globalScoreAfter: 650,
+        ratingGamesAfter: 1,
+        ratingWinsAfter: 1,
+        ratingLossesAfter: 0,
+        globalWinStreakAfter: 1,
+      }));
+    hSetNXMock.mockResolvedValue(0);
+
+    const result = await recordGlobalWin({
+      userId: 'u1',
+      levelId: 'lvl_0001',
+      solveScore: 650,
+      profile: profileFixture(),
+      puzzle: puzzleFixture(),
+      solveSeconds: 40,
+      mistakes: 0,
+      usedPowerups: 0,
+      isRecoveryRun: false,
+    });
+
+    expect(result.ratingDelta).toBe(23);
+    expect(result.ratingAfter).toBe(523);
+    expect(result.profile.globalRating).toBe(523);
+    expect(result.profile.globalScore).toBe(650);
+    expect(result.profile.ratingGames).toBe(1);
+    expect(result.profile.ratingWins).toBe(1);
+    expect(result.profile.globalWinStreak).toBe(1);
+    expect(zAddMock).toHaveBeenCalledWith('decrypt:leaderboard:global:rating', {
+      member: 'u1',
+      score: 523,
+    });
   });
 
   it('decreases rating and resets streak on a first loss', async () => {

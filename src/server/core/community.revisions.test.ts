@@ -213,6 +213,44 @@ describe('community revision workflow', () => {
     ).rejects.toThrow('already been played');
   });
 
+  it('accepts an auto revision and ignores any provided manual layout', async () => {
+    contextState.userId = 't2_creator';
+    contextState.username = 'creator';
+    redisMock.hGetAll.mockResolvedValue({
+      ...approvedSubmissionHash,
+      status: 'changes_requested',
+      rejectionReason: 'Tighten the title.',
+    });
+    getPuzzlePrivateMock.mockResolvedValue({
+      levelId: 'lvl_0042',
+      targetText: 'THE QUICK BROWN FOX JUMPS',
+      source: 'COMMUNITY',
+      difficulty: 5,
+    });
+    getLevelEngagementMock.mockResolvedValue({ plays: 0, wins: 0, winRatePct: 0 });
+
+    const result = await submitRequestedCommunityEdit({
+      submissionId: 'sub_001',
+      title: 'Sharper Title',
+      text: 'THE QUICK BROWN FOX JUMPS',
+      attribution: 'Tester',
+      // An auto submission must ignore a stray manual layout payload.
+      manualLayout: {
+        prefilledIndices: [0, 1],
+        prefilledWordIndices: [],
+        blindIndices: [],
+        lockIndices: [],
+        lockKeyIndices: [],
+        padlocks: [],
+      },
+    });
+
+    expect(result.status).toBe('pending');
+    expect(result.title).toBe('SHARPER TITLE');
+    expect(result.creationMode).toBe('auto');
+    expect(result.manualLayout).toBeNull();
+  });
+
   it('blocks in-place reapproval if plays arrive after a text-changing revision', async () => {
     redisMock.hGetAll.mockResolvedValue({
       ...approvedSubmissionHash,

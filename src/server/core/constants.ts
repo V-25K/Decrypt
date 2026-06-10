@@ -44,7 +44,6 @@ export const qualifiesForFastSolveBonus = (
 export const logicalCipherDefaultPercent = 10;
 
 export const defaultSubredditSettings = {
-  publishHourUtc: 0,
   timezone: 'UTC',
   logicalCipherPercent: logicalCipherDefaultPercent,
   aiMaxRetries: 3,

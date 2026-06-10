@@ -8,7 +8,8 @@ export type QuestGroupKey =
   | 'spender'
   | 'purchase'
   | 'dailyTop'
-  | 'endless';
+  | 'endless'
+  | 'creator';
 
 export type QuestReward = {
   coins: number;
@@ -42,15 +43,6 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'dailyPlayCount',
     target: 1,
     reward: { coins: 10, inventory: {}, flair: null },
-  },
-  {
-    id: 'daily_play_2',
-    title: 'Double Feature',
-    description: 'Complete both daily challenges today.',
-    category: 'daily',
-    progressField: 'dailyPlayCount',
-    target: 2,
-    reward: { coins: 20, inventory: {}, flair: null },
   },
   {
     id: 'daily_share_1',
@@ -349,6 +341,36 @@ export const questCatalog: QuestDefinition[] = [
     groupKey: 'endless',
     reward: { coins: 650, inventory: {}, flair: 'No Finish Line' },
   },
+  {
+    id: 'milestone_creator_acclaim_1',
+    title: 'Crowd Favorite',
+    description: 'Get 1 community challenge loved by players (200+ plays, 70%+ likes).',
+    category: 'milestone',
+    progressField: 'lifetimeAcclaimedChallenges',
+    target: 1,
+    groupKey: 'creator',
+    reward: { coins: 150, inventory: {}, flair: 'Loved Creator' },
+  },
+  {
+    id: 'milestone_creator_acclaim_3',
+    title: 'Acclaimed Creator',
+    description: 'Get 3 community challenges loved by players (200+ plays, 70%+ likes).',
+    category: 'milestone',
+    progressField: 'lifetimeAcclaimedChallenges',
+    target: 3,
+    groupKey: 'creator',
+    reward: { coins: 350, inventory: {}, flair: 'Acclaimed Creator' },
+  },
+  {
+    id: 'milestone_creator_acclaim_10',
+    title: 'Beloved Creator',
+    description: 'Get 10 community challenges loved by players (200+ plays, 70%+ likes).',
+    category: 'milestone',
+    progressField: 'lifetimeAcclaimedChallenges',
+    target: 10,
+    groupKey: 'creator',
+    reward: { coins: 900, inventory: {}, flair: 'Beloved Creator' },
+  },
 ];
 
 export const questCatalogById = questCatalog.reduce<Record<string, QuestDefinition>>(
@@ -378,6 +400,9 @@ export const questProgressionGroups: Record<QuestGroupKey, string[]> = {
   endless: questCatalog
     .filter((quest) => quest.groupKey === 'endless')
     .map((quest) => quest.id),
+  creator: questCatalog
+    .filter((quest) => quest.groupKey === 'creator')
+    .map((quest) => quest.id),
 };
 
 const communityFlairStyleByGroup: Record<QuestGroupKey, CommunityFlairStyle> = {
@@ -387,6 +412,7 @@ const communityFlairStyleByGroup: Record<QuestGroupKey, CommunityFlairStyle> = {
   purchase: { backgroundColor: '#f5b38a', textColor: 'dark' },
   dailyTop: { backgroundColor: '#f48aa4', textColor: 'dark' },
   endless: { backgroundColor: '#78d6c6', textColor: 'dark' },
+  creator: { backgroundColor: '#c4a7f0', textColor: 'dark' },
 };
 
 const flairGroupByName = questCatalog.reduce<Record<string, QuestGroupKey>>(

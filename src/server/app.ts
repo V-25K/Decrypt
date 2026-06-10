@@ -12,6 +12,7 @@ import {
   getDailyInlineStatus,
   getDailyPreview,
 } from './core/game-service';
+import { describeRequestError } from './core/redaction';
 import {
   gameInlineStatusResponseSchema,
   gamePreviewResponseSchema,
@@ -54,7 +55,9 @@ export const createApp = () => {
   const app = new Hono();
 
   app.onError((error, c) => {
-    console.error(`[server] unhandled error ${c.req.method} ${c.req.path}:`, error);
+    console.error(
+      `[server] unhandled error ${c.req.method} ${c.req.path}: ${describeRequestError(error)}`
+    );
     return c.json({ error: 'Internal server error' }, 500);
   });
 

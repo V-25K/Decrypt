@@ -7,6 +7,8 @@ const {
   hasPurchasedSkuMock,
   markSkuPurchasedMock,
   unmarkSkuPurchasedMock,
+  claimOneTimeSkuMock,
+  releaseOneTimeClaimMock,
   updateQuestProgressOnPurchaseMock,
   updateQuestProgressOnRefundMock,
   watchMock,
@@ -19,6 +21,8 @@ const {
   hasPurchasedSkuMock: vi.fn(),
   markSkuPurchasedMock: vi.fn(),
   unmarkSkuPurchasedMock: vi.fn(),
+  claimOneTimeSkuMock: vi.fn(),
+  releaseOneTimeClaimMock: vi.fn(),
   updateQuestProgressOnPurchaseMock: vi.fn(),
   updateQuestProgressOnRefundMock: vi.fn(),
   watchMock: vi.fn(),
@@ -69,6 +73,8 @@ vi.mock('../core/state', () => ({
   hasPurchasedSku: hasPurchasedSkuMock,
   markSkuPurchased: markSkuPurchasedMock,
   unmarkSkuPurchased: unmarkSkuPurchasedMock,
+  claimOneTimeSku: claimOneTimeSkuMock,
+  releaseOneTimeClaim: releaseOneTimeClaimMock,
 }));
 
 vi.mock('../core/quests', () => ({
@@ -152,6 +158,10 @@ const seedUserState = (params: {
 beforeEach(() => {
   watchMock.mockResolvedValue(tx);
   tx.exec.mockResolvedValue(['ok']);
+  // Default: the in-flight claim succeeds. Individual tests override to simulate
+  // already-owned or in-progress states.
+  claimOneTimeSkuMock.mockResolvedValue({ claimed: true, alreadyOwned: false });
+  releaseOneTimeClaimMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -160,6 +170,8 @@ afterEach(() => {
   hasPurchasedSkuMock.mockReset();
   markSkuPurchasedMock.mockReset();
   unmarkSkuPurchasedMock.mockReset();
+  claimOneTimeSkuMock.mockReset();
+  releaseOneTimeClaimMock.mockReset();
   updateQuestProgressOnPurchaseMock.mockReset();
   updateQuestProgressOnRefundMock.mockReset();
   watchMock.mockReset();
@@ -372,5 +384,127 @@ describe('paymentsRoutes', () => {
       status: 'refunded',
       grantedSkus: ['rookie_stash'],
     });
+  });
+
+  it('grants a one-time SKU via the claim guard (no getOrders dependency)', async () => {
+    // Regression: the one-time guard is claimOneTimeSku (Redis NX + durable
+    // hasPurchasedSku record), NOT payments.getOrders — whose filters are
+    // non-functional in this Devvit version. A fresh claim must grant normally.
+    seedUserState({ userId: 'u_order' });
+
+    const response = await paymentsRoutes.request('http://localhost/fulfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'order_claim_grant',
+        userId: 'u_order',
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(claimOneTimeSkuMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(markSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(readOrderRecord('order_claim_grant')).toMatchObject({
+      status: 'fulfilled',
+      grantedSkus: ['rookie_stash'],
+      markedOneTimeSkus: ['rookie_stash'],
+    });
+  });
+
+  it('short-circuits when claimOneTimeSku reports the SKU is already owned', async () => {
+    claimOneTimeSkuMock.mockResolvedValue({ claimed: false, alreadyOwned: true });
+    seedUserState({ userId: 'u_order' });
+
+    const response = await paymentsRoutes.request('http://localhost/fulfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'order_already_owned',
+        userId: 'u_order',
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(markSkuPurchasedMock).not.toHaveBeenCalled();
+    expect(tx.hSet).not.toHaveBeenCalled();
+    expect(readOrderRecord('order_already_owned')).toMatchObject({
+      grantedSkus: [],
+      markedOneTimeSkus: [],
+      status: 'fulfilled',
+    });
+  });
+
+  it('fails fulfillment (so Devvit can retry) when another fulfillment holds the claim lock', async () => {
+    // claim.claimed === false AND alreadyOwned === false means another order's
+    // fulfillment is mid-flight for the same (user, sku). The handler must
+    // reject so Devvit retries shortly rather than silently double-grant.
+    claimOneTimeSkuMock.mockResolvedValue({ claimed: false, alreadyOwned: false });
+    seedUserState({ userId: 'u_order' });
+
+    const response = await paymentsRoutes.request('http://localhost/fulfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'order_busy',
+        userId: 'u_order',
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(markSkuPurchasedMock).not.toHaveBeenCalled();
+    expect(tx.hSet).not.toHaveBeenCalled();
+    expect(readOrderRecord('order_busy')).toBeNull();
+  });
+
+  it('releases the claim on the success path once markSkuPurchased commits', async () => {
+    // When the loop completes normally, the per-(user, sku) claim must be
+    // released so subsequent orders short-circuit on hasPurchasedSku instead
+    // of waiting for the 120s lock TTL.
+    seedUserState({ userId: 'u_order' });
+
+    const response = await paymentsRoutes.request('http://localhost/fulfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'order_success_release',
+        userId: 'u_order',
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(markSkuPurchasedMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(releaseOneTimeClaimMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+  });
+
+  it('releases the claim during rollback when applyBundle throws before mark', async () => {
+    // applyBundle fails after the claim is acquired but before markSkuPurchased
+    // commits. The rollback's release pass must clean the lock so a future
+    // order for the same SKU is not blocked for the full TTL.
+    seedUserState({ userId: 'u_order' });
+    tx.exec.mockResolvedValue(null); // optimistic lock keeps failing → throws
+
+    const response = await paymentsRoutes.request('http://localhost/fulfill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'order_apply_fail',
+        userId: 'u_order',
+        status: OrderStatus.ORDER_STATUS_PAID,
+        products: [{ sku: 'rookie_stash' }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(markSkuPurchasedMock).not.toHaveBeenCalled();
+    expect(releaseOneTimeClaimMock).toHaveBeenCalledWith('u_order', 'rookie_stash');
+    expect(readOrderRecord('order_apply_fail')).toBeNull();
   });
 });

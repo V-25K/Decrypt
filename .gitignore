@@ -35,7 +35,6 @@ devvit_logs_capture*.txt
 
 # Local workspace instructions / tooling
 AGENTS.md
-tools/
 .agent.md
 .claude/
 .codex/
@@ -44,17 +43,23 @@ progress.md
 .agents/
 skills-lock.json
 
+# Inside tools/: keep the versioned project tsconfigs, ignore local-only helpers
+# (Devvit MCP wrapper / docs cache used by Codex + Claude, plus the audit driver).
+tools/devvit-mcp-cache/
+tools/devvit-mcp-wrapper.mjs
+tools/mcp-audit-driver.mjs
+
+# Inside scripts/: keep documented project tools (lines:check, preview perf
+# guard) versioned; everything else is a local one-off.
+scripts/*
+!scripts/check-lines.ts
+!scripts/check-preview-bundle.mjs
+
 # Local one-off debugging scripts (keep production/admin debug endpoints versioned)
 scripts/debug-local/
 
-# Local release exclusions for not-yet-shipped server tooling/catalog work
-scripts/
+# Local data dir (not imported by versioned code).
 src/server/catalog/
-src/server/core/debug/
-src/server/core/endless-*.ts
-src/server/core/endless-*.test.ts
-src/shared/endless.ts
-src/server/trpc/routers/admin.debug.ts
 
 
 .fallowrc.json

@@ -47,18 +47,23 @@ import {
   disposeSfx,
   isSfxEnabled,
   playSfx,
-  primeSfx,
   setSfxEnabled as persistSfxEnabled,
 } from '../sfx';
+import { useAssetPreload } from './use-asset-preload';
+import { useEscapeToClose } from './use-escape-to-close';
+import { useGameHeartbeat } from './use-game-heartbeat';
+import { useHeaderClock } from './use-header-clock';
+import { useSfxPriming } from './use-sfx-priming';
+import { useViewportWidth } from './use-viewport-width';
+import { useVisibilityMute } from './use-visibility-mute';
+import { useWebViewFocus } from './use-web-view-focus';
 import {
-  preloadImageBatch,
   warmImagePreloads,
 } from './asset-preload';
 import {
   coinEmoji,
   coinHeartRefillCost,
   coinHeartTopUpCost,
-  challengeHeartbeatIntervalMs,
   crossMarkEmoji,
   heartEmoji,
   infiniteHeartsIcon,
@@ -1559,80 +1564,29 @@ export const GameApp = () => {
     bootstrapAttempt,
   ]);
 
-  useEffect(() => {
-    const onFocus = () => setWebViewMode(getWebViewMode());
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, []);
+  useWebViewFocus(() => setWebViewMode(getWebViewMode()));
 
-  useEffect(() => {
-    if (activeScreen !== 'challenge' || isComplete || isGameOver) {
-      return;
-    }
-    dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs: Date.now() });
-    const intervalId = window.setInterval(() => {
-      dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs: Date.now() });
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [activeScreen, isComplete, isGameOver]);
+  useVisibilityMute();
 
-  useEffect(() => {
-    if (
-      activeScreen !== 'challenge' ||
-      levelId.length === 0 ||
-      isComplete ||
-      isGameOver ||
-      busy ||
-      guessInFlight ||
-      queuedGuessCount > 0
-    ) {
-      return;
-    }
-    let cancelled = false;
-    const sendHeartbeat = async () => {
-      if (cancelled || heartbeatInFlightRef.current) {
-        return;
-      }
-      heartbeatInFlightRef.current = true;
-      try {
-        await trpc.game.heartbeat.mutate({
-          levelId,
-          mode,
-        });
-      } catch (_error) {
-        // Ignore transient heartbeat failures; scoring still advances on actions.
-      } finally {
-        heartbeatInFlightRef.current = false;
-      }
-    };
-    void sendHeartbeat();
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') {
-        return;
-      }
-      void sendHeartbeat();
-    }, challengeHeartbeatIntervalMs);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void sendHeartbeat();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.clearInterval(intervalId);
-    };
-  }, [
-    activeScreen,
-    busy,
-    guessInFlight,
-    isComplete,
-    isGameOver,
+  useHeaderClock({
+    enabled: activeScreen === 'challenge' && !isComplete && !isGameOver,
+    onTick: (headerNowTs) =>
+      dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs }),
+  });
+
+  useGameHeartbeat({
+    enabled:
+      activeScreen === 'challenge' &&
+      levelId.length > 0 &&
+      !isComplete &&
+      !isGameOver &&
+      !busy &&
+      !guessInFlight &&
+      queuedGuessCount === 0,
     levelId,
     mode,
-    queuedGuessCount,
-  ]);
+    inFlightRef: heartbeatInFlightRef,
+  });
 
 	  useEffect(() => {
 	    if (webViewMode !== 'expanded') {
@@ -1647,41 +1601,12 @@ export const GameApp = () => {
 	    setActiveScreen(nextScreen);
 	  }, [webViewMode]);
 
-  useEffect(() => {
-    primeSfx();
-    let primedAfterInteraction = false;
-    const onFirstInteraction = () => {
-      if (primedAfterInteraction) {
-        return;
-      }
-      primedAfterInteraction = true;
-      primeSfx();
-      window.removeEventListener('pointerdown', onFirstInteraction);
-      window.removeEventListener('keydown', onFirstInteraction, true);
-    };
-    window.addEventListener('pointerdown', onFirstInteraction, { passive: true });
-    window.addEventListener('keydown', onFirstInteraction, true);
-    return () => {
-      window.removeEventListener('pointerdown', onFirstInteraction);
-      window.removeEventListener('keydown', onFirstInteraction, true);
-    };
-  }, []);
+  useSfxPriming();
 
-  useEffect(() => {
-    void preloadImageBatch(criticalUiImageAssets, {
-      fetchPriority: 'high',
-      timeoutMs: 2200,
-    });
-    const deferredPreloadTimer = window.setTimeout(() => {
-      warmImagePreloads(deferredUiImageAssets, {
-        fetchPriority: 'low',
-        timeoutMs: 2600,
-      });
-    }, 120);
-    return () => {
-      window.clearTimeout(deferredPreloadTimer);
-    };
-  }, []);
+  useAssetPreload({
+    critical: criticalUiImageAssets,
+    deferred: deferredUiImageAssets,
+  });
 
   useEffect(() => {
     const cancelWarmup = scheduleNonCriticalWarmup(() => {
@@ -1707,29 +1632,14 @@ export const GameApp = () => {
     };
   }, []);
 
-  useEffect(() => {
-    const syncViewportWidth = () =>
-      dispatchLayoutTiming({
-        type: 'setViewportWidth',
-        viewportWidth: window.innerWidth,
-      });
-    window.addEventListener('resize', syncViewportWidth);
-    return () => window.removeEventListener('resize', syncViewportWidth);
-  }, []);
+  useViewportWidth((viewportWidth) =>
+    dispatchLayoutTiming({ type: 'setViewportWidth', viewportWidth })
+  );
 
-  useEffect(() => {
-    if (!isHelpOpen && !isSettingsOpen) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsHelpOpen(false);
-        setIsSettingsOpen(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isHelpOpen, isSettingsOpen, setIsHelpOpen, setIsSettingsOpen]);
+  useEscapeToClose(isHelpOpen || isSettingsOpen, () => {
+    setIsHelpOpen(false);
+    setIsSettingsOpen(false);
+  });
 
   useEffect(() => {
     if (!isHelpOpen) {
@@ -3647,6 +3557,7 @@ export const GameApp = () => {
               puzzleAuthor={puzzle.author}
               hasClaimableQuest={hasClaimableQuest}
               openQuest={openQuest}
+              outcomeLevelId={levelId || null}
             />
           )}
           {isChallengeScreen && !showOutcomeOverlay && (

@@ -353,9 +353,13 @@ export type SessionState = z.infer<typeof sessionSchema>;
 
 export const leaderboardEntrySchema = z.object({
   userId: z.string().min(1),
-  username: z.string().min(1).nullable().optional(),
+  // default(null) (not .optional()) so the parsed output is `string | null`,
+  // not `string | null | undefined` — the latter collides with
+  // exactOptionalPropertyTypes on client consumers (OutcomeCrowd) when the
+  // leaderboard read responses are output-validated.
+  username: z.string().min(1).nullable().default(null),
   score: z.number(),
-  snoovatarUrl: z.string().min(1).nullable().optional(),
+  snoovatarUrl: z.string().min(1).nullable().default(null),
   solveSeconds: z.number().int().nonnegative().nullable().optional(),
   mistakes: z.number().int().nonnegative().nullable().optional(),
   usedPowerups: z.number().int().nonnegative().nullable().optional(),
@@ -405,6 +409,8 @@ export const questProgressSchema = z.object({
   lifetimePurchases: z.number().int().nonnegative(),
   lifetimeDailyTopRanks: z.number().int().nonnegative(),
   lifetimeEndlessClears: z.number().int().nonnegative(),
+  // default(0) so progress hashes written before Creator Acclaim still parse.
+  lifetimeAcclaimedChallenges: z.number().int().nonnegative().default(0),
 });
 
 export type QuestProgress = z.infer<typeof questProgressSchema>;
@@ -487,15 +493,19 @@ export const gameInlineStatusResponseSchema = z.object({
 
 export type GameInlineStatusResponse = z.infer<typeof gameInlineStatusResponseSchema>;
 
-export const gameStartSessionInputSchema = z.object({
-  levelId: z.string().min(1),
-  mode: z.union([z.literal('daily'), z.literal('endless')]),
-});
+export const gameStartSessionInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    mode: z.union([z.literal('daily'), z.literal('endless')]),
+  })
+  .strict();
 
-export const gameHeartbeatInputSchema = z.object({
-  levelId: z.string().min(1),
-  mode: z.union([z.literal('daily'), z.literal('endless')]),
-});
+export const gameHeartbeatInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    mode: z.union([z.literal('daily'), z.literal('endless')]),
+  })
+  .strict();
 
 export const gameHeartbeatResponseSchema = z.object({
   ok: z.boolean(),
@@ -507,10 +517,12 @@ export const gameStartSessionResponseSchema = z.object({
   heartsRemaining: z.number().int().nonnegative(),
 });
 
-export const gamePurchaseDailyRetryInputSchema = z.object({
-  levelId: z.string().min(1),
-  mode: z.union([z.literal('daily'), z.literal('endless')]),
-});
+export const gamePurchaseDailyRetryInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    mode: z.union([z.literal('daily'), z.literal('endless')]),
+  })
+  .strict();
 
 export const gamePurchaseDailyRetryResponseSchema = z.object({
   ok: z.boolean(),
@@ -525,10 +537,12 @@ export const gamePurchaseDailyRetryResponseSchema = z.object({
   requiresPaidRetry: z.boolean(),
 });
 
-export const gameContinueLevelInputSchema = z.object({
-  levelId: z.string().min(1),
-  mode: z.union([z.literal('daily'), z.literal('endless')]),
-});
+export const gameContinueLevelInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    mode: z.union([z.literal('daily'), z.literal('endless')]),
+  })
+  .strict();
 
 export const gameContinueLevelResponseSchema = z.object({
   ok: z.boolean(),
@@ -538,11 +552,13 @@ export const gameContinueLevelResponseSchema = z.object({
   inventory: inventorySchema,
 });
 
-export const gameSubmitGuessInputSchema = z.object({
-  levelId: z.string().min(1),
-  tileIndex: z.number().int().nonnegative(),
-  guessedLetter: z.string().length(1),
-});
+export const gameSubmitGuessInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    tileIndex: z.number().int().nonnegative(),
+    guessedLetter: z.string().length(1),
+  })
+  .strict();
 
 export const gameSubmitGuessResponseSchema = z.object({
   ok: z.boolean(),
@@ -562,28 +578,34 @@ export const gameSubmitGuessResponseSchema = z.object({
   ratingAfter: z.number().int().nonnegative().nullable().default(null),
 });
 
-export const gameSubmitGuessesInputSchema = z.object({
-  levelId: z.string().min(1),
-  guesses: z
-    .array(
-      z.object({
-        tileIndex: z.number().int().nonnegative(),
-        guessedLetter: z.string().length(1),
-      })
-    )
-    .min(1)
-    .max(20),
-});
+export const gameSubmitGuessesInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    guesses: z
+      .array(
+        z
+          .object({
+            tileIndex: z.number().int().nonnegative(),
+            guessedLetter: z.string().length(1),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict();
 
 export const gameSubmitGuessesResponseSchema = z.object({
   ok: z.boolean(),
   results: z.array(gameSubmitGuessResponseSchema),
 });
 
-export const gameCompleteSessionInputSchema = z.object({
-  levelId: z.string().min(1),
-  mode: z.union([z.literal('daily'), z.literal('endless')]),
-});
+export const gameCompleteSessionInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    mode: z.union([z.literal('daily'), z.literal('endless')]),
+  })
+  .strict();
 
 export const gameCompleteSessionResponseSchema = z.object({
   ok: z.boolean(),
@@ -624,11 +646,13 @@ export const gameFailedOutcomeSchema = z.object({
   pointsGained: z.number().int().nonnegative().default(0),
 });
 
-export const powerupPurchaseInputSchema = z.object({
-  levelId: z.string().min(1),
-  itemType: powerupTypeSchema,
-  quantity: z.number().int().positive().optional().default(1),
-});
+export const powerupPurchaseInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    itemType: powerupTypeSchema,
+    quantity: z.number().int().positive().optional().default(1),
+  })
+  .strict();
 
 export const powerupPurchaseResponseSchema = z.object({
   success: z.boolean(),
@@ -637,11 +661,13 @@ export const powerupPurchaseResponseSchema = z.object({
   inventory: inventorySchema,
 });
 
-export const powerupUseInputSchema = z.object({
-  levelId: z.string().min(1),
-  itemType: powerupTypeSchema,
-  targetIndex: z.number().int().nonnegative().nullable().optional(),
-});
+export const powerupUseInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+    itemType: powerupTypeSchema,
+    targetIndex: z.number().int().nonnegative().nullable().optional(),
+  })
+  .strict();
 
 export const powerupUseResponseSchema = z.object({
   success: z.boolean(),
@@ -718,9 +744,11 @@ export const questStatusResponseSchema = z.object({
   claimedQuestIds: z.array(z.string().min(1)).default([]),
 });
 
-export const questClaimInputSchema = z.object({
-  questId: z.string().min(1),
-});
+export const questClaimInputSchema = z
+  .object({
+    questId: z.string().min(1),
+  })
+  .strict();
 
 export const questClaimResponseSchema = z.object({
   success: z.boolean(),
@@ -731,13 +759,17 @@ export const questClaimResponseSchema = z.object({
   inventory: inventorySchema,
 });
 
-export const profileSetActiveFlairInputSchema = z.object({
-  flair: z.string(),
-});
+export const profileSetActiveFlairInputSchema = z
+  .object({
+    flair: z.string(),
+  })
+  .strict();
 
-export const profileSetAudioEnabledInputSchema = z.object({
-  enabled: z.boolean(),
-});
+export const profileSetAudioEnabledInputSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .strict();
 
 export const profileSetActiveFlairResponseSchema = z.object({
   success: z.boolean(),
@@ -771,9 +803,11 @@ export const heartPurchaseStatusResponseSchema = z.object({
   limitResetTs: z.number().int().nonnegative(),
 });
 
-export const socialShareInputSchema = z.object({
-  levelId: z.string().min(1),
-});
+export const socialShareInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+  })
+  .strict();
 
 export const socialShareResponseSchema = z.object({
   success: z.boolean(),
@@ -781,12 +815,14 @@ export const socialShareResponseSchema = z.object({
   commentId: z.string().nullable(),
 });
 
-export const adminInjectInputSchema = z.object({
-  text: z.string().min(3),
-  difficulty: z.number().int().min(1).max(10).optional(),
-  challengeType: challengeTypeSchema.default('QUOTE'),
-  author: z.string().min(1).optional(),
-});
+export const adminInjectInputSchema = z
+  .object({
+    text: z.string().min(3),
+    difficulty: z.number().int().min(1).max(10).optional(),
+    challengeType: challengeTypeSchema.default('QUOTE'),
+    author: z.string().min(1).optional(),
+  })
+  .strict();
 
 export const adminActionResponseSchema = z.object({
   success: z.boolean(),
@@ -820,13 +856,15 @@ export const adminValidateManualChallengeResponseSchema = z.object({
   challengeEvaluationSummary: challengeEvaluationSummarySchema.optional(),
 });
 
-export const adminInjectManualChallengeWithAdjustmentInputSchema = z.object({
-  text: z.string().min(3),
-  author: z.string().min(1),
-  targetDifficulty: z.number().int().min(1).max(10).optional(),
-  challengeType: challengeTypeSchema.default('QUOTE'),
-  allowAdjustment: z.boolean().default(true),
-});
+export const adminInjectManualChallengeWithAdjustmentInputSchema = z
+  .object({
+    text: z.string().min(3),
+    author: z.string().min(1),
+    targetDifficulty: z.number().int().min(1).max(10).optional(),
+    challengeType: challengeTypeSchema.default('QUOTE'),
+    allowAdjustment: z.boolean().default(true),
+  })
+  .strict();
 
 export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
   success: z.boolean(),
@@ -855,9 +893,11 @@ export const adminInjectManualChallengeWithAdjustmentResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-export const adminRetryPublishInputSchema = z.object({
-  levelId: z.string().min(1),
-});
+export const adminRetryPublishInputSchema = z
+  .object({
+    levelId: z.string().min(1),
+  })
+  .strict();
 
 export const adminRetryPublishResponseSchema = z.object({
   success: z.boolean(),

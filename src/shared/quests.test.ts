@@ -51,13 +51,12 @@ describe('quest catalog', () => {
     ).toBe(false);
   });
 
-  it('keeps the refreshed daily coin rewards aligned with the two-dailies plan', () => {
+  it('keeps the refreshed daily coin rewards aligned with the one-daily plan', () => {
     const totalDailyCoins = questCatalog
       .filter((quest) => quest.category === 'daily')
       .reduce((sum, quest) => sum + quest.reward.coins, 0);
 
-    expect(totalDailyCoins).toBe(60);
-    expect(requireQuest('daily_play_2').target).toBe(2);
+    expect(totalDailyCoins).toBe(40);
     expect(requireQuest('daily_fast_under_180').reward.inventory.hammer).toBe(1);
   });
 

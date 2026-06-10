@@ -10,6 +10,7 @@ import {
 import { startingGlobalRating } from '../../shared/rating';
 import {
   keyKnownUsersIndex,
+  keyOneTimeSkuClaimLock,
   keyUserCompleted,
   keyUserContinuedLevels,
   keyUserDailyDataDates,
@@ -141,6 +142,7 @@ const defaultQuestProgress = (): QuestProgress =>
     lifetimePurchases: 0,
     lifetimeDailyTopRanks: 0,
     lifetimeEndlessClears: 0,
+    lifetimeAcclaimedChallenges: 0,
   });
 
 type DailyQuestProgress = Pick<
@@ -384,6 +386,48 @@ export const unmarkSkuPurchased = async (
   await redis.hDel(keyUserPurchases(userId), [sku]);
 };
 
+const oneTimeSkuClaimTtlMs = 120 * 1000;
+
+// Per-(user, sku) NX claim that serializes concurrent payment fulfillments
+// against the same one-time SKU when they arrive on different order IDs.
+// The per-order NX guard on keyOrderGrantRecord does not cover this case
+// because the orders are distinct; the claim lock here closes that gap.
+//
+// Returns:
+//   { alreadyOwned: true }  — hasPurchasedSku already true; nothing to do
+//   { claimed: true }       — this caller acquired the lock; proceed with applyBundle
+//   { claimed: false, alreadyOwned: false }
+//                           — another fulfillment is in-flight; caller should fail
+//                             this fulfillment so Devvit can retry shortly
+export const claimOneTimeSku = async (
+  userId: string,
+  sku: string
+): Promise<{ claimed: boolean; alreadyOwned: boolean }> => {
+  if (await hasPurchasedSku(userId, sku)) {
+    return { claimed: false, alreadyOwned: true };
+  }
+  const lockKey = keyOneTimeSkuClaimLock(userId, sku);
+  const acquired = await redis.set(lockKey, '1', {
+    nx: true,
+    expiration: new Date(Date.now() + oneTimeSkuClaimTtlMs),
+  });
+  if (!acquired) {
+    return { claimed: false, alreadyOwned: false };
+  }
+  return { claimed: true, alreadyOwned: false };
+};
+
+// Release the per-(user, sku) claim. Called once markSkuPurchased commits
+// (the hash field is then the authoritative record) or during rollback for
+// claims that were acquired but never reached markSkuPurchased. Best-effort:
+// if this fails, the lock TTL (120s) bounds the recovery window.
+export const releaseOneTimeClaim = async (
+  userId: string,
+  sku: string
+): Promise<void> => {
+  await redis.del(keyOneTimeSkuClaimLock(userId, sku));
+};
+
 export const getCompletedLevels = async (userId: string): Promise<Set<string>> => {
   const fields = await redis.hKeys(keyUserCompleted(userId));
   return new Set(fields);
@@ -510,6 +554,7 @@ export const getLifetimeQuestProgress = async (
       lifetimePurchases: '0',
       lifetimeDailyTopRanks: '0',
       lifetimeEndlessClears: '0',
+      lifetimeAcclaimedChallenges: '0',
     });
     return progress;
   }
@@ -528,6 +573,11 @@ export const getLifetimeQuestProgress = async (
     lifetimePurchases: numberFromHash(hash, 'lifetimePurchases', 0),
     lifetimeDailyTopRanks: numberFromHash(hash, 'lifetimeDailyTopRanks', 0),
     lifetimeEndlessClears: numberFromHash(hash, 'lifetimeEndlessClears', 0),
+    lifetimeAcclaimedChallenges: numberFromHash(
+      hash,
+      'lifetimeAcclaimedChallenges',
+      0
+    ),
   });
 };
 
@@ -563,6 +613,7 @@ export const saveLifetimeQuestProgress = async (
     lifetimePurchases: `${progress.lifetimePurchases}`,
     lifetimeDailyTopRanks: `${progress.lifetimeDailyTopRanks}`,
     lifetimeEndlessClears: `${progress.lifetimeEndlessClears}`,
+    lifetimeAcclaimedChallenges: `${progress.lifetimeAcclaimedChallenges}`,
   });
 };
 

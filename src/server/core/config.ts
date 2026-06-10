@@ -2,7 +2,6 @@ import { settings } from '@devvit/web/server';
 import { defaultSubredditSettings } from './constants';
 
 export type DecryptSettings = {
-  publishHourUtc: number;
   timezone: string;
   logicalCipherPercent: number;
   aiMaxRetries: number;
@@ -93,14 +92,12 @@ export const getDailyAutomationEnabled = async (): Promise<boolean> => {
 
 export const getDecryptSettings = async (): Promise<DecryptSettings> => {
   const [
-    publishHourValue,
     timezoneValue,
     logicalPercentValue,
     retriesValue,
     safetyValue,
     geminiKeyValue,
   ] = await Promise.all([
-    settings.get<number>('publishHourUtc'),
     settings.get<string>('timezone'),
     settings.get<number>('logicalCipherPercent'),
     settings.get<number>('aiMaxRetries'),
@@ -108,11 +105,6 @@ export const getDecryptSettings = async (): Promise<DecryptSettings> => {
     settings.get<string>('geminiApiKey'),
   ]);
 
-  const publishHourUtc = clamp(
-    publishHourValue ?? defaultSubredditSettings.publishHourUtc,
-    0,
-    23
-  );
   const logicalCipherPercent = clamp(
     logicalPercentValue ?? defaultSubredditSettings.logicalCipherPercent,
     0,
@@ -125,7 +117,6 @@ export const getDecryptSettings = async (): Promise<DecryptSettings> => {
   );
 
   return {
-    publishHourUtc,
     timezone: timezoneValue ?? defaultSubredditSettings.timezone,
     logicalCipherPercent,
     aiMaxRetries,

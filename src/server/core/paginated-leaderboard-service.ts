@@ -18,44 +18,44 @@ import { formatDateKey } from './serde';
 /**
  * Page information for leaderboard pagination
  */
-export interface PageInfo {
+export type PageInfo = {
   currentPage: number;
   pageSize: number;
   totalPages: number;
-}
+};
 
 /**
  * Paginated leaderboard response
  */
-export interface LeaderboardPage<T = LeaderboardEntry> {
+export type LeaderboardPage<T = LeaderboardEntry> = {
   entries: T[];
   hasNextPage: boolean;
   hasPreviousPage: boolean;
   totalCount: number;
   pageInfo: PageInfo;
-}
+};
 
 /**
  * Parameters for leaderboard page requests
  */
-export interface LeaderboardPageParams {
+export type LeaderboardPageParams = {
   page: number;
   pageSize?: number;
-}
+};
 
 /**
  * Daily leaderboard page parameters
  */
-export interface DailyLeaderboardPageParams extends LeaderboardPageParams {
+export type DailyLeaderboardPageParams = LeaderboardPageParams & {
   dateKey?: string;
-}
+};
 
 /**
  * Level leaderboard page parameters
  */
-export interface LevelLeaderboardPageParams extends LeaderboardPageParams {
+export type LevelLeaderboardPageParams = LeaderboardPageParams & {
   levelId: string;
-}
+};
 
 /**
  * PaginatedLeaderboardService provides efficient pagination for leaderboard data

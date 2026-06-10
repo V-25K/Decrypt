@@ -51,7 +51,7 @@ describe('getQuestVisibilityView', () => {
     expect(view.claimedQuestIdSet.has('daily_play_1')).toBe(true);
     expect(view.hasClaimableQuest).toBe(false);
     expect(view.visibleDailyQuests.map((quest) => quest.id)).not.toContain('daily_play_1');
-    expect(view.visibleDailyQuests.map((quest) => quest.id)).toContain('daily_play_2');
+    expect(view.visibleDailyQuests.map((quest) => quest.id)).toContain('daily_share_1');
   });
 
   it('marks the quest badge when any visible quest can be claimed', () => {

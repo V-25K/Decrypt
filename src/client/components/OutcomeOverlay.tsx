@@ -1,5 +1,6 @@
 import { memo, type RefCallback, type MouseEvent } from 'react';
 import { cn } from '../utils';
+import { CommunityVoteBar } from './CommunityVoteBar';
 import { ReplayIcon, ShareIcon } from './Icons';
 import { UiSprite } from './UiSprite';
 import type { OutcomeCrowdBubble } from '../app/outcome-crowd';
@@ -33,6 +34,7 @@ type OutcomeOverlayProps = {
   puzzleAuthor: string;
   hasClaimableQuest: boolean;
   openQuest: (event?: MouseEvent<HTMLButtonElement>) => void;
+  outcomeLevelId: string | null;
 };
 
 export const OutcomeOverlay = memo(({
@@ -63,6 +65,7 @@ export const OutcomeOverlay = memo(({
   puzzleAuthor,
   hasClaimableQuest,
   openQuest,
+  outcomeLevelId,
 }: OutcomeOverlayProps) => {
   const displayedCompletionQuote = truncateOutcomeQuote(completionQuote);
   const ratingDeltaValueClass =
@@ -367,6 +370,9 @@ export const OutcomeOverlay = memo(({
                 )}
               </div>
             )}
+            {/* Community challenges get a like/dislike here (self-hides for
+                daily puzzles and the creator's own challenge). */}
+            <CommunityVoteBar levelId={outcomeLevelId} />
           </div>
         </div>
       </main>

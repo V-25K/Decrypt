@@ -2,28 +2,28 @@ import { redis } from '@devvit/web/server';
 import { keyCompletionFinalizeJournal } from './keys';
 import { getKnownUserIds, getCompletedLevels } from './state';
 
-export interface CleanupPolicy {
+export type CleanupPolicy = {
   maxAge: number; // 90 days in milliseconds
   minRetainCount: number; // 100 entries per player
   batchSize: number; // Process in batches of 1000
-}
+};
 
-export interface CleanupResult {
+export type CleanupResult = {
   entriesRemoved: number;
   memoryFreed: number;
   usersProcessed: number;
   processingTimeMs: number;
   errors: string[];
-}
+};
 
-export interface CompletionEntry {
+export type CompletionEntry = {
   levelId: string;
   timestamp: number;
   mode: string;
   createdAt: string;
   updatedAt?: string;
   [key: string]: string | number | undefined;
-}
+};
 
 const defaultCleanupPolicy: CleanupPolicy & { scheduleHours: number[] } = {
   maxAge: 90 * 24 * 60 * 60 * 1000,
@@ -249,7 +249,7 @@ export class CompletionJournalCleanup {
           // Add overhead for Redis hash structure
           totalMemory += keySize + dataSize + 100; // 100 bytes overhead estimate
         }
-      } catch (error) {
+      } catch (_error) {
         // If we can't read the journal, estimate a minimal size
         totalMemory += 200; // Rough estimate for a minimal journal entry
       }

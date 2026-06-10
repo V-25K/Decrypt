@@ -1,0 +1,39 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../dist/types/server",
+    "tsBuildInfoFile": "../dist/types/server/tsconfig.tsbuildinfo",
+    "customConditions": [],
+    "types": ["node"],
+    "exactOptionalPropertyTypes": false,
+    "rootDir": "../src/server"
+  },
+  "include": ["../src/server/**/*", "../src/server/**/*.json", "../src/shared/rebalanced-retry-cost-calculator.ts", "../src/shared/rebalanced-powerup-pricing-engine.ts", "../src/shared/rebalanced-fast-solve-bonus-system.ts", "../src/shared/rebalanced-score-penalty-engine.ts"],
+  "exclude": [
+    "../src/server/**/*.test.ts",
+    "../src/server/**/*.test.tsx",
+    "../src/server/**/*.spec.ts",
+    "../src/server/**/*.spec.tsx",
+    "../src/server/**/*exploration*.ts",
+    "../src/server/**/*property*.ts",
+    "../src/server/core/balance-ab-testing-config.ts",
+    "../src/server/core/balance-ab-testing-integration.ts",
+    "../src/server/core/bootstrap-optimized.ts",
+    "../src/server/core/comprehensive-integration-validation-script.ts",
+    "../src/server/core/comprehensive-performance-integration.ts",
+    "../src/server/core/final-performance-validation.ts",
+    "../src/server/core/game-service-optimized.ts",
+    "../src/server/core/integration-validation-script.ts",
+    "../src/server/core/integration-validation.ts",
+    "../src/server/core/parallel-guess-processor.ts",
+    "../src/server/core/performance-integration.ts",
+    "../src/server/core/performance-monitor.ts",
+    "../src/server/core/redis-batch.ts",
+    "../src/server/trpc/routers/balance-ab-testing.ts"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.shared.json"
+    }
+  ]
+}

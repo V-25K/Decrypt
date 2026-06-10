@@ -122,6 +122,17 @@ const baselinePrefillCountForTier = (tier: DifficultyTier): number => {
   return 3;
 };
 
+export const maxPrefilledCountForDifficulty = (difficulty: number): number => {
+  const tier = difficultyToTier(difficulty);
+  if (tier === 'warmup') {
+    return 4;
+  }
+  if (tier === 'medium') {
+    return 2;
+  }
+  return 1;
+};
+
 const padlockChainBudgetCost = (chain: Pick<PadlockChain, 'keyIndices'>): number =>
   PADLOCK_CHAIN_COST - (chain.keyIndices.length >= 5 ? PADLOCK_KEY_EASY_DISCOUNT : 0);
 
@@ -164,7 +175,7 @@ export type FairnessConstraints = {
  * Computes the obstruction budget for a puzzle based on difficulty tier and text properties.
  * 
  * Budget Formula:
- * - Base budget: warmup=22, medium=65, hard=108, expert=138
+ * - Base budget: warmup=65, medium=108, hard=138, expert=162
  * - Hardness discount: harder text reduces extra obstruction budget
  * - Helper / repetition bonus: easier text earns more obstruction budget so it can still be tuned upward
  * - Unique-word variety bonus: varied wording can absorb more obstructions fairly
@@ -176,7 +187,7 @@ export const computeObstructionBudget = (
   context: PuzzleDifficultyContext
 ): ObstructionBudget => {
   const baseBudget =
-    context.tier === 'warmup' ? 22 : context.tier === 'medium' ? 65 : context.tier === 'hard' ? 108 : 138;
+    context.tier === 'warmup' ? 65 : context.tier === 'medium' ? 108 : context.tier === 'hard' ? 138 : 162;
   const repeatedWordRatio =
     context.repeatedWordRatio ?? Math.max(0, 1 - (context.uniqueWordRatio ?? 1));
   const uniqueWordCount = context.uniqueWordCount ?? 0;
@@ -373,14 +384,13 @@ const choosePrefilledIndices = (params: {
   }
 
   const tier = params.context.tier;
+  const maxTierPrefills = maxPrefilledCountForDifficulty(params.context.difficulty);
   const revealRange =
     tier === 'warmup'
-      ? [3, 6]
+      ? [2, maxTierPrefills]
       : tier === 'medium'
-        ? [2, 4]
-        : tier === 'hard'
-          ? [1, 2]
-          : [0, 1];
+        ? [1, maxTierPrefills]
+        : [Math.min(1, maxTierPrefills), maxTierPrefills];
   const minReveals = revealRange[0];
   const maxReveals = revealRange[1];
   if (minReveals === undefined || maxReveals === undefined) {
@@ -396,7 +406,8 @@ const choosePrefilledIndices = (params: {
   const budgetAdjustment = budgetTotal < 25 ? 1 : budgetTotal > 70 ? -1 : 0;
   const computedTarget = baseTarget + cipherBonus + budgetAdjustment;
   const targetRevealCount = Math.max(minReveals, Math.min(maxReveals, computedTarget));
-  const maxPrefillRatio = tier === 'hard' ? 0.14 : tier === 'expert' ? 0.08 : 0.25;
+  const maxPrefillRatio =
+    tier === 'warmup' ? 0.18 : tier === 'medium' ? 0.14 : tier === 'hard' ? 0.1 : 0.08;
   const maxPrefillByLetters =
     tier === 'hard' || tier === 'expert'
       ? Math.max(1, Math.ceil(letterTiles.length * maxPrefillRatio))
@@ -559,7 +570,8 @@ const choosePrefilledIndices = (params: {
     return true;
   };
 
-  const minUnique = tier === 'warmup' ? 4 : tier === 'expert' ? 2 : 3;
+  const minUnique =
+    tier === 'warmup' ? 3 : tier === 'medium' ? 2 : tier === 'hard' ? 1 : 1;
   const uniqueRevealTarget = Math.min(
     letterFrequency.size,
     Math.max(minUnique, Math.min(cappedTargetRevealCount, letterFrequency.size))
@@ -651,15 +663,15 @@ const choosePadlockObstruction = (params: {
   );
   const tier = difficultyToTier(params.basePuzzle.difficulty);
   const baseMaxLockedRatio =
-    tier === 'warmup' ? 0.22 : tier === 'medium' ? 0.3 : tier === 'hard' ? 0.4 : 0.5;
+    tier === 'warmup' ? 0.3 : tier === 'medium' ? 0.4 : tier === 'hard' ? 0.5 : 0.58;
   const maxLockedRatio =
     params.basePuzzle.cipherType === 'shift'
       ? Math.max(0.15, baseMaxLockedRatio - 0.05)
       : baseMaxLockedRatio;
   const lockSolveThreshold =
-    tier === 'warmup' ? 0.62 : tier === 'medium' ? 0.52 : tier === 'hard' ? 0.42 : 0.35;
+    tier === 'warmup' ? 0.52 : tier === 'medium' ? 0.42 : tier === 'hard' ? 0.35 : 0.32;
   const lockCandidateLimit =
-    tier === 'warmup' ? 4 : tier === 'medium' ? 6 : tier === 'hard' ? 8 : 10;
+    tier === 'warmup' ? 6 : tier === 'medium' ? 8 : tier === 'hard' ? 10 : 12;
   const lockSolverBudgetMs =
     tier === 'warmup' ? 10 : tier === 'medium' ? 12 : tier === 'hard' ? 14 : 16;
   const lockSolverBranchLimit =
@@ -674,7 +686,7 @@ const choosePadlockObstruction = (params: {
   const maxLockedCount =
     totalLetters > 0 ? Math.floor(totalLetters * maxLockedRatio) : 0;
   const maxChainsByTier =
-    tier === 'warmup' ? 1 : tier === 'medium' ? 2 : tier === 'hard' ? 4 : 6;
+    tier === 'warmup' ? 2 : tier === 'medium' ? 4 : tier === 'hard' ? 6 : 7;
   const maxChainsBySize =
     tier === 'expert'
       ? totalLetters >= 50
@@ -706,7 +718,7 @@ const choosePadlockObstruction = (params: {
     parentChildCounts: Map<number, number>;
   }): { lockIndices: number[]; chain: PadlockChain; keyLetterFrequency: number } | null => {
     const minLockOccurrences = 2;
-    const maxLockOccurrences = Math.max(5, Math.ceil(totalLetters * 0.18));
+    const maxLockOccurrences = Math.max(5, Math.ceil(totalLetters * 0.22));
     const canUseDependencyTree = tier === 'expert' && totalLetters >= 36;
     const lockLetterCandidates = [...byLetter.entries()]
       .filter(
@@ -718,7 +730,7 @@ const choosePadlockObstruction = (params: {
       )
       .map(([letter]) => letter);
 
-    const lockTargetFrequency = Math.max(2, Math.min(7, Math.round(totalLetters * 0.12)));
+    const lockTargetFrequency = Math.max(2, Math.min(8, Math.round(totalLetters * 0.14)));
     const orderedCandidates = shuffleWithRng(lockLetterCandidates, params.rng).sort((a, b) => {
       const aCount = byLetter.get(a)?.length ?? 0;
       const bCount = byLetter.get(b)?.length ?? 0;
@@ -741,7 +753,7 @@ const choosePadlockObstruction = (params: {
         continue;
       }
 
-      const keyTargetFrequency = Math.max(2, Math.min(6, Math.round(totalLetters * 0.1)));
+      const keyTargetFrequency = Math.max(2, Math.min(7, Math.round(totalLetters * 0.12)));
       const dependencyKeyCandidates = canUseDependencyTree
         ? pickParams.existingChains
             .map((chain) => {
@@ -953,8 +965,8 @@ const chooseBlindIndices = (params: {
   budget: ObstructionBudget;
 }): number[] => {
   const tier = difficultyToTier(params.difficulty);
-  const maxBlinds = tier === 'warmup' ? 0 : tier === 'medium' ? 1 : tier === 'hard' ? 3 : 5;
-  const continuousLengthFactor = Math.max(0, (params.targetText.length - 10) / 8);
+  const maxBlinds = tier === 'warmup' ? 1 : tier === 'medium' ? 3 : tier === 'hard' ? 5 : 7;
+  const continuousLengthFactor = Math.max(0, (params.targetText.length - 8) / 7);
   const budgetCap = Math.floor(remainingBudget(params.budget) / BLIND_TILE_COST);
   const blindCount = Math.min(maxBlinds, Math.ceil(continuousLengthFactor), budgetCap);
   if (blindCount <= 0) {
@@ -1042,7 +1054,7 @@ const chooseBlindIndices = (params: {
 
   const selected: number[] = [];
   const maxBlindsPerWord =
-    tier === 'medium' ? 1 : tier === 'hard' ? 2 : tier === 'expert' ? 3 : 0;
+    tier === 'warmup' ? 1 : tier === 'medium' ? 2 : tier === 'hard' ? 3 : 4;
   let usedSingletonFallback = false;
   for (const letter of orderedLetters) {
     const indices = byLetter.get(letter) ?? [];
@@ -2333,6 +2345,10 @@ const tryRemovePrefill = (puzzle: PuzzlePrivate): number | null => {
  * Returns the index if successful, null otherwise.
  */
 const tryAddPrefill = (puzzle: PuzzlePrivate): number | null => {
+  if (puzzle.prefilledIndices.length >= maxPrefilledCountForDifficulty(puzzle.difficulty)) {
+    return null;
+  }
+
   // Find letter tiles that aren't already prefilled
   const prefilledSet = new Set(puzzle.prefilledIndices);
   const lettersByWordIndex = new Map<number, number[]>();
@@ -2403,6 +2419,7 @@ const applyAdjustment = (puzzle: PuzzlePrivate, adjustment: Adjustment): PuzzleP
       const index = adjustment.data as number;
       newPuzzle.prefilledIndices = [...puzzle.prefilledIndices, index];
       newPuzzle.revealedIndices = [...puzzle.revealedIndices, index];
+      newPuzzle.revealed_indices = [...puzzle.revealed_indices, index];
       break;
     }
     
@@ -2410,6 +2427,7 @@ const applyAdjustment = (puzzle: PuzzlePrivate, adjustment: Adjustment): PuzzleP
       const index = adjustment.data as number;
       newPuzzle.prefilledIndices = puzzle.prefilledIndices.filter(idx => idx !== index);
       newPuzzle.revealedIndices = puzzle.revealedIndices.filter(idx => idx !== index);
+      newPuzzle.revealed_indices = puzzle.revealed_indices.filter(idx => idx !== index);
       break;
     }
   }

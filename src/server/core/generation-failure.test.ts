@@ -40,7 +40,7 @@ describe('reportAutomatedGenerationFailure', () => {
     createModNotificationMock.mockResolvedValue('conversation_1');
 
     await reportAutomatedGenerationFailure({
-      source: 'scheduler.generate-daily',
+      source: 'scheduler.publish-daily',
       dateKey: '2026-03-08',
       error: new Error('generation failed'),
     });

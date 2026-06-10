@@ -24,7 +24,8 @@ const {
   saveInventoryMock,
   saveUserProfileMock,
   puzzleIsCompleteMock,
-  computeScoreMock,
+	  computeScoreMock,
+	  getRatingOutcomeReceiptMock,
 	  getUserRankSummaryMock,
 	  incrementAllTimeLogicMock,
 	  recordGlobalLossMock,
@@ -65,6 +66,7 @@ const {
   saveUserProfileMock: vi.fn(),
   puzzleIsCompleteMock: vi.fn(),
   computeScoreMock: vi.fn(),
+  getRatingOutcomeReceiptMock: vi.fn(),
 	  getUserRankSummaryMock: vi.fn(),
 	  incrementAllTimeLogicMock: vi.fn(),
 	  recordGlobalLossMock: vi.fn(),
@@ -135,6 +137,7 @@ vi.mock('./gameplay', () => ({
 
 vi.mock('./leaderboard', () => ({
   computeScore: computeScoreMock,
+  getRatingOutcomeReceipt: getRatingOutcomeReceiptMock,
 	  getUserRankSummary: getUserRankSummaryMock,
 	  incrementAllTimeLogic: incrementAllTimeLogicMock,
 	  recordGlobalLoss: recordGlobalLossMock,
@@ -297,6 +300,7 @@ afterEach(() => {
   saveUserProfileMock.mockReset();
   puzzleIsCompleteMock.mockReset();
 	  computeScoreMock.mockReset();
+	  getRatingOutcomeReceiptMock.mockReset();
 	  getUserRankSummaryMock.mockReset();
 	  incrementAllTimeLogicMock.mockReset();
 	  recordGlobalLossMock.mockReset();
@@ -338,6 +342,7 @@ const arrangeHappyPath = () => {
 	    ratingDelta: 0,
 	    ratingAfter: profile.globalRating,
 	  }));
+  getRatingOutcomeReceiptMock.mockResolvedValue(null);
   heartsRemainingMock.mockReturnValue(3);
 };
 
@@ -436,6 +441,98 @@ describe('completeSessionForLevel completion lock', () => {
     );
     expect(saveShareCompletionReceiptMock).toHaveBeenCalledWith(
       expect.objectContaining({ score: 70 })
+    );
+  });
+
+  it('keeps continued completions worth at least one point', async () => {
+    arrangeHappyPath();
+    computeScoreMock.mockReturnValue(25);
+    hasContinuedLevelMock.mockResolvedValue(true);
+    redisSetMock.mockResolvedValue('OK');
+    redisHGetAllMock.mockResolvedValue({});
+    redisHGetMock.mockResolvedValue(undefined);
+    redisHSetMock.mockResolvedValue(undefined);
+    redisExpireMock.mockResolvedValue(undefined);
+    redisGetMock.mockImplementation(async () => {
+      const firstCall = redisSetMock.mock.calls[0];
+      if (!firstCall) {
+        return null;
+      }
+      return firstCall[1];
+    });
+
+    const result = await completeSessionForLevel({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+
+    expect(result.score).toBe(1);
+    expect(recordDailyScoreMock).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 1 })
+    );
+    expect(saveShareCompletionReceiptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 1 })
+    );
+  });
+
+  it('hydrates a journaled global win before saving profile on completion resume', async () => {
+    arrangeHappyPath();
+    redisSetMock.mockResolvedValue('OK');
+    redisHGetAllMock.mockResolvedValue({
+      'step:mark_level_completed': '1',
+      'step:save_inventory': '1',
+      'step:record_daily_score': '1',
+      'step:record_level_win': '1',
+      'step:record_qualified_win': '1',
+      'step:record_shadow_difficulty_win': '1',
+      'step:record_global_win': '1',
+    });
+    redisHGetMock.mockResolvedValue('1712582400000');
+    redisHSetMock.mockResolvedValue(undefined);
+    redisExpireMock.mockResolvedValue(undefined);
+    redisGetMock.mockImplementation(async () => {
+      const firstCall = redisSetMock.mock.calls[0];
+      if (!firstCall) {
+        return null;
+      }
+      return firstCall[1];
+    });
+    getRatingOutcomeReceiptMock.mockResolvedValue({
+      ratingDelta: 23,
+      ratingAfter: 523,
+      ts: 1717584000000,
+      globalScoreAfter: 650,
+      ratingGamesAfter: 1,
+      ratingWinsAfter: 1,
+      ratingLossesAfter: 0,
+      globalWinStreakAfter: 1,
+    });
+
+    const result = await completeSessionForLevel({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.ratingDelta).toBe(23);
+    expect(result.ratingAfter).toBe(523);
+    expect(recordGlobalWinMock).not.toHaveBeenCalled();
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_test',
+      expect.objectContaining({
+        globalRating: 523,
+        globalScore: 650,
+        ratingGames: 1,
+        ratingWins: 1,
+        globalWinStreak: 1,
+      })
+    );
+    expect(saveShareCompletionReceiptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ratingDelta: 23,
+        ratingAfter: 523,
+        globalScoreAfter: 650,
+      })
     );
   });
 

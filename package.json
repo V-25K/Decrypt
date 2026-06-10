@@ -12,6 +12,7 @@
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint src",
     "lines:check": "node --experimental-strip-types ./scripts/check-lines.ts",
+    "check:preview-bundle": "node ./scripts/check-preview-bundle.mjs",
     "login": "devvit login",
     "test:rapid-input": "vitest run src/client/game.test.ts -t stale",
     "prettier": "prettier-package-json --write ./package.json && prettier --write .",

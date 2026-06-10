@@ -59,7 +59,7 @@
       },
       {
         "label": "Decrypt: Post Last Generated Challenge",
-        "description": "Publish the staged daily challenge if posting failed",
+        "description": "Publish the last generated challenge if posting failed",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-post-last-generated"
@@ -73,7 +73,7 @@
       },
       {
         "label": "Decrypt: Clear Subreddit Game Data",
-        "description": "Clear this subreddit's Decrypt game data, including players, challenges, and progress",
+        "description": "Clear this subreddit's Decrypt game data, including players, challenges, community ciphers, and progress",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-clear-subreddit-data"
@@ -87,21 +87,9 @@
   },
   "scheduler": {
     "tasks": {
-      "decrypt-generate-daily-2200": {
-        "endpoint": "/internal/scheduler/generate-daily",
-        "cron": "0 22 * * *"
-      },
       "decrypt-publish-daily-0000": {
         "endpoint": "/internal/scheduler/publish-daily",
         "cron": "0 0 * * *"
-      },
-      "decrypt-publish-daily-1200": {
-        "endpoint": "/internal/scheduler/publish-daily",
-        "cron": "0 12 * * *"
-      },
-      "decrypt-verify-daily-1810": {
-        "endpoint": "/internal/scheduler/verify-daily",
-        "cron": "10 18 * * *"
       },
       "decrypt-cleanup-journals-0300": {
         "endpoint": "/internal/scheduler/cleanup-completion-journals",
@@ -122,11 +110,6 @@
       }
     },
     "subreddit": {
-      "publishHourUtc": {
-        "type": "number",
-        "label": "Daily publish hour UTC (informational - scheduler uses fixed slots)",
-        "defaultValue": 0
-      },
       "timezone": {
         "type": "string",
         "label": "Timezone label",
