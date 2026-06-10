@@ -577,15 +577,9 @@ const communityTierLabel = (difficulty: number): string => {
     : tier.charAt(0).toUpperCase() + tier.slice(1);
 };
 
-const buildCommunityTierFitMessage = (targetDifficulty: number): string => {
+export const buildCommunityTierFitMessage = (targetDifficulty: number): string => {
   const label = communityTierLabel(targetDifficulty);
-  if (targetDifficulty <= 3) {
-    return `This quote is too complex for ${label}. Try Medium, or use a shorter quote with more repeated letters.`;
-  }
-  if (targetDifficulty >= 9) {
-    return `This quote is too gentle for ${label}. Try Hard, or use a quote with more varied letters and words.`;
-  }
-  return `This quote does not fit ${label}. Try a nearby tier, or edit the quote so the letter mix is easier to build.`;
+  return `${label} isn’t available for this line. Pick a tier with a check mark, or try a different quote.`;
 };
 
 const creatorFriendlyBuildError = (
@@ -598,15 +592,15 @@ const creatorFriendlyBuildError = (
     message.includes('DUMMY_SOLVER_UNSATISFIED') ||
     message.toLowerCase().includes('solver')
   ) {
-    return `The builder could not make a fair ${label} board from this line. Try a nearby tier, choose a line with more repeated/common letters, or switch to Manual and add starter reveals.`;
+    return `Couldn’t make a fair ${label} board from this line. Try another tier, or a line with more everyday words.`;
   }
   if (
     message.toLowerCase().includes('validation failed') ||
     message.toLowerCase().includes('board')
   ) {
-    return `The builder could not make a publishable ${label} board from this line. Try a nearby tier or adjust the line so it has clearer repeated letters.`;
+    return `Couldn’t finish a ${label} board for this line. Try another tier, or tweak the quote a little.`;
   }
-  return `The builder could not prepare this ${label} board. Try previewing again, choosing a nearby tier, or editing the line.`;
+  return `Couldn’t get this ${label} board ready. Try the preview again, or edit the line.`;
 };
 
 const prefilledIndicesFromWords = (
@@ -1113,11 +1107,11 @@ const buildManualLayoutGuidance = (params: {
       messages:
         params.layoutReasons && params.layoutReasons.length > 0
           ? params.layoutReasons.slice(0, 3)
-          : ['This layout is not fair enough to publish as-is.'],
+          : ['Players would get stuck on this board.'],
       suggestedActions:
         suggestedActions.length > 0
           ? suggestedActions
-          : ['Add a starter reveal before publishing.'],
+          : ['Reveal one starting letter before sharing.'],
     };
   }
 
@@ -1129,15 +1123,15 @@ const buildManualLayoutGuidance = (params: {
       targetTier: params.targetTier,
       estimatedTier: params.estimatedTier,
       messages: [
-        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
+        `This board plays like ${tierDisplayName(params.estimatedTier)}, not ${tierDisplayName(params.targetTier)}.`,
       ],
 	      suggestedActions: [
 	        ...(suggestedActions.length > 0
 	          ? suggestedActions
 	          : params.puzzlePrivate
 	            ? [suggestedStarterReveal(params.puzzlePrivate)]
-	            : ['Add one starter reveal.']),
-	        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+	            : ['Reveal one starting letter.']),
+	        `Or share it as ${tierDisplayName(params.estimatedTier)} — it’s ready as is.`,
 	      ],
 	    };
 	  }
@@ -1147,7 +1141,7 @@ const buildManualLayoutGuidance = (params: {
       targetTier: params.targetTier,
       estimatedTier: params.estimatedTier,
 	      messages: [
-	        `This layout is likely ${params.estimatedTier}, not ${params.targetTier}.`,
+	        `This board plays like ${tierDisplayName(params.estimatedTier)}, not ${tierDisplayName(params.targetTier)}.`,
 	      ],
 	      suggestedActions: [
 	        ...(prefilledCount > 1
@@ -1159,8 +1153,8 @@ const buildManualLayoutGuidance = (params: {
 	          : []),
 	        params.puzzlePrivate
 	          ? suggestedBlindTile(params.puzzlePrivate)
-	          : 'Add one ? tile only if the preview remains fair.',
-	        `Publish as ${params.estimatedTier} instead of ${params.targetTier}.`,
+	          : 'Add one ? tile only if the preview stays solvable.',
+	        `Or share it as ${tierDisplayName(params.estimatedTier)} — it’s ready as is.`,
 	      ],
 	    };
   }
@@ -1169,7 +1163,7 @@ const buildManualLayoutGuidance = (params: {
     status: 'aligned',
     targetTier: params.targetTier,
     estimatedTier: params.estimatedTier,
-    messages: ['Manual layout matches the target tier.'],
+    messages: ['This board matches your target difficulty. Ready to share!'],
     suggestedActions: [],
   };
 };
@@ -1177,9 +1171,20 @@ const buildManualLayoutGuidance = (params: {
 const tierLabelForDifficulty = (difficulty: number): string =>
   difficulty <= 3 ? 'Easy' : difficulty <= 5 ? 'Medium' : difficulty <= 8 ? 'Hard' : 'Expert';
 
-// Turn internal engine validation strings into plain, friendly, minimal copy.
+// Copy style guide for everything players read (see copy-tone.test.ts for
+// the enforced word list):
+// - Second person, present tense, at most two short sentences.
+// - Lead with the fix, then (optionally) the why: "Reveal one more letter."
+//   not "Validation failed because...".
+// - Engine jargon never reaches players: no "solver", "fairness checker",
+//   "tier bounds", "hardness", "validation", "obstruction", "budget",
+//   "engine", "buildability". Tiers are Easy/Medium/Hard/Expert only.
+// - Never blame the player or the quote; say what works instead.
+// - Buttons are verbs.
+//
+// Turn internal engine strings into plain, friendly, minimal copy.
 // Unknown / already-friendly reasons pass through unchanged.
-const humanizeCommunityReason = (
+export const humanizeCommunityReason = (
   raw: string,
   context: { tierLabel: string; creationMode: 'auto' | 'manual' }
 ): string => {
@@ -1193,7 +1198,7 @@ const humanizeCommunityReason = (
   if (isFairnessOrBuildFailure) {
     return context.creationMode === 'manual'
       ? 'This board isn’t solvable yet. Reveal a letter, or remove a hidden tile or lock.'
-      : `This quote can’t make a fair ${context.tierLabel} puzzle. Try an easier tier, or a longer, more varied line.`;
+      : `${context.tierLabel} isn’t available for this line. Pick a tier with a check mark, or try a different quote.`;
   }
   if (
     reason.startsWith('Could not verify buildability') ||

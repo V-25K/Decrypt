@@ -168,7 +168,7 @@ describe('community manual layout preview', () => {
       expect(manualLayout).toEqual(originalLayout);
       expect(preview.manualLayoutGuidance?.status).toBe('too_easy');
       expect(preview.manualLayoutGuidance?.suggestedActions.join(' ')).toContain(
-        'Publish as'
+        'Or share it as'
       );
       expect(preview.puzzlePreview?.difficulty).toBe(
         preview.suggestedDifficulty.estimatedDifficulty

@@ -61,11 +61,16 @@ type ManualPuzzleRequestParseResult<TBody> =
 
 type ManualPublishResult = Awaited<ReturnType<typeof injectAndPublishManualPuzzle>>;
 
-const formatTierList = (tiers: string[]): string =>
-  tiers.map((tier) => tier.charAt(0).toUpperCase() + tier.slice(1)).join(', ');
-
+// Mods see the same tier names players do: warmup displays as Easy.
 const formatTier = (tier: string): string =>
-  tier.length > 0 ? tier.charAt(0).toUpperCase() + tier.slice(1) : tier;
+  tier === 'warmup'
+    ? 'Easy'
+    : tier.length > 0
+      ? tier.charAt(0).toUpperCase() + tier.slice(1)
+      : tier;
+
+const formatTierList = (tiers: string[]): string =>
+  tiers.map((tier) => formatTier(tier)).join(', ');
 
 const isDuplicateConflictReason = (reason: string | undefined): boolean =>
   typeof reason === 'string' && reason.startsWith('Text conflicts with existing content:');
@@ -99,16 +104,16 @@ const buildValidationHint = (params: {
     return 'Quote already used or too similar.';
   }
   if (isFairBuildFailureReason(primaryReason)) {
-    return `The game engine couldn't generate a solvable ${formatTier(
+    return `Couldn't make a fair ${formatTier(
       params.naturalDifficulty
-    )} board for this quote. Try a shorter quote or another tier.`;
+    )} board from this quote. Try a shorter quote or another tier.`;
   }
   if (isBuildabilityVerificationReason(primaryReason)) {
     const traceId = extractTraceId(primaryReason);
     if (traceId) {
       console.error(`Manual puzzle preview build failed. Trace ${traceId}.`);
     }
-    return `The game engine couldn't preview this quote. Try again, or use a shorter quote.`;
+    return `Couldn't preview this quote. Try again, or use a shorter quote.`;
   }
   if (isTargetTierMismatchReason(primaryReason)) {
     return `Selected ${formatTier(params.targetTier ?? params.naturalDifficulty)} doesn't fit. Best fit: ${formatTier(
@@ -116,7 +121,7 @@ const buildValidationHint = (params: {
     )}.`;
   }
   if (params.achievableTierRange.length === 0) {
-    return "Quote doesn't fit supported tiers. Try another line.";
+    return "This quote can't become a puzzle yet. Try another line.";
   }
   return `Best fit: ${formatTierList(params.achievableTierRange)}.`;
 };
