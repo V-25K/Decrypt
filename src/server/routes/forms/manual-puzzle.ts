@@ -3,16 +3,19 @@ import type { UiResponse } from '@devvit/web/shared';
 import {
   injectAndPublishManualPuzzle,
   ManualChallengePreflightFailedError,
-  preflightManualChallengeForPublish,
+  publishFittedManualPuzzle,
   type ManualChallengeValidationResult,
 } from '../../core/admin';
+import { fitLineToTiers } from '../../core/board-fit-service';
 import {
+  computePhraseDifficultyProfile,
   difficultyToTier,
   looksLikeAllowedAuthor,
   maxPuzzleAuthorLength,
   sanitizeAuthor,
   sanitizePhrase,
 } from '../../core/content';
+import { createValidationPipeline } from '../../core/validation-pipeline';
 import {
   challengeTypeDisplayOrder,
   challengeTypeMetadata,
@@ -251,6 +254,7 @@ const buildReviewSummary = (params: {
       wordCount?: number;
     };
   };
+  excludedTierNotes?: string[];
 }): string => {
   const recommendedTier = recommendTier(
     params.validation.achievableTierRange,
@@ -273,6 +277,9 @@ const buildReviewSummary = (params: {
     `Unique letters: ${profile.uniqueLetterCount}`,
     `Total letters: ${profile.totalLetters ?? 0}`,
     `Word count: ${profile.wordCount ?? 0}`,
+    ...(params.excludedTierNotes && params.excludedTierNotes.length > 0
+      ? ['', 'Not available:', ...params.excludedTierNotes.map((note) => `- ${note}`)]
+      : []),
   ].join('\n');
 };
 
@@ -298,6 +305,7 @@ const buildReviewFormResponse = (params: {
       wordCount?: number;
     };
   };
+  excludedTierNotes?: string[];
 }): UiResponse => {
   const recommendedTier = recommendTier(
     params.validation.achievableTierRange,
@@ -320,6 +328,9 @@ const buildReviewFormResponse = (params: {
             defaultValue: buildReviewSummary({
               text: params.text,
               validation: params.validation,
+              ...(params.excludedTierNotes
+                ? { excludedTierNotes: params.excludedTierNotes }
+                : {}),
             }),
             disabled: true,
           },
@@ -609,26 +620,53 @@ manualPuzzleRoutes.post('/mod-inject-submit', async (c) => {
     fallbackPrefix: 'Failed to inject manual puzzle',
     onValid: async ({ values }) => {
       const { text, author, challengeType } = values;
-      const validation = await preflightManualChallengeForPublish({
-        text,
-        challengeType,
-      });
-      if (!validation.valid) {
+      // Step 1 builds and caches an actual board per achievable tier, so the
+      // tier list offered in step 2 can never fail at publish time.
+      const report = await fitLineToTiers({ text, author, challengeType });
+      if (!report.textValid) {
         return c.json<UiResponse>(
           {
-            showToast: buildValidationHint({
-              ...validation,
-            }),
+            showToast:
+              report.reasons[0] ?? "This line can't become a puzzle yet. Try another quote.",
           },
           200
         );
       }
+      const pipeline = createValidationPipeline();
+      const dup = await pipeline.duplicate(text);
+      if (dup.duplicate) {
+        return c.json<UiResponse>(
+          { showToast: 'Quote already used or too similar. Try another line.' },
+          200
+        );
+      }
+      const feasibleTiers = report.tiers
+        .filter((entry) => entry.feasible)
+        .map((entry) => entry.tier);
+      if (feasibleTiers.length === 0) {
+        const firstReason = report.tiers.find((entry) => entry.reason)?.reason;
+        return c.json<UiResponse>(
+          {
+            showToast:
+              firstReason ?? "This line can't become a puzzle yet. Try another quote.",
+          },
+          200
+        );
+      }
+      const excludedTierNotes = report.tiers
+        .filter((entry) => !entry.feasible)
+        .map((entry) => entry.reason ?? `${formatTier(entry.tier)} is not available for this quote.`);
       return c.json<UiResponse>(
         buildReviewFormResponse({
           text,
           author,
           challengeType,
-          validation,
+          validation: {
+            naturalDifficulty: report.suggestedTier,
+            achievableTierRange: feasibleTiers,
+            textProfile: computePhraseDifficultyProfile(text),
+          },
+          ...(excludedTierNotes.length > 0 ? { excludedTierNotes } : {}),
         }),
         200
       );
@@ -649,29 +687,13 @@ manualPuzzleRoutes.post('/mod-inject-review-submit', async (c) => {
           200
         );
       }
-      const validation = await preflightManualChallengeForPublish({
-        text,
-        difficulty,
-        challengeType,
-      });
-      if (!validation.valid) {
-        return c.json<UiResponse>(
-          {
-            showToast: buildValidationHint({
-              ...validation,
-              targetTier: difficultyToTier(difficulty),
-            }),
-          },
-          200
-        );
-      }
-      const result = await injectAndPublishManualPuzzle({
+      // Publishes the cached board fitted in step 1 verbatim — no
+      // re-preflight, no difficulty adjustment, no reseeded rebuild.
+      const result = await publishFittedManualPuzzle({
         text,
         author,
-        difficulty,
+        tier: difficultyToTier(difficulty),
         challengeType,
-        allowAdjustment: true,
-        skipPreflight: true,
       });
       return c.json<UiResponse>(
         buildManualPublishResultResponse({

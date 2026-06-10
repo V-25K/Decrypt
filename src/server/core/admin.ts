@@ -55,6 +55,13 @@ import { deriveSeed, mulberry32 } from './rng';
 import { formatDateKey } from './serde';
 import { trackDifficultyAdjustment } from './metrics';
 import { createValidationPipeline } from './validation-pipeline';
+import { getCachedFittedLayout } from './board-fit-service';
+import { applyFittedLayoutToBasePuzzle } from './board-layout';
+import { tierDisplayName } from './tier-fitter';
+import { buildPuzzle } from './puzzle';
+import { runDummySolver } from './dummy-solver';
+import { solverBandForTier } from './solver-thresholds';
+import { validatePuzzle } from './validation';
 
 export type ManualChallengeFeedback = {
   textProfile: PhraseDifficultyProfile;
@@ -504,6 +511,134 @@ export const injectAndPublishManualPuzzle = async (params: {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error during manual puzzle injection',
+    };
+  }
+};
+
+/**
+ * Publishes the EXACT board the mod reviewed: step 1 of the inject flow
+ * fitted and cached a board per achievable tier, and this applies the cached
+ * layout verbatim onto a fresh base — no difficulty adjustment, no reseeded
+ * rebuild, so an offered tier can never fail at publish time. A cache miss
+ * (mod took too long) re-fits deterministically to the identical board.
+ */
+export const publishFittedManualPuzzle = async (params: {
+  text: string;
+  author: string;
+  tier: DifficultyTier;
+  challengeType: ChallengeType;
+}): Promise<{
+  success: boolean;
+  levelId?: string;
+  dateKey?: string;
+  postId?: string;
+  difficulty?: number;
+  error?: string;
+  publishState?: 'published' | 'saved_for_retry' | 'rolled_back';
+  recoverable?: boolean;
+  cleanupPerformed?: boolean;
+}> => {
+  const text = sanitizePhrase(params.text);
+  const author = normalizeManualAuthor(params.author);
+  if (!author) {
+    return {
+      success: false,
+      error: `Invalid author. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`,
+    };
+  }
+
+  const layout = await getCachedFittedLayout({
+    text,
+    tier: params.tier,
+    author,
+    challengeType: params.challengeType,
+  });
+  if (!layout) {
+    return {
+      success: false,
+      error: `This quote can't be published as ${tierDisplayName(params.tier)}. Go back to step 1 and pick one of the listed tiers.`,
+    };
+  }
+
+  const pipeline = createValidationPipeline();
+  const dup = await pipeline.duplicate(text);
+  if (dup.duplicate) {
+    return { success: false, error: `Text ${dup.reason ?? 'duplicate'}` };
+  }
+  const signatureOwnerToken = `pending:${crypto.randomUUID()}`;
+  const reserved = await reserveUsedSignature(dup.normalizedSignature, signatureOwnerToken);
+  if (!reserved) {
+    return { success: false, error: 'Text already used in another challenge' };
+  }
+
+  let saved = false;
+  try {
+    const settings = await getDecryptSettings();
+    const dateKey = formatDateKey(new Date());
+    const band = solverBandForTier(params.tier);
+    const savedPuzzle = await buildAndSaveManualPuzzle({
+      signatureOwnerToken,
+      normalizedSignature: dup.normalizedSignature,
+      tokenSignature: dup.tokenSignature,
+      buildPreparedPuzzle: ({ nextLevelId, previousMapping }) => {
+        const base = buildPuzzle({
+          levelId: nextLevelId,
+          dateKey,
+          text,
+          author,
+          challengeType: params.challengeType,
+          source: 'MANUAL_INJECTED',
+          difficulty: layout.difficulty,
+          logicalPercent: settings.logicalCipherPercent,
+          previousMapping,
+          skipSolvabilityCheck: true,
+          applyObstructionsOnSkip: false,
+        });
+        const puzzlePrivate = applyFittedLayoutToBasePuzzle({
+          basePuzzle: base.puzzlePrivate,
+          layout,
+        });
+        // Safety net only — these pass by construction for a fitted layout.
+        const validation = validatePuzzle(puzzlePrivate);
+        if (!validation.valid) {
+          throw new Error(validation.reasons.join('; '));
+        }
+        const solver = runDummySolver({
+          puzzle: puzzlePrivate,
+          revealedIndices: puzzlePrivate.prefilledIndices,
+          requiredSolveRatio: band.floor,
+          solverProfile: 'standard',
+          maxSearchMs: 60_000,
+          maxBranchExpansions: 1200,
+        });
+        if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < band.floor) {
+          throw new Error(
+            `The reviewed ${tierDisplayName(params.tier)} board no longer passes the fairness check.`
+          );
+        }
+        return {
+          puzzlePrivate,
+          puzzlePublic: buildPublicPuzzle(puzzlePrivate, []),
+        };
+      },
+    });
+    saved = true;
+    const publishResult = await completeSavedManualPuzzlePublish({
+      levelId: savedPuzzle.levelId,
+      dateKey: savedPuzzle.puzzlePrivate.dateKey,
+    });
+    return {
+      ...publishResult,
+      difficulty: savedPuzzle.puzzlePrivate.difficulty,
+    };
+  } catch (error) {
+    if (!saved) {
+      await clearUsedSignature(dup.normalizedSignature, signatureOwnerToken);
+    }
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : 'Unknown error during manual puzzle publish',
     };
   }
 };

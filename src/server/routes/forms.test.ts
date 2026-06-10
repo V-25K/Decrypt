@@ -2,14 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   clearSubredditGameDataMock,
+  duplicateMock,
+  fitLineToTiersMock,
   hasAdminAccessMock,
   injectAndPublishManualPuzzleMock,
-  preflightManualChallengeForPublishMock,
+  publishFittedManualPuzzleMock,
 } = vi.hoisted(() => ({
   clearSubredditGameDataMock: vi.fn(),
+  duplicateMock: vi.fn(),
+  fitLineToTiersMock: vi.fn(),
   hasAdminAccessMock: vi.fn(),
   injectAndPublishManualPuzzleMock: vi.fn(),
-  preflightManualChallengeForPublishMock: vi.fn(),
+  publishFittedManualPuzzleMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -35,21 +39,63 @@ vi.mock('../core/admin', () => ({
     }
   },
   injectAndPublishManualPuzzle: injectAndPublishManualPuzzleMock,
-  preflightManualChallengeForPublish: preflightManualChallengeForPublishMock,
+  publishFittedManualPuzzle: publishFittedManualPuzzleMock,
+}));
+
+vi.mock('../core/board-fit-service', () => ({
+  fitLineToTiers: fitLineToTiersMock,
+}));
+
+vi.mock('../core/validation-pipeline', () => ({
+  createValidationPipeline: () => ({
+    phase1: vi.fn(),
+    phase1Structural: vi.fn(),
+    phase2: vi.fn(),
+    duplicate: duplicateMock,
+  }),
 }));
 
 import { forms } from './forms';
 
+type FitTier = 'warmup' | 'medium' | 'hard' | 'expert';
+
+const fitReport = (params: {
+  suggestedTier: FitTier;
+  feasible: FitTier[];
+  reasonsByTier?: Partial<Record<FitTier, string>>;
+  textValid?: boolean;
+  reasons?: string[];
+}) => ({
+  textHash: 'hash',
+  layoutVersion: 'v1',
+  textValid: params.textValid ?? true,
+  reasons: params.reasons ?? [],
+  suggestedTier: params.suggestedTier,
+  tiers: (['warmup', 'medium', 'hard', 'expert'] as const).map((tier) => ({
+    tier,
+    feasible: params.feasible.includes(tier),
+    reason: params.reasonsByTier?.[tier] ?? null,
+    summary: null,
+  })),
+});
+
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  duplicateMock.mockResolvedValue({
+    duplicate: false,
+    normalizedSignature: 'sig',
+    tokenSignature: 'tok',
+  });
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   clearSubredditGameDataMock.mockReset();
+  duplicateMock.mockReset();
+  fitLineToTiersMock.mockReset();
   hasAdminAccessMock.mockReset();
   injectAndPublishManualPuzzleMock.mockReset();
-  preflightManualChallengeForPublishMock.mockReset();
+  publishFittedManualPuzzleMock.mockReset();
 });
 
 describe('mod-clear-subreddit-data-submit', () => {
@@ -141,21 +187,19 @@ describe('mod-clear-subreddit-data-submit', () => {
 });
 
 describe('mod-inject-submit', () => {
-  it('analyzes the quote first and opens a bounded review form instead of publishing immediately', async () => {
+  it('fits the quote and opens a review form bounded to feasible tiers', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: true,
-      textProfile: {
-        cryptoHardness: 0.629,
-        uniqueLetterCount: 17,
-        totalLetters: 30,
-        wordCount: 7,
-      },
-      naturalDifficulty: 'hard',
-      achievableTierRange: ['medium', 'hard'],
-      reasons: [],
-      suggestions: [],
-    });
+    fitLineToTiersMock.mockResolvedValue(
+      fitReport({
+        suggestedTier: 'hard',
+        feasible: ['medium', 'hard'],
+        reasonsByTier: {
+          warmup:
+            'Easy doesn’t work for this line — its words are too unusual to solve without guessing.',
+          expert: 'Expert needs at least 14 different letters; this line has 12.',
+        },
+      })
+    );
 
     const response = await forms.request('http://localhost/mod-inject-submit', {
       method: 'POST',
@@ -168,12 +212,13 @@ describe('mod-inject-submit', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(preflightManualChallengeForPublishMock).toHaveBeenCalledWith({
+    expect(fitLineToTiersMock).toHaveBeenCalledWith({
       text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
-      difficulty: undefined,
+      author: 'TEST AUTHOR',
       challengeType: 'QUOTE',
     });
     expect(injectAndPublishManualPuzzleMock).not.toHaveBeenCalled();
+    expect(publishFittedManualPuzzleMock).not.toHaveBeenCalled();
 
     const body = await response.json();
     expect(body.showForm.name).toBe('mod_inject_review_form');
@@ -185,7 +230,6 @@ describe('mod-inject-submit', () => {
       (field: { name: string }) => field.name === 'text'
     );
     expect(textField.disabled).toBe(true);
-    expect(textField.required).toBeUndefined();
     expect(textField.helpText).toContain('go back to step 1');
 
     const difficultyField = body.showForm.form.fields.find(
@@ -197,32 +241,21 @@ describe('mod-inject-submit', () => {
       { label: 'Hard (8/10)', value: 'hard' },
     ]);
 
+    // Mods see why the excluded tiers are not offered.
     const summaryField = body.showForm.form.fields.find(
       (field: { name: string }) => field.name === 'summary'
     );
-    expect(summaryField.defaultValue).toContain('Crypto hardness: 0.63 - balanced letter mix');
-
-    const challengeTypeField = body.showForm.form.fields.find(
-      (field: { name: string }) => field.name === 'challengeType'
+    expect(summaryField.defaultValue).toContain('Not available:');
+    expect(summaryField.defaultValue).toContain(
+      'Expert needs at least 14 different letters'
     );
-    expect(challengeTypeField.helpText).toContain('Speech is from public remarks');
   });
 
-  it('recommends the closest achievable tier when the natural tier is just outside the valid range', async () => {
+  it('recommends the closest achievable tier when the suggestion is outside the feasible range', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: true,
-      textProfile: {
-        cryptoHardness: 0.79,
-        uniqueLetterCount: 21,
-        totalLetters: 34,
-        wordCount: 6,
-      },
-      naturalDifficulty: 'expert',
-      achievableTierRange: ['medium', 'hard'],
-      reasons: [],
-      suggestions: [],
-    });
+    fitLineToTiersMock.mockResolvedValue(
+      fitReport({ suggestedTier: 'expert', feasible: ['medium', 'hard'] })
+    );
 
     const response = await forms.request('http://localhost/mod-inject-submit', {
       method: 'POST',
@@ -244,19 +277,18 @@ describe('mod-inject-submit', () => {
     expect(difficultyField.defaultValue).toEqual(['hard']);
   });
 
-  it('shows a retry hint when preview verification fails during analysis', async () => {
+  it('shows the fit reason when no tier works for the quote', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: false,
-      textProfile: {
-        cryptoHardness: 0.42,
-        uniqueLetterCount: 11,
-      },
-      naturalDifficulty: 'medium',
-      achievableTierRange: ['medium', 'hard'],
-      reasons: ['Could not verify buildability for this text [trace abc123ef]: preview timeout.'],
-      suggestions: ['Try again in a moment, or use a different quote if the problem persists.'],
-    });
+    fitLineToTiersMock.mockResolvedValue(
+      fitReport({
+        suggestedTier: 'medium',
+        feasible: [],
+        reasonsByTier: {
+          warmup:
+            'Easy doesn’t work for this line — its words are too unusual to solve without guessing.',
+        },
+      })
+    );
 
     const response = await forms.request('http://localhost/mod-inject-submit', {
       method: 'POST',
@@ -270,22 +302,21 @@ describe('mod-inject-submit', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      showToast: "The game engine couldn't preview this quote. Try again, or use a shorter quote.",
+      showToast:
+        'Easy doesn’t work for this line — its words are too unusual to solve without guessing.',
     });
   });
 
   it('shows a duplicate-content hint during analysis', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: false,
-      textProfile: {
-        cryptoHardness: 0.25,
-        uniqueLetterCount: 8,
-      },
-      naturalDifficulty: 'warmup',
-      achievableTierRange: ['warmup', 'medium'],
-      reasons: ['Text conflicts with existing content: exact signature match.'],
-      suggestions: ['Use a different quote; this one matches recent content too closely.'],
+    fitLineToTiersMock.mockResolvedValue(
+      fitReport({ suggestedTier: 'warmup', feasible: ['warmup', 'medium'] })
+    );
+    duplicateMock.mockResolvedValue({
+      duplicate: true,
+      reason: 'near duplicate',
+      normalizedSignature: 'sig',
+      tokenSignature: 'tok',
     });
 
     const response = await forms.request('http://localhost/mod-inject-submit', {
@@ -300,7 +331,7 @@ describe('mod-inject-submit', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      showToast: 'Quote already used or too similar.',
+      showToast: 'Quote already used or too similar. Try another line.',
     });
   });
 
@@ -311,14 +342,14 @@ describe('mod-inject-submit', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        text: 'Curly quote â€œtestâ€\u009d',
+        text: 'Curly quote “test”',
         author: 'test author',
         challengeType: 'quote',
       }),
     });
 
     expect(response.status).toBe(200);
-    expect(preflightManualChallengeForPublishMock).not.toHaveBeenCalled();
+    expect(fitLineToTiersMock).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       showToast:
         "Puzzle text contains unsupported characters. Use letters, numbers, spaces, and , . ' ! ? ; : ( ) - only.",
@@ -327,25 +358,12 @@ describe('mod-inject-submit', () => {
 });
 
 describe('mod-inject-review-submit', () => {
-  it('publishes the reviewed quote using the selected bounded tier', async () => {
+  it('publishes the cached fitted board for the selected tier without rebuilding', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: true,
-      textProfile: {
-        cryptoHardness: 0.629,
-        uniqueLetterCount: 17,
-        totalLetters: 30,
-        wordCount: 7,
-      },
-      naturalDifficulty: 'hard',
-      achievableTierRange: ['medium', 'hard'],
-      reasons: [],
-      suggestions: [],
-    });
-    injectAndPublishManualPuzzleMock.mockResolvedValue({
+    publishFittedManualPuzzleMock.mockResolvedValue({
       success: true,
       levelId: 'lvl_0123',
-      dateKey: '2026-03-08',
+      dateKey: '2026-06-10',
       postId: 't3_manual123',
       difficulty: 8,
     });
@@ -362,79 +380,25 @@ describe('mod-inject-review-submit', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(preflightManualChallengeForPublishMock).toHaveBeenCalledWith({
-      text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
-      difficulty: 8,
-      challengeType: 'QUOTE',
-    });
-    expect(injectAndPublishManualPuzzleMock).toHaveBeenCalledWith({
+    expect(publishFittedManualPuzzleMock).toHaveBeenCalledWith({
       text: 'THE LIGHT WILL FALL PREY TO DARKNESS',
       author: 'TEST AUTHOR',
-      difficulty: 8,
+      tier: 'hard',
       challengeType: 'QUOTE',
-      allowAdjustment: true,
-      skipPreflight: true,
     });
+    // The whole point of the fitted flow: no adjustment/rebuild path runs.
+    expect(injectAndPublishManualPuzzleMock).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       showToast: 'Hard puzzle published - "THE LIGHT WILL FALL PREY TO..."',
     });
   });
 
-  it('surfaces tier adjustment in the publish toast', async () => {
-    hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: true,
-      textProfile: {
-        cryptoHardness: 0.5,
-        uniqueLetterCount: 12,
-      },
-      naturalDifficulty: 'hard',
-      achievableTierRange: ['medium', 'hard'],
-      reasons: [],
-      suggestions: [],
-    });
-    injectAndPublishManualPuzzleMock.mockResolvedValue({
-      success: true,
-      levelId: 'lvl_0124',
-      dateKey: '2026-03-08',
-      postId: 't3_manual124',
-      difficulty: 5,
-    });
-
-    const response = await forms.request('http://localhost/mod-inject-review-submit', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        text: 'The light will fall prey to darkness',
-        author: 'test author',
-        difficulty: 'hard',
-        challengeType: 'quote',
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      showToast: 'Medium puzzle published (adjusted from Hard) - "THE LIGHT WILL FALL PREY TO..."',
-    });
-  });
-
   it('shows the saved level id when publish fails after the review step', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: true,
-      textProfile: {
-        cryptoHardness: 0.5,
-        uniqueLetterCount: 12,
-      },
-      naturalDifficulty: 'medium',
-      achievableTierRange: ['medium'],
-      reasons: [],
-      suggestions: [],
-    });
-    injectAndPublishManualPuzzleMock.mockRejectedValue({
+    publishFittedManualPuzzleMock.mockRejectedValue({
       name: 'ManualPuzzlePublishFailedError',
       levelId: 'lvl_0456',
-      dateKey: '2026-03-08',
+      dateKey: '2026-06-10',
       message: 'publish failed',
     });
 
@@ -451,7 +415,8 @@ describe('mod-inject-review-submit', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      showToast: 'Puzzle saved as lvl_0456 but post publish failed. Use "Post Last Generated Challenge" to retry.',
+      showToast:
+        'Puzzle saved as lvl_0456 but post publish failed. Use "Post Last Generated Challenge" to retry.',
     });
   });
 
@@ -469,24 +434,18 @@ describe('mod-inject-review-submit', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(preflightManualChallengeForPublishMock).not.toHaveBeenCalled();
+    expect(publishFittedManualPuzzleMock).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       showToast: 'Choose a publish tier from the reviewed options.',
     });
   });
 
-  it('shows a tier mismatch if the quote was edited into an unsupported difficulty before publish', async () => {
+  it('surfaces the fit error when the reviewed tier is no longer available', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
-    preflightManualChallengeForPublishMock.mockResolvedValue({
-      valid: false,
-      textProfile: {
-        cryptoHardness: 0.82,
-        uniqueLetterCount: 23,
-      },
-      naturalDifficulty: 'expert',
-      achievableTierRange: ['hard', 'expert'],
-      reasons: ['Target tier warmup not achievable with this text.'],
-      suggestions: ['Use text with more repeated letters and common words.'],
+    publishFittedManualPuzzleMock.mockResolvedValue({
+      success: false,
+      error:
+        "This quote can't be published as Easy. Go back to step 1 and pick one of the listed tiers.",
     });
 
     const response = await forms.request('http://localhost/mod-inject-review-submit', {
@@ -501,9 +460,9 @@ describe('mod-inject-review-submit', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(injectAndPublishManualPuzzleMock).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
-      showToast: "Selected Warmup doesn't fit. Best fit: Expert.",
+      showToast:
+        "This quote can't be published as Easy. Go back to step 1 and pick one of the listed tiers.",
     });
   });
 });

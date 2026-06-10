@@ -130,7 +130,10 @@ export const buildDifficultyBreakdown = (puzzle: PuzzlePrivate): DifficultyBreak
     revealedIndices: puzzle.prefilledIndices,
     forbiddenIndices: [...puzzle.blindIndices, ...(puzzle.lockIndices ?? [])],
     requiredSolveRatio: 0.6,
-    maxSearchMs: 25,
+    // Branch expansions are the real budget; a tight wall-clock cap made the
+    // estimated difficulty flip with CPU load (the same board could grade as
+    // different tiers under contention). 1200 expansions bounds the work.
+    maxSearchMs: 10_000,
     maxBranchExpansions: 1200,
     solverProfile: 'standard',
   });

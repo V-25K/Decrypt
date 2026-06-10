@@ -936,6 +936,10 @@ const buildManualLayoutPuzzlePreview = async (params: {
       forbiddenIndices: [...blindIndices, ...lockIndices],
       requiredSolveRatio: 0.65,
       solverProfile: 'deep',
+      // Branch expansions only: the fairness verdict must not flip with CPU
+      // load, or the preview and "Fix it for me" would disagree.
+      maxSearchMs: 60_000,
+      maxBranchExpansions: 5000,
 	    });
 	    if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < 0.65) {
 	      reasons.push(manualFairnessAdvice(puzzlePrivate));
@@ -1303,6 +1307,11 @@ const manualLayoutIsFair = (puzzle: PuzzlePrivate): boolean => {
     forbiddenIndices: [...puzzle.blindIndices, ...(puzzle.lockIndices ?? [])],
     requiredSolveRatio: 0.65,
     solverProfile: 'deep',
+    // Branch expansions only — a wall-clock cap would make the fairness
+    // verdict depend on CPU load, so "Fix it for me" could churn a board
+    // it had just declared fair.
+    maxSearchMs: 60_000,
+    maxBranchExpansions: 5000,
   });
   return solver.solvable && !solver.blindGuessRequired && solver.solvedRatio >= 0.65;
 };
