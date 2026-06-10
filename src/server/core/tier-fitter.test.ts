@@ -71,7 +71,8 @@ describe('fitBoardToTier', () => {
     expect(outcome.detail.length).toBeGreaterThan(0);
   });
 
-  it('is deterministic: same input produces the identical layout', () => {
+  // 8 full fits: generous timeout for CI/full-suite CPU contention.
+  it('is deterministic: same input produces the identical layout', { timeout: 30_000 }, () => {
     for (const tier of allTiers) {
       const first = fitBoardToTier(fitParams(corpus[3] ?? '', tier));
       const second = fitBoardToTier(fitParams(corpus[3] ?? '', tier));

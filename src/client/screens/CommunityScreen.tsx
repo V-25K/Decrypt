@@ -34,6 +34,8 @@ type CommunitySubmission =
 
 type CommunityPreview = RouterOutputs['community']['previewSubmission'];
 
+type CommunityLineFit = RouterOutputs['community']['fitLine'];
+
 type CreatorAcclaim =
   RouterOutputs['community']['getMyCreatorProgress']['levels'][number];
 
@@ -94,6 +96,24 @@ const difficultyPreferenceOptions = [
   { label: 'Hard', value: 8 },
   { label: 'Expert', value: 9 },
 ] satisfies { label: string; value: number }[];
+
+type CommunityTierKey = 'warmup' | 'medium' | 'hard' | 'expert';
+
+const tierKeyForDifficulty = (difficulty: number): CommunityTierKey =>
+  difficulty <= 3
+    ? 'warmup'
+    : difficulty <= 5
+      ? 'medium'
+      : difficulty <= 8
+        ? 'hard'
+        : 'expert';
+
+const difficultyForTierKey: Record<CommunityTierKey, number> = {
+  warmup: 2,
+  medium: 5,
+  hard: 8,
+  expert: 9,
+};
 
 const communityDraftStorageKey = 'decrypt:community:create-draft:v1';
 
@@ -344,6 +364,9 @@ const PreviewPanel = ({
   onToggleManualTile,
   preview,
   focusedCipherNumber,
+  onAutoFix,
+  autoFixBusy,
+  autoFixChanges,
 }: {
   creationMode: CommunityCreationMode;
   manualLayout: CommunityManualLayout;
@@ -356,6 +379,9 @@ const PreviewPanel = ({
   onToggleManualTile: (tileIndex: number, cipherNumber: number | null) => void;
   preview: CommunityPreview | null;
   focusedCipherNumber: number | null;
+  onAutoFix: () => void;
+  autoFixBusy: boolean;
+  autoFixChanges: string[];
 }) => {
   if (!preview) {
     return null;
@@ -528,6 +554,30 @@ const PreviewPanel = ({
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {manualMode && !previewReady && (
+        <button
+          type="button"
+          className="btn-3d btn-primary mt-2 w-full rounded-lg px-3 py-2 text-xs font-black uppercase"
+          onClick={onAutoFix}
+          disabled={autoFixBusy}
+          data-testid="community-autofix-button"
+        >
+          {autoFixBusy ? 'Fixing…' : 'Fix it for me'}
+        </button>
+      )}
+      {manualMode && autoFixChanges.length > 0 && (
+        <div
+          className="mt-2 rounded-md bg-emerald-400/10 px-3 py-2 text-xs font-semibold leading-snug text-emerald-100"
+          data-testid="community-autofix-changes"
+        >
+          <div className="font-black">What changed</div>
+          <ul className="mt-1 space-y-1">
+            {autoFixChanges.map((change) => (
+              <li key={change}>{change}</li>
+            ))}
+          </ul>
         </div>
       )}
       {creationMode !== 'manual' && preview.suggestions.length > 0 && (
@@ -859,6 +909,11 @@ export const CommunityScreen = ({
 	  const [preview, setPreview] = useState<CommunityPreview | null>(null);
   const [previewFingerprint, setPreviewFingerprint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [lineFit, setLineFit] = useState<CommunityLineFit | null>(null);
+  const [lineFitFingerprint, setLineFitFingerprint] = useState<string | null>(null);
+  const [lineFitLoading, setLineFitLoading] = useState(false);
+  const [autoFixBusy, setAutoFixBusy] = useState(false);
+  const [autoFixChanges, setAutoFixChanges] = useState<string[]>([]);
   const [mine, setMine] = useState<CommunitySubmission[]>([]);
   const [mineLoading, setMineLoading] = useState(false);
   const [creatorProgress, setCreatorProgress] = useState<
@@ -916,6 +971,71 @@ export const CommunityScreen = ({
     setPreviewFingerprint(null);
     setCreateStep('edit');
   }, [attribution, category, creationMode, targetDifficulty, text, title]);
+
+  useEffect(() => {
+    setAutoFixChanges([]);
+  }, [creationMode, text]);
+
+  // Live tier availability: as the player types, check every tier by
+  // actually building boards server-side (cached), so the tier buttons only
+  // ever offer choices that cannot fail at preview or submit.
+  const trimmedFitText = text.trim();
+  useEffect(() => {
+    if (
+      creationMode !== 'auto' ||
+      trimmedFitText.length < minPlayablePuzzleTotalLength
+    ) {
+      setLineFit(null);
+      setLineFitFingerprint(null);
+      setLineFitLoading(false);
+      return;
+    }
+    if (lineFitFingerprint === trimmedFitText) {
+      return;
+    }
+    let cancelled = false;
+    setLineFitLoading(true);
+    const timeoutId = window.setTimeout(() => {
+      void trpc.community.fitLine
+        .query({ text: trimmedFitText })
+        .then((result) => {
+          if (!cancelled) {
+            setLineFit(result);
+            setLineFitFingerprint(trimmedFitText);
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled) {
+            setLineFitLoading(false);
+          }
+        });
+    }, 650);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [creationMode, lineFitFingerprint, trimmedFitText]);
+
+  // If the player's chosen tier turns out unavailable for this line, move
+  // the selection to the engine's suggestion instead of dead-ending later.
+  useEffect(() => {
+    if (creationMode !== 'auto' || !lineFit || !lineFit.textValid) {
+      return;
+    }
+    const current = lineFit.tiers.find(
+      (entry) => entry.tier === tierKeyForDifficulty(targetDifficulty)
+    );
+    if (!current || current.feasible) {
+      return;
+    }
+    const suggested = lineFit.tiers.find(
+      (entry) => entry.tier === lineFit.suggestedTier
+    );
+    if (suggested?.feasible) {
+      setTargetDifficulty(difficultyForTierKey[lineFit.suggestedTier]);
+    }
+  }, [creationMode, lineFit, targetDifficulty]);
 
   const loadMine = useCallback(async () => {
     setMineLoading(true);
@@ -1049,6 +1169,27 @@ export const CommunityScreen = ({
       showToast(error instanceof Error ? error.message : 'Preview failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleAutoFix = async () => {
+    setAutoFixBusy(true);
+    try {
+      const result = await trpc.community.autoFixManualLayout.mutate({
+        text,
+        manualLayout,
+      });
+      if (result.success && result.fixedLayout) {
+        setManualLayout(result.fixedLayout);
+        setAutoFixChanges(result.changes);
+      }
+      showToast(result.message);
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : 'Could not fix the board.'
+      );
+    } finally {
+      setAutoFixBusy(false);
     }
   };
 
@@ -1542,24 +1683,57 @@ export const CommunityScreen = ({
 		                    className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"
 		                    data-testid="community-difficulty"
 		                  >
-		                    {difficultyPreferenceOptions.map((option) => (
-		                      <button
-		                        key={option.value}
-		                        type="button"
-		                        className={cn(
-		                          tabButtonClass(targetDifficulty === option.value),
-		                          'min-h-[34px] px-2 text-[10px]'
-		                        )}
-			                        onClick={() => setTargetDifficulty(option.value)}
-			                        disabled={busy || isEditingRequestedChanges}
-		                        aria-label={`Prefer ${option.label} difficulty`}
-		                      >
-		                        {option.label}
-		                      </button>
-		                    ))}
+		                    {difficultyPreferenceOptions.map((option) => {
+		                      const fitEntry =
+		                        lineFit?.tiers.find(
+		                          (entry) =>
+		                            entry.tier === tierKeyForDifficulty(option.value)
+		                        ) ?? null;
+		                      const unavailable =
+		                        fitEntry !== null && !fitEntry.feasible;
+		                      return (
+		                        <button
+		                          key={option.value}
+		                          type="button"
+		                          className={cn(
+		                            tabButtonClass(targetDifficulty === option.value),
+		                            'min-h-[34px] px-2 text-[10px]',
+		                            unavailable && 'opacity-40'
+		                          )}
+			                          onClick={() => setTargetDifficulty(option.value)}
+			                          disabled={
+			                            busy || isEditingRequestedChanges || unavailable
+			                          }
+		                          aria-label={`Prefer ${option.label} difficulty`}
+		                        >
+		                          {option.label}
+		                          {fitEntry?.feasible ? ' ✓' : ''}
+		                        </button>
+		                      );
+		                    })}
 		                  </div>
-		                  <p className="app-text-muted mt-2 text-[11px] font-semibold leading-snug">
-		                    Preview will show the actual tier the engine can build for this quote.
+		                  <p
+		                    className="app-text-muted mt-2 text-[11px] font-semibold leading-snug"
+		                    data-testid="community-tier-status"
+		                  >
+		                    {trimmedFitText.length < minPlayablePuzzleTotalLength
+		                      ? 'Type your line above to see which tiers are ready.'
+		                      : lineFitLoading
+		                        ? 'Checking which tiers work for this line…'
+		                        : !lineFit
+		                          ? 'Tiers with a check are ready to play.'
+		                          : !lineFit.textValid
+		                            ? lineFit.reasons[0] ??
+		                              'This line can’t become a puzzle yet.'
+		                            : (() => {
+		                                const blocked = lineFit.tiers.find(
+		                                  (entry) => !entry.feasible
+		                                );
+		                                return blocked
+		                                  ? blocked.reason ??
+		                                      `${blocked.label} isn’t available for this line.`
+		                                  : 'All tiers are ready — pick one and preview.';
+		                              })()}
 		                  </p>
 		                </div>
 		              )}
@@ -1653,6 +1827,9 @@ export const CommunityScreen = ({
                 onToggleManualTile={toggleManualTile}
                 preview={preview}
                 focusedCipherNumber={focusedManualCipherNumber}
+                onAutoFix={() => void handleAutoFix()}
+                autoFixBusy={autoFixBusy}
+                autoFixChanges={autoFixChanges}
               />
               <div
                 className={cn(

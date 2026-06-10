@@ -240,11 +240,12 @@ export const rankRevealCandidates = (
 // reveals an off-profile line needs (each mutation costs one solver run of
 // a few ms; the worst case stays far below the 30s request limit).
 const maxFitMutations = 24;
-// Branch expansions are the deterministic budget (same result on any
-// machine, any load); the time cap is only a pathological-input guard and
-// must be generous enough to never bind first — if it does, layouts become
-// machine-speed-dependent and cached vs re-fit boards can diverge.
-const fitSolverBudget = { maxSearchMs: 2000, maxBranchExpansions: 1200 } as const;
+// Branch expansions are the ONLY effective budget: they are deterministic on
+// any machine under any load. A wall-clock cap that ever binds first makes
+// layouts machine-speed-dependent, so cached vs re-fit boards could diverge
+// (observed under test-suite CPU contention). 1200 expansions is inherently
+// bounded — the time cap is set beyond any plausible wall time for it.
+const fitSolverBudget = { maxSearchMs: 60_000, maxBranchExpansions: 1200 } as const;
 const ceilingEpsilon = 0.02;
 
 type BandPlacement = {
@@ -356,7 +357,6 @@ export const fitBoardToTier = (params: {
   const difficulty = representativeDifficultyForTier(params.tier);
   const seedKey = tierFitSeedKey(params.tier);
   const band = solverBandForTier(params.tier);
-  const rng = mulberry32(deriveSeed(seedKey, normalizedText));
 
   let basePuzzle: PuzzlePrivate;
   try {
@@ -373,6 +373,7 @@ export const fitBoardToTier = (params: {
       previousMapping: null,
       skipSolvabilityCheck: true,
       applyObstructionsOnSkip: true,
+      deterministicSolverBudget: true,
     }).puzzlePrivate;
   } catch (error) {
     return {
@@ -567,7 +568,12 @@ export const fitBoardToTier = (params: {
           });
         }
         if (!next) {
-          const padlock = tryAddPadlock(current, rng);
+          // Per-mutation rng: the padlock choice depends only on the board
+          // state and mutation index, never on earlier draw history.
+          const padlockRng = mulberry32(
+            deriveSeed(`${seedKey}:padlock:${mutation}`, normalizedText)
+          );
+          const padlock = tryAddPadlock(current, padlockRng);
           if (padlock) {
             next = applyValidated(current, {
               type: 'add_padlock',

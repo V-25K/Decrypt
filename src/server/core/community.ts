@@ -18,9 +18,16 @@ import {
   communitySubmissionSchema,
   communitySubmissionInputSchema,
   communityManualLayoutSchema,
+  fittedLayoutSchema,
+  type CommunityFittedLayout,
+  type CommunityLineFitReport,
   type CommunityManualLayout,
   type CommunityManualPadlock,
 } from '../../shared/community';
+import { fitLineToTiers, getCachedFittedLayout } from './board-fit-service';
+import { applyFittedLayoutToBasePuzzle } from './board-layout';
+import { rankRevealCandidates, tierDisplayName } from './tier-fitter';
+import { solverBandForTier } from './solver-thresholds';
 import {
   buildAndSaveManualPuzzle,
   buildManualPuzzleWithSolverFallback,
@@ -123,6 +130,10 @@ type CommunityPreviewResult = {
   difficultyExplanation?: DifficultyBreakdown;
   challengeEvaluationSummary?: ChallengeEvaluationSummary;
   manualLayoutGuidance?: ManualLayoutGuidance;
+  // The exact fitted board behind an auto-mode preview. Persisted on the
+  // submission so approval publishes the board the creator saw. Internal —
+  // stripped by the preview response schema before reaching the client.
+  fittedLayout: CommunityFittedLayout | null;
 };
 
 type ManualLayoutGuidance = {
@@ -260,6 +271,22 @@ const parseManualLayoutHash = (
   }
 };
 
+const parseFittedLayoutHash = (
+  hash: Record<string, string>
+): CommunityFittedLayout | null => {
+  const raw = stringFromHash(hash, 'fittedLayout');
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsedJson: unknown = JSON.parse(raw);
+    const parsed = fittedLayoutSchema.safeParse(parsedJson);
+    return parsed.success ? parsed.data : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
 const parseSubmissionHash = (
   submissionId: string,
   hash: Record<string, string>
@@ -280,6 +307,7 @@ const parseSubmissionHash = (
 	    targetDifficulty: numberFromHash(hash, 'targetDifficulty'),
 	    creationMode: stringFromHash(hash, 'creationMode') ?? 'auto',
 	    manualLayout: parseManualLayoutHash(hash),
+	    fittedLayout: parseFittedLayoutHash(hash),
 	    suggestedTier: hash.suggestedTier,
     status: hash.status,
     submittedAt: numberFromHash(hash, 'submittedAt'),
@@ -305,6 +333,8 @@ const saveSubmission = async (submission: CommunitySubmission): Promise<void> =>
 	    creationMode: submission.creationMode,
 	    manualLayout:
 	      submission.manualLayout === null ? '' : JSON.stringify(submission.manualLayout),
+	    fittedLayout:
+	      submission.fittedLayout === null ? '' : JSON.stringify(submission.fittedLayout),
 	    suggestedTier: submission.suggestedTier,
     status: submission.status,
     submittedAt: `${submission.submittedAt}`,
@@ -685,6 +715,22 @@ const firstDescribedTile = (
   return null;
 };
 
+// When the fairness solver stalls, point at the single most useful fix from
+// the solver's own reveal ranking instead of a vague "make it easier".
+const manualFairnessAdvice = (puzzle: PuzzlePrivate): string => {
+  const top = rankRevealCandidates(puzzle, new Set())[0];
+  if (!top) {
+    return 'Players would get stuck on this board. Remove a hidden tile or a lock.';
+  }
+  const frequency = puzzle.tiles.filter(
+    (tile) => tile.isLetter && tile.char === top.char
+  ).length;
+  const description = describeManualTile(puzzle, top.index) ?? top.char;
+  return frequency > 1
+    ? `Players would get stuck on this board. Reveal the ${description} — ${top.char} appears ${frequency} times.`
+    : `Players would get stuck on this board. Reveal the ${description}, or remove a hidden tile or a lock.`;
+};
+
 const suggestedStarterReveal = (puzzle: PuzzlePrivate): string => {
   const blocked = new Set([
     ...puzzle.prefilledIndices,
@@ -892,7 +938,7 @@ const buildManualLayoutPuzzlePreview = async (params: {
       solverProfile: 'deep',
 	    });
 	    if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < 0.65) {
-	      reasons.push('This layout is too hard for the fairness checker. Add another revealed word or remove obstructions.');
+	      reasons.push(manualFairnessAdvice(puzzlePrivate));
 	    }
 	    return {
 	      puzzle: buildPublicPuzzle(puzzlePrivate, [], undefined, {
@@ -921,63 +967,83 @@ const buildEphemeralPuzzlePreview = async (params: {
   attribution: string;
   category: ChallengeType;
   targetDifficulty: number;
-  hardnessBoundsByTier?: Partial<HardnessBoundsByTier>;
 }): Promise<{
   puzzle: PuzzlePublic | null;
   puzzlePrivate: PuzzlePrivate | null;
   guidancePuzzlePrivate: PuzzlePrivate | null;
+  fittedLayout: CommunityFittedLayout | null;
   reasons: string[];
 }> => {
-  const pipeline = createValidationPipeline(params.hardnessBoundsByTier);
-  const phase1 = pipeline.phase1(params.text, params.targetDifficulty);
-  if (!phase1.valid) {
+  const tier = difficultyToTier(params.targetDifficulty);
+  const empty = {
+    puzzle: null,
+    puzzlePrivate: null,
+    guidancePuzzlePrivate: null,
+    fittedLayout: null,
+  };
+  try {
+    // In the normal flow the client's live tier check already fitted and
+    // cached this line, so both calls below are cache hits.
+    const report = await fitLineToTiers({
+      text: params.text,
+      author: params.attribution,
+      challengeType: params.category,
+    });
+    const entry = report.tiers.find((candidate) => candidate.tier === tier);
+    if (!entry?.feasible) {
       return {
-        puzzle: null,
-        puzzlePrivate: null,
-        guidancePuzzlePrivate: null,
+        ...empty,
+        reasons: [entry?.reason ?? buildCommunityTierFitMessage(params.targetDifficulty)],
+      };
+    }
+    const layout = await getCachedFittedLayout({
+      text: params.text,
+      tier,
+      author: params.attribution,
+      challengeType: params.category,
+    });
+    if (!layout) {
+      return {
+        ...empty,
         reasons: [buildCommunityTierFitMessage(params.targetDifficulty)],
       };
-  }
-
-  try {
+    }
     const [settings, previewLevelId] = await Promise.all([
       getDecryptSettings(),
       peekNextLevelId(),
     ]);
-    const built = buildManualPuzzleWithSolverFallback({
+    const base = buildPuzzle({
       levelId: previewLevelId,
       dateKey: formatDateKey(new Date()),
       text: params.text,
       author: params.attribution,
       challengeType: params.category,
       source: 'COMMUNITY',
-      difficulty: params.targetDifficulty,
+      difficulty: layout.difficulty,
       logicalPercent: settings.logicalCipherPercent,
       previousMapping: await previousMappingForLevel(previewLevelId),
+      skipSolvabilityCheck: true,
+      applyObstructionsOnSkip: false,
     });
-    const phase2 = pipeline.phase2(built.puzzlePrivate);
-    if (!phase2.valid) {
-      return {
-        puzzle: null,
-        puzzlePrivate: null,
-        guidancePuzzlePrivate: null,
-        reasons: phase2.reasons,
-      };
+    const puzzlePrivate = applyFittedLayoutToBasePuzzle({
+      basePuzzle: base.puzzlePrivate,
+      layout,
+    });
+    const validation = validatePuzzle(puzzlePrivate);
+    if (!validation.valid) {
+      return { ...empty, reasons: validation.reasons };
     }
-	    return {
-	      puzzle: built.puzzlePublic,
-	      puzzlePrivate: built.puzzlePrivate,
-	      guidancePuzzlePrivate: built.puzzlePrivate,
-	      reasons: [],
-	    };
-	  } catch (error) {
-	    return {
-	      puzzle: null,
-	      puzzlePrivate: null,
-	      guidancePuzzlePrivate: null,
-	      reasons: [
-	        creatorFriendlyBuildError(error, params.targetDifficulty),
-	      ],
+    return {
+      puzzle: buildPublicPuzzle(puzzlePrivate, []),
+      puzzlePrivate,
+      guidancePuzzlePrivate: puzzlePrivate,
+      fittedLayout: layout,
+      reasons: [],
+    };
+  } catch (error) {
+    return {
+      ...empty,
+      reasons: [creatorFriendlyBuildError(error, params.targetDifficulty)],
     };
   }
 };
@@ -1183,6 +1249,179 @@ const buildCommunitySuggestions = (params: {
   return [];
 };
 
+/**
+ * Live tier availability for the create form: every tier is checked by
+ * actually building a board (cached by text), so the tiers offered to the
+ * player can never fail later at preview or submit.
+ */
+export const fitCommunityLine = async (input: {
+  text: string;
+}): Promise<CommunityLineFitReport> => {
+  const sanitizedText = sanitizePhrase(input.text);
+  const report = await fitLineToTiers({ text: sanitizedText });
+  return {
+    textValid: report.textValid,
+    reasons: report.reasons,
+    suggestedTier: report.suggestedTier,
+    tiers: report.tiers.map((entry) => ({
+      tier: entry.tier,
+      label: tierDisplayName(entry.tier),
+      feasible: entry.feasible,
+      reason: entry.reason,
+      summary: entry.summary
+        ? {
+            revealCount: entry.summary.revealCount,
+            blindCount: entry.summary.blindCount,
+            padlockCount: entry.summary.padlockCount,
+          }
+        : null,
+    })),
+  };
+};
+
+const manualLayoutFromPuzzle = (puzzle: PuzzlePrivate): CommunityManualLayout =>
+  normalizeManualLayout({
+    prefilledIndices: puzzle.prefilledIndices,
+    prefilledWordIndices: [],
+    blindIndices: puzzle.blindIndices,
+    lockIndices: puzzle.padlockChains.flatMap((chain) => chain.lockedIndices),
+    lockKeyIndices: puzzle.padlockChains.flatMap((chain) => chain.keyIndices),
+    padlocks: puzzle.padlockChains.map((chain) => ({
+      padlockId: chain.chainId,
+      lockedIndices: chain.lockedIndices,
+      keyIndices: chain.keyIndices,
+    })),
+  });
+
+const manualLayoutIsFair = (puzzle: PuzzlePrivate): boolean => {
+  if (!validatePuzzle(puzzle).valid) {
+    return false;
+  }
+  const solver = runDummySolver({
+    puzzle,
+    revealedIndices: puzzle.prefilledIndices,
+    forbiddenIndices: [...puzzle.blindIndices, ...(puzzle.lockIndices ?? [])],
+    requiredSolveRatio: 0.65,
+    solverProfile: 'deep',
+  });
+  return solver.solvable && !solver.blindGuessRequired && solver.solvedRatio >= 0.65;
+};
+
+/**
+ * "Fix it for me" for the advanced builder: minimally adjusts the player's
+ * layout until it passes the manual fairness check — best reveals first,
+ * then stripping hidden tiles, then locks — and reports every change made.
+ */
+export const autoFixCommunityManualLayout = async (input: {
+  text: string;
+  manualLayout: CommunityManualLayout;
+}): Promise<{
+  success: boolean;
+  message: string;
+  fixedLayout: CommunityManualLayout | null;
+  changes: string[];
+}> => {
+  const sanitizedText = sanitizePhrase(input.text);
+  const preview = await buildManualLayoutPuzzlePreview({
+    text: sanitizedText,
+    attribution: 'Preview',
+    category: 'QUOTE',
+    manualLayout: normalizeManualLayout(input.manualLayout),
+  });
+  const initialBoard = preview.guidancePuzzlePrivate;
+  if (!initialBoard) {
+    return {
+      success: false,
+      message:
+        preview.reasons[0] ?? 'Couldn’t read this board. Update the preview and try again.',
+      fixedLayout: null,
+      changes: [],
+    };
+  }
+  let current: PuzzlePrivate = initialBoard;
+  const changes: string[] = [];
+  const maxRepairSteps = 10;
+  const preferRevealSteps = 6;
+  for (let attempt = 0; attempt < maxRepairSteps && !manualLayoutIsFair(current); attempt += 1) {
+    if (attempt < preferRevealSteps) {
+      const reveal = rankRevealCandidates(current, new Set())[0];
+      if (reveal) {
+        const prefilledIndices = uniqueSortedNumbers([
+          ...current.prefilledIndices,
+          reveal.index,
+        ]);
+        const next: PuzzlePrivate = {
+          ...current,
+          prefilledIndices,
+          revealedIndices: prefilledIndices,
+          revealed_indices: prefilledIndices,
+        };
+        if (validatePuzzle(next).valid) {
+          changes.push(
+            `Revealed the ${describeManualTile(current, reveal.index) ?? reveal.char}.`
+          );
+          current = next;
+          continue;
+        }
+      }
+    }
+    const blindIndex: number | undefined =
+      current.blindIndices[current.blindIndices.length - 1];
+    if (blindIndex !== undefined) {
+      changes.push(
+        `Removed the ? from the ${describeManualTile(current, blindIndex) ?? 'hidden tile'}.`
+      );
+      current = {
+        ...current,
+        blindIndices: current.blindIndices.filter((index) => index !== blindIndex),
+      };
+      continue;
+    }
+    const chain: PadlockChain | undefined =
+      current.padlockChains[current.padlockChains.length - 1];
+    if (chain) {
+      changes.push(
+        `Removed the lock on the ${firstDescribedTile(current, chain.lockedIndices) ?? 'tile'}.`
+      );
+      const removedLocks = new Set(chain.lockedIndices);
+      current = {
+        ...current,
+        padlockChains: current.padlockChains.filter(
+          (candidate) => candidate.chainId !== chain.chainId
+        ),
+        lockIndices: (current.lockIndices ?? []).filter(
+          (index) => !removedLocks.has(index)
+        ),
+      };
+      continue;
+    }
+    break;
+  }
+  if (!manualLayoutIsFair(current)) {
+    return {
+      success: false,
+      message:
+        'Couldn’t fix this board automatically. Try revealing more letters or removing locks.',
+      fixedLayout: null,
+      changes: [],
+    };
+  }
+  if (changes.length === 0) {
+    return {
+      success: true,
+      message: 'This board is already fair — no changes needed.',
+      fixedLayout: manualLayoutFromPuzzle(current),
+      changes: [],
+    };
+  }
+  return {
+    success: true,
+    message: 'Fixed! Review the changes below, then update the preview.',
+    fixedLayout: manualLayoutFromPuzzle(current),
+    changes,
+  };
+};
+
 export const previewCommunitySubmission = async (
   input: CommunitySubmissionInput
 ): Promise<CommunityPreviewResult> => {
@@ -1212,11 +1451,14 @@ export const previewCommunitySubmission = async (
       : null;
   const preview =
 	    input.creationMode === 'manual'
-	      ? manualPreview ?? {
-	          puzzle: null,
-	          puzzlePrivate: null,
-	          guidancePuzzlePrivate: null,
-	          reasons: [],
+	      ? {
+	          ...(manualPreview ?? {
+	            puzzle: null,
+	            puzzlePrivate: null,
+	            guidancePuzzlePrivate: null,
+	            reasons: [],
+	          }),
+	          fittedLayout: null,
 	        }
 	      : baseValid
 	        ? await buildEphemeralPuzzlePreview({
@@ -1224,12 +1466,12 @@ export const previewCommunitySubmission = async (
             attribution: sanitizedAttribution,
             category: input.category,
             targetDifficulty: input.targetDifficulty,
-            hardnessBoundsByTier,
           })
 	        : {
 	            puzzle: null,
 	            puzzlePrivate: null,
 	            guidancePuzzlePrivate: null,
+	            fittedLayout: null,
 	            reasons: [],
 	          };
   const allReasons = [...reasons, ...duplicateFailures, ...preview.reasons];
@@ -1315,6 +1557,7 @@ export const previewCommunitySubmission = async (
     difficultyExplanation: difficultyExplanation ?? undefined,
     challengeEvaluationSummary: challengeEvaluation?.summary,
     manualLayoutGuidance,
+    fittedLayout: preview.fittedLayout,
   };
 };
 
@@ -1359,6 +1602,7 @@ export const submitCommunitySubmission = async (
 	    creationMode: input.creationMode,
 	    manualLayout:
 	      input.creationMode === 'manual' ? normalizeManualLayout(input.manualLayout) : null,
+	    fittedLayout: input.creationMode === 'auto' ? preview.fittedLayout : null,
 	    suggestedTier: preview.suggestedDifficulty.tier,
     status: 'pending',
     submittedAt,
@@ -1518,6 +1762,95 @@ const rewardCreatorOnApproval = async (
   return nextProfile;
 };
 
+/**
+ * Rebuilds the exact board the creator previewed by applying their persisted
+ * fitted layout to a fresh base. Null means the layout no longer produces a
+ * fair board (should not happen — the apply path is deterministic — but the
+ * caller falls back to a fresh fit rather than failing the approval).
+ */
+const buildAutoPuzzleFromFittedLayout = (params: {
+  levelId: string;
+  dateKey: string;
+  previousMapping: Record<string, number> | null;
+  submission: Pick<CommunitySubmission, 'text' | 'attribution' | 'category'>;
+  layout: CommunityFittedLayout;
+  logicalPercent: number;
+}): PuzzlePrivate | null => {
+  const base = buildPuzzle({
+    levelId: params.levelId,
+    dateKey: params.dateKey,
+    text: params.submission.text,
+    author: params.submission.attribution,
+    challengeType: params.submission.category,
+    source: 'COMMUNITY',
+    difficulty: params.layout.difficulty,
+    logicalPercent: params.logicalPercent,
+    previousMapping: params.previousMapping,
+    skipSolvabilityCheck: true,
+    applyObstructionsOnSkip: false,
+  });
+  const puzzlePrivate = applyFittedLayoutToBasePuzzle({
+    basePuzzle: base.puzzlePrivate,
+    layout: params.layout,
+  });
+  if (!validatePuzzle(puzzlePrivate).valid) {
+    return null;
+  }
+  const band = solverBandForTier(difficultyToTier(params.layout.difficulty));
+  const solver = runDummySolver({
+    puzzle: puzzlePrivate,
+    revealedIndices: puzzlePrivate.prefilledIndices,
+    requiredSolveRatio: band.floor,
+    solverProfile: 'standard',
+    maxSearchMs: 2000,
+    maxBranchExpansions: 1200,
+  });
+  if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < band.floor) {
+    return null;
+  }
+  return puzzlePrivate;
+};
+
+const buildAutoPuzzleFromSubmissionLayout = async (params: {
+  levelId: string;
+  dateKey: string;
+  previousMapping: Record<string, number> | null;
+  submission: CommunitySubmission;
+  logicalPercent: number;
+}): Promise<PuzzlePrivate | null> => {
+  if (!params.submission.fittedLayout) {
+    return null;
+  }
+  const fromStored = buildAutoPuzzleFromFittedLayout({
+    levelId: params.levelId,
+    dateKey: params.dateKey,
+    previousMapping: params.previousMapping,
+    submission: params.submission,
+    layout: params.submission.fittedLayout,
+    logicalPercent: params.logicalPercent,
+  });
+  if (fromStored) {
+    return fromStored;
+  }
+  const freshLayout = await getCachedFittedLayout({
+    text: params.submission.text,
+    tier: difficultyToTier(params.submission.fittedLayout.difficulty),
+    author: params.submission.attribution,
+    challengeType: params.submission.category,
+  });
+  if (!freshLayout) {
+    return null;
+  }
+  return buildAutoPuzzleFromFittedLayout({
+    levelId: params.levelId,
+    dateKey: params.dateKey,
+    previousMapping: params.previousMapping,
+    submission: params.submission,
+    layout: freshLayout,
+    logicalPercent: params.logicalPercent,
+  });
+};
+
 const buildApprovedCommunityPuzzle = async (
   submission: CommunitySubmission
 ): Promise<{
@@ -1552,6 +1885,20 @@ const buildApprovedCommunityPuzzle = async (
 	          puzzlePublic: buildPublicPuzzle(built.puzzlePrivate, []),
 	        };
 	      }
+	      const fromLayout = await buildAutoPuzzleFromSubmissionLayout({
+	        levelId: nextLevelId,
+	        dateKey: formatDateKey(new Date()),
+	        previousMapping,
+	        submission,
+	        logicalPercent: settings.logicalCipherPercent,
+	      });
+	      if (fromLayout) {
+	        return {
+	          puzzlePrivate: fromLayout,
+	          puzzlePublic: buildPublicPuzzle(fromLayout, []),
+	        };
+	      }
+	      // Legacy submissions (no fitted layout) rebuild the old way.
 		      let base: ReturnType<typeof buildManualPuzzleWithSolverFallback>;
 		      try {
 		        base = buildManualPuzzleWithSolverFallback({
@@ -1616,6 +1963,23 @@ const buildReplacementCommunityPuzzle = async (params: {
   }
 
   const settings = await getDecryptSettings();
+  const fromLayout = await buildAutoPuzzleFromSubmissionLayout({
+    levelId: params.existingPuzzle.levelId,
+    dateKey: params.existingPuzzle.dateKey,
+    previousMapping,
+    submission: params.submission,
+    logicalPercent: settings.logicalCipherPercent,
+  });
+  if (fromLayout) {
+    const puzzlePrivate: PuzzlePrivate = {
+      ...fromLayout,
+      createdAt: params.existingPuzzle.createdAt,
+    };
+    return {
+      puzzlePrivate,
+      puzzlePublic: buildPublicPuzzle(puzzlePrivate, []),
+    };
+  }
   const built = buildManualPuzzleWithSolverFallback({
     levelId: params.existingPuzzle.levelId,
     dateKey: params.existingPuzzle.dateKey,
@@ -1976,6 +2340,22 @@ export const submitRequestedCommunityEdit = async (params: {
       );
     }
   }
+  // Auto submissions with a stored fitted board: a text edit moves tile
+  // positions, so re-derive the layout for the revised text at the same
+  // tier. Legacy auto submissions (no layout) keep the rebuild-on-approve
+  // path untouched.
+  let nextFittedLayout = submission.fittedLayout;
+  if (submission.creationMode === 'auto' && submission.fittedLayout) {
+    nextFittedLayout = await getCachedFittedLayout({
+      text: validated.sanitizedText,
+      tier: difficultyToTier(submission.targetDifficulty),
+      author: validated.sanitizedAttribution,
+      challengeType: submission.category,
+    });
+    if (!nextFittedLayout) {
+      throw new Error(buildCommunityTierFitMessage(submission.targetDifficulty));
+    }
+  }
   const submittedAt = Date.now();
   const next: CommunitySubmission = {
     ...submission,
@@ -1985,6 +2365,7 @@ export const submitRequestedCommunityEdit = async (params: {
     normalizedSig,
     tokenSig,
     manualLayout: nextManualLayout,
+    fittedLayout: nextFittedLayout,
     targetDifficulty: nextTargetDifficulty,
     suggestedTier: nextSuggestedTier,
     status: 'pending',

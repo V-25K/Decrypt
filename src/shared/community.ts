@@ -3,6 +3,7 @@ import {
   challengeTypeSchema,
   challengeEvaluationSummarySchema,
   difficultyBreakdownSchema,
+  padlockChainSchema,
   puzzlePublicSchema,
 } from './game';
 import {
@@ -113,6 +114,66 @@ export const communitySubmissionPreviewSchema = z.object({
     .optional(),
 });
 
+// A board layout produced by the tier fitter. Indices are text-positional,
+// so the layout stays valid across level IDs and cipher mappings — applying
+// it to a fresh base board reproduces exactly the previewed board.
+export const fittedLayoutSchema = z.object({
+  prefilledIndices: z.array(z.number().int().nonnegative()),
+  blindIndices: z.array(z.number().int().nonnegative()),
+  padlockChains: z.array(padlockChainSchema),
+  goldIndex: z.number().int().nonnegative().nullable(),
+  seedKey: z.string().min(1),
+  difficulty: z.number().int().min(1).max(10),
+  layoutVersion: z.string().min(1),
+});
+
+export type CommunityFittedLayout = z.infer<typeof fittedLayoutSchema>;
+
+export const communityLineFitInputSchema = z
+  .object({
+    text: z.string().min(1).max(maxPuzzleTotalLength),
+  })
+  .strict();
+
+const communityTierSchema = z.enum(['warmup', 'medium', 'hard', 'expert']);
+
+export const communityLineFitReportSchema = z.object({
+  textValid: z.boolean(),
+  reasons: z.array(z.string()),
+  suggestedTier: communityTierSchema,
+  tiers: z.array(
+    z.object({
+      tier: communityTierSchema,
+      label: z.string().min(1),
+      feasible: z.boolean(),
+      reason: z.string().nullable(),
+      summary: z
+        .object({
+          revealCount: z.number().int().nonnegative(),
+          blindCount: z.number().int().nonnegative(),
+          padlockCount: z.number().int().nonnegative(),
+        })
+        .nullable(),
+    })
+  ),
+});
+
+export type CommunityLineFitReport = z.infer<typeof communityLineFitReportSchema>;
+
+export const communityAutoFixInputSchema = z
+  .object({
+    text: z.string().min(1).max(maxPuzzleTotalLength),
+    manualLayout: communityManualLayoutSchema,
+  })
+  .strict();
+
+export const communityAutoFixResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string().min(1),
+  fixedLayout: communityManualLayoutSchema.nullable(),
+  changes: z.array(z.string()),
+});
+
 export const communitySubmissionSchema = z.object({
   submissionId: z.string().min(1),
   authorId: z.string().min(1),
@@ -126,6 +187,9 @@ export const communitySubmissionSchema = z.object({
   targetDifficulty: z.number().int().min(1).max(10),
   creationMode: communityCreationModeSchema.default('auto'),
   manualLayout: communityManualLayoutSchema.nullable().default(null),
+  // The exact board the creator previewed (auto mode). Approval applies it
+  // verbatim; null means a legacy submission that rebuilds on approve.
+  fittedLayout: fittedLayoutSchema.nullable().default(null),
   suggestedTier: z.enum(['warmup', 'medium', 'hard', 'expert']),
   status: communitySubmissionStatusSchema,
   submittedAt: z.number().int().nonnegative(),

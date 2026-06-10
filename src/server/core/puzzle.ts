@@ -648,6 +648,11 @@ const choosePadlockObstruction = (params: {
   prefilledIndices: number[];
   budget: ObstructionBudget;
   rng: Rng;
+  // Lifts the per-candidate solver TIME cap so only the (deterministic)
+  // branch-expansion budget binds. Without this, CPU load changes which
+  // padlock candidates pass the gate and the same inputs yield different
+  // boards — fatal for the tier fitter's cache-equals-refit guarantee.
+  deterministicSolverBudget?: boolean;
 }): { lockIndices: number[]; padlockChains: PadlockChain[] } => {
   const byLetter = letterIndicesByChar(params.basePuzzle.tiles);
   const letterTiles = params.basePuzzle.tiles.filter((tile) => tile.isLetter);
@@ -672,8 +677,9 @@ const choosePadlockObstruction = (params: {
     tier === 'warmup' ? 0.52 : tier === 'medium' ? 0.42 : tier === 'hard' ? 0.35 : 0.32;
   const lockCandidateLimit =
     tier === 'warmup' ? 6 : tier === 'medium' ? 8 : tier === 'hard' ? 10 : 12;
-  const lockSolverBudgetMs =
-    tier === 'warmup' ? 10 : tier === 'medium' ? 12 : tier === 'hard' ? 14 : 16;
+  const lockSolverBudgetMs = params.deterministicSolverBudget
+    ? 60_000
+    : tier === 'warmup' ? 10 : tier === 'medium' ? 12 : tier === 'hard' ? 14 : 16;
   const lockSolverBranchLimit =
     tier === 'warmup' ? 500 : tier === 'medium' ? 700 : tier === 'hard' ? 900 : 1100;
   const revealedLetters = new Set(
@@ -1335,6 +1341,7 @@ export const buildPuzzle = (params: {
   previousMapping?: Record<string, number> | null;
   skipSolvabilityCheck?: boolean;
   applyObstructionsOnSkip?: boolean;
+  deterministicSolverBudget?: boolean;
 }): { puzzlePrivate: PuzzlePrivate; puzzlePublic: PuzzlePublic } => {
   const normalizedText = sanitizePhrase(params.text);
   const { tiles, words } = parseTiles(normalizedText);
@@ -1445,6 +1452,7 @@ export const buildPuzzle = (params: {
       prefilledIndices,
       budget,
       rng,
+      deterministicSolverBudget: params.deterministicSolverBudget === true,
     });
     const blindIndices = chooseBlindIndices({
       tiles,

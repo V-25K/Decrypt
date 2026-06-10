@@ -1,6 +1,10 @@
 import {
   communityActionResponseSchema,
+  communityAutoFixInputSchema,
+  communityAutoFixResponseSchema,
   communityCreatorProgressResponseSchema,
+  communityLineFitInputSchema,
+  communityLineFitReportSchema,
   communitySubmissionListResponseSchema,
   communitySubmissionPreviewInputSchema,
   communitySubmissionPreviewSchema,
@@ -13,6 +17,8 @@ import {
   communityWithdrawInputSchema,
 } from '../../../shared/community';
 import {
+  autoFixCommunityManualLayout,
+  fitCommunityLine,
   getCommunityVoteState,
   getMyCommunityCreatorProgress,
   listMyCommunitySubmissions,
@@ -26,6 +32,18 @@ import { router } from '../base';
 import { authedProcedure } from '../procedures';
 
 export const communityRouter = router({
+  fitLine: authedProcedure
+    .input(communityLineFitInputSchema)
+    .query(async ({ input }) =>
+      communityLineFitReportSchema.parse(await fitCommunityLine(input))
+    ),
+  autoFixManualLayout: authedProcedure
+    .input(communityAutoFixInputSchema)
+    .mutation(async ({ input }) =>
+      communityAutoFixResponseSchema.parse(
+        await autoFixCommunityManualLayout(input)
+      )
+    ),
   previewSubmission: authedProcedure
     .input(communitySubmissionPreviewInputSchema)
     .query(async ({ input }) =>
