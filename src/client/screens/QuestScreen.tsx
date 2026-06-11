@@ -1,7 +1,8 @@
-import { memo, type CSSProperties, type KeyboardEvent } from 'react';
+import { memo, Fragment, type CSSProperties, type KeyboardEvent } from 'react';
 import type { QuestDefinition, QuestReward } from '../../shared/quests';
 import type { QuestRewardDisplayItem } from '../app/game-formatters';
 import { tabButtonClass } from '../app/ui';
+import { CreatorAcclaimQuestNote } from '../components/CreatorAcclaimQuestNote';
 import { ErrorCard } from '../components/ErrorCard';
 import { HudSprite } from '../components/HudSprite';
 import { PowerupSprite } from '../components/PowerupSprite';
@@ -187,17 +188,21 @@ export const QuestScreen = ({
             {questTab === 'milestone' && (
               <section className="space-y-2">
                 {visibleMilestoneQuests.map((quest) => (
-                  <QuestCard
-                    key={quest.id}
-                    quest={quest}
-                    progress={questStatus.progress}
-                    claimedQuestIdSet={claimedQuestIdSet}
-                    claimingQuestId={claimingQuestId}
-                    onClaimQuest={onClaimQuest}
-                    formatQuestReward={formatQuestReward}
-                    flairTagStyle={flairTagStyle}
-                    getQuestProgressValue={getQuestProgressValue}
-                  />
+                  <Fragment key={quest.id}>
+                    <QuestCard
+                      quest={quest}
+                      progress={questStatus.progress}
+                      claimedQuestIdSet={claimedQuestIdSet}
+                      claimingQuestId={claimingQuestId}
+                      onClaimQuest={onClaimQuest}
+                      formatQuestReward={formatQuestReward}
+                      flairTagStyle={flairTagStyle}
+                      getQuestProgressValue={getQuestProgressValue}
+                    />
+                    {/* Per-challenge acclaim progress lives here, right under
+                        the creator quest it counts toward. */}
+                    {quest.groupKey === 'creator' && <CreatorAcclaimQuestNote />}
+                  </Fragment>
                 ))}
               </section>
             )}

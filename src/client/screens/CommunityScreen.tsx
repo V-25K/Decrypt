@@ -267,35 +267,18 @@ const nextManualPadlockId = (padlocks: CommunityManualPadlock[]): number =>
   ) + 1;
 
 
+// Per-challenge acclaim PROGRESS lives in Quests → Milestones (see
+// CreatorAcclaimQuestNote); cards here only celebrate the finish line.
 const AcclaimProgressNote = ({ acclaim }: { acclaim: CreatorAcclaim }) => {
-  if (acclaim.acclaimed) {
-    return (
-      <div
-        className="mt-2 rounded-md bg-violet-400/20 px-2 py-1.5 text-xs font-black text-violet-100"
-        data-testid="community-acclaim-badge"
-      >
-        🏆 Acclaimed — players love this one! Claim your creator reward in Quests.
-      </div>
-    );
+  if (!acclaim.acclaimed) {
+    return null;
   }
-  const { progress } = acclaim;
-  const likePct = Math.round(progress.likeRatio * 100);
   return (
     <div
-      className="mt-2 rounded-md bg-violet-400/12 px-2 py-1.5 text-[11px] font-semibold leading-snug text-violet-100"
-      data-testid="community-acclaim-progress"
+      className="mt-2 rounded-md bg-violet-400/20 px-2 py-1.5 text-xs font-black text-violet-100"
+      data-testid="community-acclaim-badge"
     >
-      <span className="font-black">{progress.qualifiedPlays}/200 plays</span>
-      {progress.totalVotes > 0 && (
-        <>
-          {' · '}
-          {likePct}% liked ({progress.totalVotes}{' '}
-          {progress.totalVotes === 1 ? 'vote' : 'votes'})
-        </>
-      )}
-      <div className="app-text-muted mt-0.5 text-[10px] font-semibold">
-        Reach 200 plays with 70%+ likes to earn a creator reward.
-      </div>
+      🏆 Acclaimed — players love this one! Claim your creator reward in Quests.
     </div>
   );
 };
