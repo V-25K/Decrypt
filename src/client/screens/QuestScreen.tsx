@@ -1,8 +1,8 @@
-import { memo, Fragment, type CSSProperties, type KeyboardEvent } from 'react';
+import { memo, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { QuestDefinition, QuestReward } from '../../shared/quests';
 import type { QuestRewardDisplayItem } from '../app/game-formatters';
 import { tabButtonClass } from '../app/ui';
-import { CreatorAcclaimQuestNote } from '../components/CreatorAcclaimQuestNote';
+import { CreatorAcclaimInfo } from '../components/CreatorAcclaimInfo';
 import { ErrorCard } from '../components/ErrorCard';
 import { HudSprite } from '../components/HudSprite';
 import { PowerupSprite } from '../components/PowerupSprite';
@@ -42,6 +42,7 @@ type QuestCardProps = {
   flairTagStyle: (flair: string) => CSSProperties | undefined;
   getQuestProgressValue: (quest: QuestDefinition, progress: QuestProgress) => number;
   claimPercent?: number;
+  infoSlot?: ReactNode;
 };
 
 const QuestCard = memo(({
@@ -54,6 +55,7 @@ const QuestCard = memo(({
   flairTagStyle,
   getQuestProgressValue,
   claimPercent,
+  infoSlot,
 }: QuestCardProps) => {
   const current = getQuestProgressValue(quest, progress);
   const completed = current >= quest.target;
@@ -88,7 +90,10 @@ const QuestCard = memo(({
     >
       <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] items-center gap-3">
         <div className="min-w-0">
-          <h4 className="app-text text-sm font-black">{quest.title}</h4>
+          <div className="flex items-center gap-1.5">
+            <h4 className="app-text text-sm font-black">{quest.title}</h4>
+            {infoSlot}
+          </div>
           <p className="app-text-muted text-[11px] font-semibold break-words">
             {quest.description}
           </p>
@@ -107,36 +112,35 @@ const QuestCard = memo(({
           )}
         </div>
       </div>
-      <div className="mt-2.5 flex items-center gap-2">
-        {quest.binary ? (
-          <span
-            className={cn(
-              'app-text text-[11px] font-black uppercase',
-              completed ? '' : 'opacity-70'
-            )}
-          >
-            {completed ? '✓ Done' : 'Not yet'}
-          </span>
-        ) : (
-          <>
-            <div
-              className="quest-progress-track h-2 min-w-0 flex-1 overflow-hidden rounded-full"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={quest.target}
-              aria-valuenow={Math.min(current, quest.target)}
-            >
-              <div
-                className="quest-progress-fill h-full rounded-full"
-                style={{ width: `${Math.round(progressRatio * 100)}%` }}
-              />
-            </div>
-            <span className="app-text shrink-0 text-[11px] font-black uppercase tabular-nums">
-              {Math.min(current, quest.target)}/{quest.target}
+      {/* Binary quests only show a state once they're done — an idle label
+          adds nothing. Counter quests always show the bar. */}
+      {(!quest.binary || completed) && (
+        <div className="mt-2.5 flex items-center gap-2">
+          {quest.binary ? (
+            <span className="app-text text-[11px] font-black uppercase">
+              ✓ Done
             </span>
-          </>
-        )}
-      </div>
+          ) : (
+            <>
+              <div
+                className="quest-progress-track h-2 min-w-0 flex-1 overflow-hidden rounded-full"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={quest.target}
+                aria-valuenow={Math.min(current, quest.target)}
+              >
+                <div
+                  className="quest-progress-fill h-full rounded-full"
+                  style={{ width: `${Math.round(progressRatio * 100)}%` }}
+                />
+              </div>
+              <span className="app-text shrink-0 text-[11px] font-black uppercase tabular-nums">
+                {Math.min(current, quest.target)}/{quest.target}
+              </span>
+            </>
+          )}
+        </div>
+      )}
       {quest.category === 'milestone' && typeof claimPercent === 'number' && (
         <p className="app-text-muted mt-1 text-[10px] font-semibold">
           Achieved by {claimPercent}% of players
@@ -222,28 +226,27 @@ export const QuestScreen = ({
             {questTab === 'milestone' && (
               <section className="space-y-2">
                 {visibleMilestoneQuests.map((quest) => (
-                  <Fragment key={quest.id}>
-                    <QuestCard
-                      quest={quest}
-                      progress={questStatus.progress}
-                      claimedQuestIdSet={claimedQuestIdSet}
-                      claimingQuestId={claimingQuestId}
-                      onClaimQuest={onClaimQuest}
-                      formatQuestReward={formatQuestReward}
-                      flairTagStyle={flairTagStyle}
-                      getQuestProgressValue={getQuestProgressValue}
-                      {...(questStatus.milestoneClaimPercents?.[quest.id] !==
-                      undefined
-                        ? {
-                            claimPercent:
-                              questStatus.milestoneClaimPercents[quest.id],
-                          }
-                        : {})}
-                    />
-                    {/* Per-challenge acclaim progress lives here, right under
-                        the creator quest it counts toward. */}
-                    {quest.groupKey === 'creator' && <CreatorAcclaimQuestNote />}
-                  </Fragment>
+                  <QuestCard
+                    key={quest.id}
+                    quest={quest}
+                    progress={questStatus.progress}
+                    claimedQuestIdSet={claimedQuestIdSet}
+                    claimingQuestId={claimingQuestId}
+                    onClaimQuest={onClaimQuest}
+                    formatQuestReward={formatQuestReward}
+                    flairTagStyle={flairTagStyle}
+                    getQuestProgressValue={getQuestProgressValue}
+                    {...(questStatus.milestoneClaimPercents?.[quest.id] !==
+                    undefined
+                      ? {
+                          claimPercent:
+                            questStatus.milestoneClaimPercents[quest.id],
+                        }
+                      : {})}
+                    {...(quest.groupKey === 'creator'
+                      ? { infoSlot: <CreatorAcclaimInfo /> }
+                      : {})}
+                  />
                 ))}
               </section>
             )}

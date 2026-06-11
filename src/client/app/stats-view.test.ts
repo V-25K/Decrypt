@@ -57,99 +57,59 @@ const rankSummary = (overrides: Partial<RankSummary> = {}): RankSummary => ({
 });
 
 describe('getStatsView', () => {
-  it('builds daily stat cards and daily leaderboard rank', () => {
+  it('builds one curated overall card set with combined lifetime numbers', () => {
     const view = getStatsView({
       leaderboardTab: 'daily',
       profile: profile({
-        dailyModeClears: 4,
-        dailySolveTimeTotalSec: 500,
-        dailyCurrentStreak: 2,
-        dailyFlawlessWins: 1,
-        dailySpeedWins: 3,
-        dailyChallengesPlayed: 6,
-        dailyFirstTryWins: 2,
+        totalLevelsCompleted: 3,
+        dailyModeClears: 1,
+        endlessModeClears: 2,
+        dailySolveTimeTotalSec: 95,
+        endlessSolveTimeTotalSec: 185,
+        currentStreak: 4,
+        flawlessWins: 2,
+        speedWins: 1,
+        totalWordsSolved: 120,
+        logicTasksCompleted: 5,
+        globalScore: 2100,
         questsCompleted: 9,
+        globalRating: 712,
+        ratingGames: 10,
+        ratingWins: 8,
+        globalWinStreak: 5,
       }),
       rankSummary: rankSummary(),
-      statsTab: 'daily',
     });
 
     expect(view.activeLeaderboardRank).toBe(3);
-    expect(view.visibleStatsCards).toEqual([
-      { label: 'Levels Cleared', value: '4' },
-      { label: 'Avg Solve Time', value: '02:05' },
-      { label: 'Current Streak', value: '2' },
-      { label: 'Flawless Wins', value: '1' },
-      { label: 'Speed Wins', value: '3' },
-      { label: 'Challenges Played', value: '6' },
-      { label: 'First Try Wins', value: '2' },
-      { label: 'Quest Completed', value: '9' },
-      { label: 'Current Rank', value: '#3' },
-      { label: 'Best Overall Rank', value: '#2' },
-    ]);
-  });
-
-  it('builds global stat cards and global leaderboard rank', () => {
-    const view = getStatsView({
-      leaderboardTab: 'global',
-      profile: profile({
-        endlessModeClears: 2,
-        dailyModeClears: 1,
-        dailySolveTimeTotalSec: 95,
-        endlessSolveTimeTotalSec: 185,
-        globalRating: 712,
-        globalScore: 2100,
-        ratingGames: 10,
-        ratingWins: 8,
-        ratingLosses: 2,
-        globalWinStreak: 5,
-        totalLevelsCompleted: 3,
-        bestGlobalRank: 6,
-        bestOverallRank: 6,
-      }),
-      rankSummary: rankSummary({ bestOverallRank: null }),
-      statsTab: 'global',
-    });
-
-    expect(view.activeLeaderboardRank).toBe(7);
-    // Headline numbers live in the hero strip on every tab.
     expect(view.heroCards).toEqual([
       { label: 'Rating', value: '712' },
       { label: 'Win Rate', value: '80%' },
       { label: 'Win Streak', value: '5' },
     ]);
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Total Points', value: '2,100' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Rated Games', value: '10' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Challenges Cleared', value: '3' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Avg Solve Time', value: '01:33' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Words Solved', value: '0' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Logic Ciphers Solved', value: '0' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Current Rank', value: '#7' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Best Global Rank', value: '#6' });
+    expect(view.visibleStatsCards).toEqual([
+      { label: 'Challenges Cleared', value: '3' },
+      // Combined daily+endless average: (95+185)/3 -> 93.33s -> 01:33.
+      { label: 'Avg Solve Time', value: '01:33' },
+      { label: 'Current Streak', value: '4' },
+      { label: 'Flawless Wins', value: '2' },
+      { label: 'Speed Wins', value: '1' },
+      { label: 'Words Solved', value: '120' },
+      { label: 'Logic Ciphers Solved', value: '5' },
+      { label: 'Total Points', value: '2,100' },
+      { label: 'Quest Completed', value: '9' },
+      { label: 'Current Rank', value: '#7' },
+      { label: 'Best Overall Rank', value: '#2' },
+    ]);
   });
 
-  it('builds endless stat cards from the endless split', () => {
+  it('uses the global rank for the leaderboard footer on the global tab', () => {
     const view = getStatsView({
       leaderboardTab: 'global',
-      profile: profile({
-        endlessModeClears: 5,
-        endlessSolveTimeTotalSec: 650,
-        endlessCurrentStreak: 4,
-        endlessFlawlessWins: 2,
-        endlessSpeedWins: 1,
-        endlessChallengesPlayed: 8,
-        endlessFirstTryWins: 3,
-      }),
+      profile: profile(),
       rankSummary: rankSummary(),
-      statsTab: 'endless',
     });
-
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Levels Cleared', value: '5' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Avg Solve Time', value: '02:10' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Current Streak', value: '4' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Challenges Played', value: '8' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Current Rank', value: '#7' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Best Overall Rank', value: '#2' });
+    expect(view.activeLeaderboardRank).toBe(7);
   });
 
   it('shows unranked labels when rank data is absent', () => {
@@ -157,7 +117,6 @@ describe('getStatsView', () => {
       leaderboardTab: 'daily',
       profile: profile(),
       rankSummary: null,
-      statsTab: 'daily',
     });
 
     expect(view.activeLeaderboardRank).toBeNull();
@@ -178,15 +137,12 @@ describe('getStatsView', () => {
         ratingWins: undefined,
         ratingLosses: undefined,
         globalWinStreak: undefined,
-        bestGlobalRank: undefined,
       }),
       rankSummary: null,
-      statsTab: 'global',
     });
 
     expect(view.heroCards).toContainEqual({ label: 'Rating', value: '500' });
     expect(view.heroCards).toContainEqual({ label: 'Win Rate', value: '--' });
     expect(view.visibleStatsCards).toContainEqual({ label: 'Total Points', value: '0' });
-    expect(view.visibleStatsCards).toContainEqual({ label: 'Best Global Rank', value: '--' });
   });
 });

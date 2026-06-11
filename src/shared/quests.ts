@@ -350,7 +350,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeAcclaimedChallenges',
     target: 1,
     groupKey: 'creator',
-    reward: { coins: 150, inventory: {}, flair: 'Loved Creator' },
+    reward: { coins: 150, inventory: {}, flair: 'Hit Maker' },
   },
   {
     id: 'milestone_creator_acclaim_5',
@@ -360,7 +360,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeAcclaimedChallenges',
     target: 5,
     groupKey: 'creator',
-    reward: { coins: 400, inventory: {}, flair: 'Acclaimed Creator' },
+    reward: { coins: 400, inventory: {}, flair: 'Chart Topper' },
   },
   {
     id: 'milestone_creator_acclaim_10',
@@ -370,7 +370,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeAcclaimedChallenges',
     target: 10,
     groupKey: 'creator',
-    reward: { coins: 800, inventory: {}, flair: 'Beloved Creator' },
+    reward: { coins: 800, inventory: {}, flair: 'Cult Classic' },
   },
   {
     id: 'milestone_creator_acclaim_25',
@@ -380,7 +380,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeAcclaimedChallenges',
     target: 25,
     groupKey: 'creator',
-    reward: { coins: 1500, inventory: {}, flair: 'Legendary Creator' },
+    reward: { coins: 1500, inventory: {}, flair: 'Hall of Fame' },
   },
   {
     id: 'milestone_likes_10',
@@ -390,7 +390,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeLikesReceived',
     target: 10,
     groupKey: 'audience',
-    reward: { coins: 50, inventory: {}, flair: 'Fan Favorite' },
+    reward: { coins: 50, inventory: {}, flair: 'Thumbs Up' },
   },
   {
     id: 'milestone_likes_50',
@@ -400,7 +400,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeLikesReceived',
     target: 50,
     groupKey: 'audience',
-    reward: { coins: 150, inventory: {}, flair: 'Crowd Pleaser' },
+    reward: { coins: 150, inventory: {}, flair: 'Applause' },
   },
   {
     id: 'milestone_likes_250',
@@ -410,7 +410,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeLikesReceived',
     target: 250,
     groupKey: 'audience',
-    reward: { coins: 400, inventory: {}, flair: 'Headliner' },
+    reward: { coins: 400, inventory: {}, flair: 'Standing O' },
   },
   {
     id: 'milestone_likes_1000',
@@ -420,7 +420,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeLikesReceived',
     target: 1000,
     groupKey: 'audience',
-    reward: { coins: 1000, inventory: {}, flair: 'Showstopper' },
+    reward: { coins: 1000, inventory: {}, flair: 'Encore' },
   },
 ];
 

@@ -23,7 +23,7 @@ export const initialLeaderboardStatsUiState: LeaderboardStatsUiState = {
   homeTab: 'daily',
   leaderboardTab: 'daily',
   rankSummary: null,
-  statsTab: 'daily',
+  statsTab: 'overall',
 };
 
 export const leaderboardStatsUiReducer = (

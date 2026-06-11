@@ -666,7 +666,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     expect(text.includes('Top Player')).toBe(false);
   });
 
-  it('renders stats tabs and global cards', async () => {
+  it('renders the overall stats cards and the flair locker tab', async () => {
     primeMocks();
     await renderGame();
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -677,14 +677,20 @@ describe('Game updates', { timeout: 15000 }, () => {
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[data-testid="stats-screen"]')));
 
-	    const text = document.body.textContent ?? '';
-	    expect(text).toContain('Daily');
-	    expect(text).toContain('Global');
-	    expect(text).toContain('Challenges Played');
-	    expect(text).toContain('First Try Wins');
-	    expect(text).toContain('Quest Completed');
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Challenges Cleared');
+    expect(text).toContain('Words Solved');
+    expect(text).toContain('Quest Completed');
     expect(text).toContain('Best Overall Rank');
     expect(text).toContain('Current Rank');
+
+    const flairTabButton = Array.from(
+      document.querySelectorAll('[data-testid="stats-screen"] button')
+    ).find((button) => button.textContent?.trim() === 'Flairs');
+    flairTabButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => (document.body.textContent ?? '').includes('Flair Locker'));
+    expect(document.querySelector('[data-testid="flair-option-none"]')).toBeTruthy();
   });
 
   it('renders quest reward icons in both daily and milestone tabs', async () => {
@@ -712,7 +718,7 @@ describe('Game updates', { timeout: 15000 }, () => {
     await waitFor(() => Boolean(document.querySelector('[data-testid="quest-reward-icon-shield"]')));
   });
 
-	  it('renders avg solve time values for daily and global stats tabs', async () => {
+	  it('renders the combined avg solve time on the overall stats tab', async () => {
     primeMocks();
     await renderGame();
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -722,17 +728,12 @@ describe('Game updates', { timeout: 15000 }, () => {
       .querySelector('[data-testid="nav-stats"]')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[data-testid="stats-screen"]')));
-    await waitFor(() => (document.body.textContent ?? '').includes('02:10'));
 
-	    const globalTabButton = Array.from(
-	      document.querySelectorAll('[data-testid="stats-screen"] button')
-	    ).find((button) => button.textContent?.trim() === 'Global');
-	    globalTabButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-	
+    // Combined daily+endless average from the profile fixture.
     await waitFor(() => (document.body.textContent ?? '').includes('02:41'));
   });
 
-  it('shows the rank for the selected stats tab', async () => {
+  it('shows the global rank and best overall rank on the stats screen', async () => {
     primeMocks();
     await renderGame();
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -742,13 +743,10 @@ describe('Game updates', { timeout: 15000 }, () => {
       .querySelector('[data-testid="nav-stats"]')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[data-testid="stats-screen"]')));
-    await waitFor(() => (document.body.textContent ?? '').includes('#3'));
 
-    document
-      .querySelectorAll('[data-testid="stats-screen"] button')[1]
-      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-
+    // Current Rank = global rank (#2); Best Overall Rank = #1 per fixture.
     await waitFor(() => (document.body.textContent ?? '').includes('#2'));
+    await waitFor(() => (document.body.textContent ?? '').includes('#1'));
   });
 
   it('renders avg time in the daily leaderboard row', async () => {

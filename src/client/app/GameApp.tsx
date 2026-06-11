@@ -3040,7 +3040,6 @@ export const GameApp = () => {
     leaderboardTab,
     profile,
     rankSummary,
-    statsTab,
   });
   const {
     activeLeaderboardRank,
