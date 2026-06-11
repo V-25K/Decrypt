@@ -411,6 +411,8 @@ export const questProgressSchema = z.object({
   lifetimeEndlessClears: z.number().int().nonnegative(),
   // default(0) so progress hashes written before Creator Acclaim still parse.
   lifetimeAcclaimedChallenges: z.number().int().nonnegative().default(0),
+  // default(0) so progress hashes written before the likes quests still parse.
+  lifetimeLikesReceived: z.number().int().nonnegative().default(0),
 });
 
 export type QuestProgress = z.infer<typeof questProgressSchema>;
@@ -742,6 +744,9 @@ export const questStatusResponseSchema = z.object({
   dailyDateKey: z.string().min(1),
   progress: questProgressSchema,
   claimedQuestIds: z.array(z.string().min(1)).default([]),
+  // questId -> % of known players who claimed it (1-100). Quests nobody has
+  // claimed are omitted; default({}) keeps older clients/tests parsing.
+  milestoneClaimPercents: z.record(z.string(), z.number().int().min(0).max(100)).default({}),
 });
 
 export const questClaimInputSchema = z

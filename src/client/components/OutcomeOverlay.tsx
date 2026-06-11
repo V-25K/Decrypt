@@ -370,10 +370,15 @@ export const OutcomeOverlay = memo(({
                 )}
               </div>
             )}
-            {/* Community challenges get a like/dislike here (self-hides for
-                daily puzzles and the creator's own challenge). */}
-            <CommunityVoteBar levelId={outcomeLevelId} />
           </div>
+        </div>
+        {/* Community challenges get a like/dislike in the reserved bottom
+            band (the centered column above keeps pb-20/pb-24 free for it, so
+            it can never collide with the rating pill hanging off the quote
+            panel). Self-hides for daily puzzles and the creator's own
+            challenge; the avatar crowd behind is z-0 and non-interactive. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center pb-4">
+          <CommunityVoteBar levelId={outcomeLevelId} />
         </div>
       </main>
     </section>

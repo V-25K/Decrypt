@@ -336,8 +336,11 @@ const primeMocks = () => {
       lifetimePurchases: 0,
       lifetimeDailyTopRanks: 0,
       lifetimeEndlessClears: 0,
+      lifetimeAcclaimedChallenges: 0,
+      lifetimeLikesReceived: 0,
     },
     claimedQuestIds: [],
+    milestoneClaimPercents: { milestone_spent_500: 12 },
   });
   questsClaimMutation.mockResolvedValue({
     success: true,

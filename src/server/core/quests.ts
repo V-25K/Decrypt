@@ -1,6 +1,7 @@
 import type { Inventory, QuestProgress, UserProfile } from '../../shared/game';
 import {
   isQuestDefinitionComplete,
+  questCatalog,
   questCatalogById,
   type QuestReward,
 } from '../../shared/quests';
@@ -15,7 +16,12 @@ import {
   saveUserProfile,
   saveLifetimeQuestProgress,
 } from './state';
-import { keyUserQuestDaily, keyUserQuestLifetime } from './keys';
+import {
+  keyKnownUsersIndex,
+  keyQuestClaimCount,
+  keyUserQuestDaily,
+  keyUserQuestLifetime,
+} from './keys';
 import { redis } from '@devvit/web/server';
 import { dailyDataTtlSeconds } from './constants';
 
@@ -137,16 +143,62 @@ export const updateQuestProgressOnAcclaim = async (params: {
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 
+// Credited once per unique voter per level — the toggle-proof gate lives in
+// recordCommunityVote (keyCommunityLevelLikedBy hSetNX).
+export const updateQuestProgressOnCreatorLike = async (params: {
+  userId: string;
+}): Promise<void> => {
+  const lifetime = await getLifetimeQuestProgress(params.userId);
+  lifetime.lifetimeLikesReceived += 1;
+  await saveLifetimeQuestProgress(params.userId, lifetime);
+};
+
+const milestoneQuestIds = questCatalog
+  .filter((quest) => quest.category === 'milestone')
+  .map((quest) => quest.id);
+
+/**
+ * "Achieved by X% of players" per milestone quest: claims counter over the
+ * known-player count. Quests nobody has claimed are omitted so the client
+ * shows nothing rather than a noisy 0%.
+ */
+const getMilestoneClaimPercents = async (): Promise<Record<string, number>> => {
+  const [counts, totalPlayers] = await Promise.all([
+    redis.mGet(milestoneQuestIds.map((questId) => keyQuestClaimCount(questId))),
+    redis.hLen(keyKnownUsersIndex),
+  ]);
+  if (!totalPlayers || totalPlayers <= 0) {
+    return {};
+  }
+  const percents: Record<string, number> = {};
+  for (let index = 0; index < milestoneQuestIds.length; index += 1) {
+    const questId = milestoneQuestIds[index];
+    const claims = Number(counts[index] ?? 0) || 0;
+    if (!questId || claims <= 0) {
+      continue;
+    }
+    percents[questId] = Math.max(
+      1,
+      Math.min(100, Math.round((claims / totalPlayers) * 100))
+    );
+  }
+  return percents;
+};
+
 export const getQuestStatus = async (params: {
   userId: string;
   dateKey: string;
 }) => {
-  const daily = await getDailyQuestProgress(params.userId, params.dateKey);
-  const lifetime = await getLifetimeQuestProgress(params.userId);
+  const [daily, lifetime, milestoneClaimPercents] = await Promise.all([
+    getDailyQuestProgress(params.userId, params.dateKey),
+    getLifetimeQuestProgress(params.userId),
+    getMilestoneClaimPercents(),
+  ]);
 
   return {
     daily,
     lifetime,
+    milestoneClaimPercents,
   };
 };
 
@@ -246,6 +298,11 @@ export const claimQuest = async (params: {
     };
   }
   try {
+    // Feeds the "achieved by X% of players" stat; daily quests never show it,
+    // so only milestone claims are counted.
+    if (!useDailyKey) {
+      await redis.incrBy(keyQuestClaimCount(params.questId), 1);
+    }
     const [latestProfile, latestInventory] = await Promise.all([
       getUserProfile(params.userId),
       getInventory(params.userId),

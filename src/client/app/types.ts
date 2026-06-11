@@ -39,5 +39,5 @@ export type AppScreen =
   | 'stats'
   | 'leaderboard';
 export type LeaderboardTab = 'daily' | 'global';
-export type StatsTab = 'daily' | 'global';
+export type StatsTab = 'daily' | 'global' | 'endless';
 export type HomeTab = 'daily' | 'endless';

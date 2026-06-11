@@ -5,6 +5,7 @@ const {
   redis,
   getPuzzlePrivateMock,
   updateQuestProgressOnAcclaimMock,
+  updateQuestProgressOnCreatorLikeMock,
 } = vi.hoisted(() => {
   const hashes = new Map<string, Map<string, string>>();
   const strings = new Map<string, string>();
@@ -24,6 +25,7 @@ const {
     },
     getPuzzlePrivateMock: vi.fn(),
     updateQuestProgressOnAcclaimMock: vi.fn(),
+    updateQuestProgressOnCreatorLikeMock: vi.fn(),
     redis: {
       __hashes: hashes,
       __strings: strings,
@@ -33,6 +35,12 @@ const {
         const h = hashOf(key);
         for (const [f, v] of Object.entries(values)) h.set(f, v);
         return Object.keys(values).length;
+      }),
+      hSetNX: vi.fn(async (key: string, field: string, value: string) => {
+        const h = hashOf(key);
+        if (h.has(field)) return 0;
+        h.set(field, value);
+        return 1;
       }),
       hDel: vi.fn(async (key: string, fields: string[]) => {
         const h = hashOf(key);
@@ -106,6 +114,7 @@ vi.mock('./state', () => ({
 vi.mock('./engagement', () => ({ getLevelEngagement: vi.fn() }));
 vi.mock('./quests', () => ({
   updateQuestProgressOnAcclaim: updateQuestProgressOnAcclaimMock,
+  updateQuestProgressOnCreatorLike: updateQuestProgressOnCreatorLikeMock,
 }));
 
 import {
@@ -170,6 +179,7 @@ beforeEach(() => {
   redis.__zsets.clear();
   getPuzzlePrivateMock.mockReset();
   updateQuestProgressOnAcclaimMock.mockReset();
+  updateQuestProgressOnCreatorLikeMock.mockReset();
   contextState.userId = 't2_voter';
   contextState.username = 'voter';
   getPuzzlePrivateMock.mockResolvedValue({ levelId: LEVEL, source: 'COMMUNITY' });
@@ -241,6 +251,34 @@ describe('community acclaim voting', () => {
     seedVotes(60, 0);
     await recordCommunityVote({ levelId: LEVEL, vote: 'like' });
     expect(updateQuestProgressOnAcclaimMock).not.toHaveBeenCalled();
+  });
+
+  it('credits the creator likes-received quest once per unique voter', async () => {
+    await recordCommunityVote({ levelId: LEVEL, vote: 'like' });
+    expect(updateQuestProgressOnCreatorLikeMock).toHaveBeenCalledTimes(1);
+    expect(updateQuestProgressOnCreatorLikeMock).toHaveBeenCalledWith({
+      userId: CREATOR,
+    });
+
+    // Toggling off and back on must NOT credit again.
+    await recordCommunityVote({ levelId: LEVEL, vote: 'clear' });
+    await recordCommunityVote({ levelId: LEVEL, vote: 'like' });
+    expect(updateQuestProgressOnCreatorLikeMock).toHaveBeenCalledTimes(1);
+
+    // Like -> dislike -> like is still just the one credit.
+    await recordCommunityVote({ levelId: LEVEL, vote: 'dislike' });
+    await recordCommunityVote({ levelId: LEVEL, vote: 'like' });
+    expect(updateQuestProgressOnCreatorLikeMock).toHaveBeenCalledTimes(1);
+
+    // A different voter credits one more.
+    contextState.userId = 't2_second_voter';
+    await recordCommunityVote({ levelId: LEVEL, vote: 'like' });
+    expect(updateQuestProgressOnCreatorLikeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not credit likes-received for dislikes', async () => {
+    await recordCommunityVote({ levelId: LEVEL, vote: 'dislike' });
+    expect(updateQuestProgressOnCreatorLikeMock).not.toHaveBeenCalled();
   });
 
   it('reports vote state including the viewer current vote and ownership', async () => {

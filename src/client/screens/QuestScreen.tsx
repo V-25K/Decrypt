@@ -41,6 +41,7 @@ type QuestCardProps = {
   };
   flairTagStyle: (flair: string) => CSSProperties | undefined;
   getQuestProgressValue: (quest: QuestDefinition, progress: QuestProgress) => number;
+  claimPercent?: number;
 };
 
 const QuestCard = memo(({
@@ -52,6 +53,7 @@ const QuestCard = memo(({
   formatQuestReward,
   flairTagStyle,
   getQuestProgressValue,
+  claimPercent,
 }: QuestCardProps) => {
   const current = getQuestProgressValue(quest, progress);
   const completed = current >= quest.target;
@@ -59,6 +61,8 @@ const QuestCard = memo(({
   const isClaiming = claimingQuestId === quest.id;
   const claimable = completed && !claimed && !isClaiming;
   const rewardParts = formatQuestReward(quest.reward);
+  const progressRatio =
+    quest.target > 0 ? Math.min(1, current / quest.target) : 0;
   const handleKeyDown = claimable
     ? (event: KeyboardEvent<HTMLElement>) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -82,7 +86,7 @@ const QuestCard = memo(({
         isClaiming ? 'opacity-60' : ''
       )}
     >
-      <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.3fr)] items-center gap-3">
+      <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] items-center gap-3">
         <div className="min-w-0">
           <h4 className="app-text text-sm font-black">{quest.title}</h4>
           <p className="app-text-muted text-[11px] font-semibold break-words">
@@ -102,12 +106,42 @@ const QuestCard = memo(({
             </span>
           )}
         </div>
-        <div className="flex min-w-0 flex-col items-end gap-1.5">
-          <span className="app-text text-[11px] font-black uppercase">
-            {Math.min(current, quest.target)}/{quest.target}
-          </span>
-        </div>
       </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        {quest.binary ? (
+          <span
+            className={cn(
+              'app-text text-[11px] font-black uppercase',
+              completed ? '' : 'opacity-70'
+            )}
+          >
+            {completed ? '✓ Done' : 'Not yet'}
+          </span>
+        ) : (
+          <>
+            <div
+              className="quest-progress-track h-2 min-w-0 flex-1 overflow-hidden rounded-full"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={quest.target}
+              aria-valuenow={Math.min(current, quest.target)}
+            >
+              <div
+                className="quest-progress-fill h-full rounded-full"
+                style={{ width: `${Math.round(progressRatio * 100)}%` }}
+              />
+            </div>
+            <span className="app-text shrink-0 text-[11px] font-black uppercase tabular-nums">
+              {Math.min(current, quest.target)}/{quest.target}
+            </span>
+          </>
+        )}
+      </div>
+      {quest.category === 'milestone' && typeof claimPercent === 'number' && (
+        <p className="app-text-muted mt-1 text-[10px] font-semibold">
+          Achieved by {claimPercent}% of players
+        </p>
+      )}
     </article>
   );
 });
@@ -198,6 +232,13 @@ export const QuestScreen = ({
                       formatQuestReward={formatQuestReward}
                       flairTagStyle={flairTagStyle}
                       getQuestProgressValue={getQuestProgressValue}
+                      {...(questStatus.milestoneClaimPercents?.[quest.id] !==
+                      undefined
+                        ? {
+                            claimPercent:
+                              questStatus.milestoneClaimPercents[quest.id],
+                          }
+                        : {})}
                     />
                     {/* Per-challenge acclaim progress lives here, right under
                         the creator quest it counts toward. */}

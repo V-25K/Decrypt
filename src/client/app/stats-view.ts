@@ -18,6 +18,8 @@ export type StatsCard = {
 
 export type StatsView = {
   activeLeaderboardRank: number | null;
+  // At-a-glance strip shown above the card grid on every tab.
+  heroCards: StatsCard[];
   visibleStatsCards: StatsCard[];
 };
 
@@ -61,6 +63,10 @@ export const getStatsView = ({
     ratingGames > 0
       ? `${Math.round((ratingWins / ratingGames) * 100)}%`
       : '--';
+  const endlessAvgSolveSeconds = computeAverageSolveSeconds(
+    profile.endlessSolveTimeTotalSec,
+    profile.endlessModeClears
+  );
   const dailyStatCards: StatsCard[] = [
     { label: 'Levels Cleared', value: profile.dailyModeClears.toLocaleString() },
     { label: 'Avg Solve Time', value: formatStatDuration(dailyAvgSolveSeconds) },
@@ -70,37 +76,59 @@ export const getStatsView = ({
     { label: 'Challenges Played', value: profile.dailyChallengesPlayed.toLocaleString() },
     { label: 'First Try Wins', value: profile.dailyFirstTryWins.toLocaleString() },
   ];
+  const endlessStatCards: StatsCard[] = [
+    { label: 'Levels Cleared', value: profile.endlessModeClears.toLocaleString() },
+    { label: 'Avg Solve Time', value: formatStatDuration(endlessAvgSolveSeconds) },
+    { label: 'Current Streak', value: profile.endlessCurrentStreak.toLocaleString() },
+    { label: 'Flawless Wins', value: profile.endlessFlawlessWins.toLocaleString() },
+    { label: 'Speed Wins', value: profile.endlessSpeedWins.toLocaleString() },
+    { label: 'Challenges Played', value: profile.endlessChallengesPlayed.toLocaleString() },
+    { label: 'First Try Wins', value: profile.endlessFirstTryWins.toLocaleString() },
+  ];
   const globalStatCards: StatsCard[] = [
-    { label: 'Rating', value: globalRating.toLocaleString() },
     { label: 'Total Points', value: globalScore.toLocaleString() },
     { label: 'Rated Games', value: ratingGames.toLocaleString() },
-    { label: 'Win Rate', value: ratedWinRate },
     { label: 'Rated Wins', value: ratingWins.toLocaleString() },
     { label: 'Rated Losses', value: ratingLosses.toLocaleString() },
-    { label: 'Win Streak', value: globalWinStreak.toLocaleString() },
     { label: 'Challenges Cleared', value: profile.totalLevelsCompleted.toLocaleString() },
     { label: 'Avg Solve Time', value: formatStatDuration(globalAvgSolveSeconds) },
+    { label: 'Words Solved', value: profileNumber(profile.totalWordsSolved).toLocaleString() },
+    { label: 'Logic Ciphers Solved', value: profileNumber(profile.logicTasksCompleted).toLocaleString() },
   ];
-  const activeStatsCards = statsTab === 'daily' ? dailyStatCards : globalStatCards;
-  const activeStatsRank =
+  const activeStatsCards =
     statsTab === 'daily'
-      ? rankSummary?.dailyRank ?? null
-      : rankSummary?.globalRank ?? null;
+      ? dailyStatCards
+      : statsTab === 'endless'
+        ? endlessStatCards
+        : globalStatCards;
+  const activeStatsRank =
+    statsTab === 'global'
+      ? rankSummary?.globalRank ?? null
+      : statsTab === 'endless'
+        ? rankSummary?.endlessRank ?? null
+        : rankSummary?.dailyRank ?? null;
   const globalStatsCards: StatsCard[] = [
     { label: 'Quest Completed', value: profile.questsCompleted.toLocaleString() },
     { label: 'Current Rank', value: formatRankLabel(activeStatsRank) },
     {
-      label: statsTab === 'daily' ? 'Best Overall Rank' : 'Best Global Rank',
+      label: statsTab === 'global' ? 'Best Global Rank' : 'Best Overall Rank',
       value: formatRankLabel(
-        statsTab === 'daily'
-          ? rankSummary?.bestOverallRank ?? profile.bestOverallRank
-          : bestGlobalRank
+        statsTab === 'global'
+          ? bestGlobalRank
+          : rankSummary?.bestOverallRank ?? profile.bestOverallRank
       ),
     },
+  ];
+  // Stable across tabs: the player's headline numbers at a glance.
+  const heroCards: StatsCard[] = [
+    { label: 'Rating', value: globalRating.toLocaleString() },
+    { label: 'Win Rate', value: ratedWinRate },
+    { label: 'Win Streak', value: globalWinStreak.toLocaleString() },
   ];
 
   return {
     activeLeaderboardRank,
+    heroCards,
     visibleStatsCards: [...activeStatsCards, ...globalStatsCards],
   };
 };

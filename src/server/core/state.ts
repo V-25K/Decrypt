@@ -555,6 +555,7 @@ export const getLifetimeQuestProgress = async (
       lifetimeDailyTopRanks: '0',
       lifetimeEndlessClears: '0',
       lifetimeAcclaimedChallenges: '0',
+      lifetimeLikesReceived: '0',
     });
     return progress;
   }
@@ -578,6 +579,7 @@ export const getLifetimeQuestProgress = async (
       'lifetimeAcclaimedChallenges',
       0
     ),
+    lifetimeLikesReceived: numberFromHash(hash, 'lifetimeLikesReceived', 0),
   });
 };
 
@@ -614,6 +616,7 @@ export const saveLifetimeQuestProgress = async (
     lifetimeDailyTopRanks: `${progress.lifetimeDailyTopRanks}`,
     lifetimeEndlessClears: `${progress.lifetimeEndlessClears}`,
     lifetimeAcclaimedChallenges: `${progress.lifetimeAcclaimedChallenges}`,
+    lifetimeLikesReceived: `${progress.lifetimeLikesReceived}`,
   });
 };
 

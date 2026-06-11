@@ -106,6 +106,7 @@ const renderLeaderboard = async (
     leaderboardTab: 'daily' as const,
     onTabChange: vi.fn(),
     currentUserRank: null,
+    currentUserId: null,
     formatLeaderboardName: vi.fn(({ username, userId }) => username ?? userId),
     formatStatDuration: vi.fn((seconds) => `${seconds ?? '--'}s`),
   };

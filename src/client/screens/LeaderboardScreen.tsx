@@ -23,9 +23,40 @@ type LeaderboardScreenProps = {
   leaderboardTab: LeaderboardTab;
   onTabChange: (tab: LeaderboardTab) => void;
   currentUserRank: number | null;
+  currentUserId: string | null;
   formatLeaderboardName: (entry: { username?: string | null; userId: string }) => string;
   formatStatDuration: (seconds: number | null | undefined) => string;
 };
+
+// Podium treatment for the top three: medal instead of a plain rank number,
+// plus a tinted border so the very top of the board reads at a glance.
+const medalForRank = (rank: number): string | null =>
+  rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
+
+const rowAccentClass = (rank: number, isCurrentUser: boolean): string => {
+  if (isCurrentUser) {
+    return 'border-amber-300/80 bg-amber-300/10';
+  }
+  if (rank === 1) {
+    return 'border-yellow-300/70 bg-yellow-300/10';
+  }
+  if (rank === 2) {
+    return 'border-slate-200/60 bg-slate-200/10';
+  }
+  if (rank === 3) {
+    return 'border-orange-300/60 bg-orange-400/10';
+  }
+  return '';
+};
+
+const avatarRingClass = (rank: number): string =>
+  rank === 1
+    ? 'ring-2 ring-yellow-300/90'
+    : rank === 2
+      ? 'ring-2 ring-slate-200/80'
+      : rank === 3
+        ? 'ring-2 ring-orange-300/80'
+        : 'ring-1 ring-white/20';
 
 type LeaderboardAvatarProps = {
   entry: LeaderboardEntry;
@@ -37,11 +68,14 @@ const LeaderboardAvatar = ({
   entry,
   displayName,
   eager,
-}: LeaderboardAvatarProps) => {
+  ringClass,
+}: LeaderboardAvatarProps & { ringClass: string }) => {
   const [avatarError, setAvatarError] = useState(false);
   const fallbackInitial = displayName.trim().charAt(0).toUpperCase() || '?';
   return (
-    <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-gray-700">
+    <div
+      className={`flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-gray-700 ${ringClass}`}
+    >
       {!avatarError && entry.snoovatarUrl ? (
         <img
           src={entry.snoovatarUrl}
@@ -65,6 +99,7 @@ export const LeaderboardScreen = ({
   leaderboardTab,
   onTabChange,
   currentUserRank,
+  currentUserId,
   formatLeaderboardName,
   formatStatDuration,
 }: LeaderboardScreenProps) => {
@@ -261,19 +296,45 @@ export const LeaderboardScreen = ({
 		                        entry.globalScore ??
 		                          (isAllTimeEntry(entry) ? entry.levelsCompleted : null)
 		                      );
-	                return (
-	                  <article
-	                    key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
-	                    className="hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_76px_76px] items-center gap-2 rounded-lg border app-border px-2 py-1.5"
-	                  >
-	                    <span className="app-text text-[11px] font-black">#{globalRank}</span>
-	                    <LeaderboardAvatar entry={entry} displayName={displayName} eager={index < 4} />
-	                    <div className="app-text truncate text-[11px] font-bold">
-	                      {displayName}
-	                    </div>
-	                    <div className="app-text text-right text-[11px] font-black">
-	                      {scoreValue}
-	                    </div>
+                const medal = medalForRank(globalRank);
+                const isCurrentUser =
+                  currentUserId !== null && entry.userId === currentUserId;
+                return (
+                  <article
+                    key={`leaderboard-${leaderboardTab}-${entry.userId}-${index}`}
+                    data-testid={isCurrentUser ? 'leaderboard-row-you' : undefined}
+                    className={`hub-card hub-row-card app-surface grid grid-cols-[26px_34px_minmax(0,1fr)_76px_76px] items-center gap-2 rounded-lg border app-border px-2 py-1.5 ${rowAccentClass(globalRank, isCurrentUser)} ${
+                      !medal && !isCurrentUser && index % 2 === 1
+                        ? 'app-surface-subtle'
+                        : ''
+                    }`}
+                  >
+                    {medal ? (
+                      <span className="text-[15px] leading-none" aria-label={`Rank ${globalRank}`}>
+                        {medal}
+                      </span>
+                    ) : (
+                      <span className="app-text text-[11px] font-black">#{globalRank}</span>
+                    )}
+                    <LeaderboardAvatar
+                      entry={entry}
+                      displayName={displayName}
+                      eager={index < 4}
+                      ringClass={avatarRingClass(globalRank)}
+                    />
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="app-text truncate text-[11px] font-bold">
+                        {displayName}
+                      </span>
+                      {isCurrentUser && (
+                        <span className="badge-primary shrink-0 rounded px-1 py-0.5 text-[8px] font-black uppercase">
+                          You
+                        </span>
+                      )}
+                    </div>
+                    <div className="app-text text-right text-[11px] font-black">
+                      {scoreValue}
+                    </div>
                     <div className="app-text-muted text-right text-[10px] font-bold">
                       {detail}
                     </div>

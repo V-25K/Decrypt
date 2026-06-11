@@ -29,6 +29,7 @@ export const questsRouter = router({
           dailyShareCount: status.daily.dailyShareCount,
         },
         claimedQuestIds,
+        milestoneClaimPercents: status.milestoneClaimPercents,
       });
     }),
   claim: authedProcedure.input(questClaimInputSchema).mutation(async ({ input, ctx }) => {

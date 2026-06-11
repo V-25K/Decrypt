@@ -258,6 +258,18 @@ export const keyCommunityVotes = (levelId: string) =>
 export const keyCommunityAcclaimAwarded = (levelId: string) =>
   `decrypt:community:acclaim_awarded:${levelId}`;
 
+// Hash of voter userId -> '1' for everyone who has EVER liked the level.
+// Unlike keyCommunityVotes (which reflects the current vote and shrinks on
+// clear), this only grows — it makes the creator's "likes received" quest
+// credit exactly once per voter per level, toggle-proof.
+export const keyCommunityLevelLikedBy = (levelId: string) =>
+  `decrypt:community:liked_by:${levelId}`;
+
+// Plain counter of how many players have claimed a quest, for the
+// "achieved by X% of players" stat on milestone cards.
+export const keyQuestClaimCount = (questId: string) =>
+  `decrypt:quest:${questId}:claims`;
+
 // Tier-fit board cache. Keyed by a hash of the normalized text plus the
 // fitter's layout version, so stale boards from older fitter logic are never
 // replayed. Short TTL: consumers persist the chosen layout themselves and

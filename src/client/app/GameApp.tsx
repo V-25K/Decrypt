@@ -3044,6 +3044,7 @@ export const GameApp = () => {
   });
   const {
     activeLeaderboardRank,
+    heroCards,
     visibleStatsCards,
   } = statsView;
   const unlockedFlairs = profile.unlockedFlairs;
@@ -3759,6 +3760,7 @@ export const GameApp = () => {
               <LazyStatsScreen
                 statsTab={statsTab}
                 onTabChange={setStatsTab}
+                heroCards={heroCards}
                 visibleStatsCards={visibleStatsCards}
                 profile={profile}
                 unlockedFlairs={unlockedFlairs}
@@ -3776,6 +3778,7 @@ export const GameApp = () => {
                 leaderboardTab={leaderboardTab}
                 onTabChange={setLeaderboardTab}
                 currentUserRank={activeLeaderboardRank}
+                currentUserId={currentUserIdRef.current}
                 formatLeaderboardName={formatLeaderboardName}
                 formatStatDuration={formatStatDuration}
               />

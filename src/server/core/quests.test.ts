@@ -33,6 +33,9 @@ vi.mock('@devvit/web/server', () => ({
     hSetNX: hSetNXMock,
     hDel: hDelMock,
     hGetAll: vi.fn(),
+    hLen: vi.fn(async () => 0),
+    incrBy: vi.fn(async () => 1),
+    mGet: vi.fn(async (keys: string[]) => keys.map(() => null)),
   },
 }));
 
@@ -48,6 +51,8 @@ vi.mock('./state', () => ({
 }));
 
 vi.mock('./keys', () => ({
+  keyKnownUsersIndex: 'index:known_users',
+  keyQuestClaimCount: (questId: string) => `quest:${questId}:claims`,
   keyUserQuestDaily: (userId: string, dateKey: string) =>
     `daily:${userId}:${dateKey}`,
   keyUserQuestLifetime: (userId: string) => `lifetime:${userId}`,

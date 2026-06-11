@@ -975,6 +975,27 @@ body,
   color: var(--quest-flair);
 }
 
+.quest-progress-track {
+  background: rgba(10, 28, 18, 0.5);
+  border: 1px solid rgba(245, 234, 188, 0.28);
+}
+
+.quest-progress-fill {
+  background: linear-gradient(90deg, var(--color-orange), #f6c537);
+  box-shadow: 0 0 8px rgba(246, 197, 55, 0.45);
+  transition: width 300ms ease;
+}
+
+.quest-complete .quest-progress-track {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.quest-complete .quest-progress-fill {
+  background: #ffffff;
+  box-shadow: none;
+}
+
 .result-crowd-avatar {
   filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.22));
   will-change: transform, left, top;

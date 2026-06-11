@@ -75,6 +75,7 @@ import { validatePuzzle } from './validation';
 import {
   keyCommunityAcclaimAwarded,
   keyCommunityApprovalLock,
+  keyCommunityLevelLikedBy,
   keyCommunityCreatorStats,
   keyCommunityPendingSignatures,
   keyCommunityPuzzlePlays,
@@ -101,7 +102,10 @@ import {
   isAcclaimed,
   type AcclaimProgress,
 } from '../../shared/acclaim';
-import { updateQuestProgressOnAcclaim } from './quests';
+import {
+  updateQuestProgressOnAcclaim,
+  updateQuestProgressOnCreatorLike,
+} from './quests';
 
 type CommunitySubmissionInput = z.infer<typeof communitySubmissionInputSchema>;
 
@@ -2768,6 +2772,19 @@ export const recordCommunityVote = async (params: {
       await redis.hDel(votesKey, [userId]);
     } else {
       await redis.hSet(votesKey, { [userId]: desired });
+    }
+  }
+  // First-ever like by this voter on this level credits the creator's
+  // "likes received" quest exactly once — the liked_by hash only grows, so
+  // toggling a like off and back on can't double-count.
+  if (desired === '1' && authorId) {
+    const firstLike = await redis.hSetNX(
+      keyCommunityLevelLikedBy(params.levelId),
+      userId,
+      '1'
+    );
+    if (firstLike === 1) {
+      await updateQuestProgressOnCreatorLike({ userId: authorId });
     }
   }
   const { likes, dislikes } = tallyCommunityVotes(await redis.hGetAll(votesKey));

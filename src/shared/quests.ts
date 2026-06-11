@@ -9,7 +9,8 @@ export type QuestGroupKey =
   | 'purchase'
   | 'dailyTop'
   | 'endless'
-  | 'creator';
+  | 'creator'
+  | 'audience';
 
 export type QuestReward = {
   coins: number;
@@ -352,24 +353,74 @@ export const questCatalog: QuestDefinition[] = [
     reward: { coins: 150, inventory: {}, flair: 'Loved Creator' },
   },
   {
-    id: 'milestone_creator_acclaim_3',
-    title: 'Acclaimed Creator',
-    description: 'Get 3 community challenges loved by players (200+ plays, 70%+ likes).',
+    id: 'milestone_creator_acclaim_5',
+    title: 'Fan Favorite',
+    description: 'Get 5 community challenges loved by players (200+ plays, 70%+ likes).',
     category: 'milestone',
     progressField: 'lifetimeAcclaimedChallenges',
-    target: 3,
+    target: 5,
     groupKey: 'creator',
-    reward: { coins: 350, inventory: {}, flair: 'Acclaimed Creator' },
+    reward: { coins: 400, inventory: {}, flair: 'Acclaimed Creator' },
   },
   {
     id: 'milestone_creator_acclaim_10',
-    title: 'Beloved Creator',
+    title: 'Cipher Star',
     description: 'Get 10 community challenges loved by players (200+ plays, 70%+ likes).',
     category: 'milestone',
     progressField: 'lifetimeAcclaimedChallenges',
     target: 10,
     groupKey: 'creator',
     reward: { coins: 800, inventory: {}, flair: 'Beloved Creator' },
+  },
+  {
+    id: 'milestone_creator_acclaim_25',
+    title: 'Legendary Author',
+    description: 'Get 25 community challenges loved by players (200+ plays, 70%+ likes).',
+    category: 'milestone',
+    progressField: 'lifetimeAcclaimedChallenges',
+    target: 25,
+    groupKey: 'creator',
+    reward: { coins: 1500, inventory: {}, flair: 'Legendary Creator' },
+  },
+  {
+    id: 'milestone_likes_10',
+    title: 'Warm Reception',
+    description: 'Collect 10 likes across your community challenges.',
+    category: 'milestone',
+    progressField: 'lifetimeLikesReceived',
+    target: 10,
+    groupKey: 'audience',
+    reward: { coins: 50, inventory: {}, flair: 'Fan Favorite' },
+  },
+  {
+    id: 'milestone_likes_50',
+    title: 'Crowd Pleaser',
+    description: 'Collect 50 likes across your community challenges.',
+    category: 'milestone',
+    progressField: 'lifetimeLikesReceived',
+    target: 50,
+    groupKey: 'audience',
+    reward: { coins: 150, inventory: {}, flair: 'Crowd Pleaser' },
+  },
+  {
+    id: 'milestone_likes_250',
+    title: 'Headliner',
+    description: 'Collect 250 likes across your community challenges.',
+    category: 'milestone',
+    progressField: 'lifetimeLikesReceived',
+    target: 250,
+    groupKey: 'audience',
+    reward: { coins: 400, inventory: {}, flair: 'Headliner' },
+  },
+  {
+    id: 'milestone_likes_1000',
+    title: 'Showstopper',
+    description: 'Collect 1000 likes across your community challenges.',
+    category: 'milestone',
+    progressField: 'lifetimeLikesReceived',
+    target: 1000,
+    groupKey: 'audience',
+    reward: { coins: 1000, inventory: {}, flair: 'Showstopper' },
   },
 ];
 
@@ -403,6 +454,9 @@ export const questProgressionGroups: Record<QuestGroupKey, string[]> = {
   creator: questCatalog
     .filter((quest) => quest.groupKey === 'creator')
     .map((quest) => quest.id),
+  audience: questCatalog
+    .filter((quest) => quest.groupKey === 'audience')
+    .map((quest) => quest.id),
 };
 
 const communityFlairStyleByGroup: Record<QuestGroupKey, CommunityFlairStyle> = {
@@ -413,6 +467,7 @@ const communityFlairStyleByGroup: Record<QuestGroupKey, CommunityFlairStyle> = {
   dailyTop: { backgroundColor: '#f48aa4', textColor: 'dark' },
   endless: { backgroundColor: '#78d6c6', textColor: 'dark' },
   creator: { backgroundColor: '#c4a7f0', textColor: 'dark' },
+  audience: { backgroundColor: '#f0a7c4', textColor: 'dark' },
 };
 
 const flairGroupByName = questCatalog.reduce<Record<string, QuestGroupKey>>(
