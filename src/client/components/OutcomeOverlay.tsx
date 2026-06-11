@@ -332,13 +332,6 @@ export const OutcomeOverlay = memo(({
                     ~ {puzzleAuthor}
                   </p>
                 </section>
-                {/* Vertical like/dislike rail hugging the quote panel's left
-                    edge, vertically centered — clear of the time pill (top)
-                    and rating pill (bottom), and on-screen at any width.
-                    Self-hides for daily puzzles and own challenges. */}
-                <div className="pointer-events-none absolute left-1.5 top-1/2 z-30 -translate-y-1/2">
-                  <CommunityVoteBar levelId={outcomeLevelId} />
-                </div>
                 {(ratingDeltaLabel || pointsGainedLabel) && (
                   <div
                     data-testid="outcome-rating-pill"
@@ -377,6 +370,19 @@ export const OutcomeOverlay = memo(({
                 )}
               </div>
             )}
+            {/* Like/dislike sits in normal flow BELOW the quote cluster, so
+                it can never overlap anything. The top margin clears the
+                rating pill, which hangs out-of-flow off the panel's bottom
+                edge whenever it renders. Self-hides on daily puzzles and
+                the creator's own challenge. */}
+            <div
+              className={cn(
+                'flex w-full justify-center',
+                ratingDeltaLabel || pointsGainedLabel ? 'mt-11' : 'mt-3'
+              )}
+            >
+              <CommunityVoteBar levelId={outcomeLevelId} />
+            </div>
           </div>
         </div>
       </main>

@@ -392,6 +392,26 @@ export const generatePuzzlePhraseBatch = async (params: {
       active_preferred_bounds: [preferredBounds.min, preferredBounds.max],
       active_flexible_bounds: [flexibleBounds.min, flexibleBounds.max],
     },
+    authenticity: {
+      real_published_lines_only: true,
+      verbatim_wording_required: true,
+      no_original_compositions: true,
+      no_paraphrasing: true,
+      complete_self_contained_thought: true,
+      no_sentence_fragments: true,
+      translated_sources:
+        'allowed_only_via_established_published_english_translation',
+      no_machine_or_own_translation: true,
+    },
+    attribution: {
+      format_real_person: 'FULL NAME',
+      format_fictional_or_screen: 'CHARACTER - WORK',
+      format_traditional: 'ORIGIN PROVERB',
+      examples: ['MARK TWAIN', 'CHANDLER - FRIENDS', 'ITACHI UCHIHA - NARUTO', 'JAPANESE PROVERB'],
+      allowed_charset: "A-Z0-9 .'-",
+      no_commas: true,
+      max_length: maxPuzzleAuthorLength,
+    },
     constraints: {
       uppercase: true,
       family_safe: true,
@@ -439,6 +459,8 @@ export const generatePuzzlePhraseBatch = async (params: {
             : tier === 'hard'
               ? 'Prefer a demanding line with strong variety. Hard does not need to be long if the letter mix is naturally tricky.'
               : 'Prefer a naturally difficult line with very high variety and low redundancy, but do not force length for its own sake.',
+      source_diversity:
+        'Draw from many cultures, eras, and mediums: world literature, cinema, anime, TV, songs, speeches, and proverbs from any country are all welcome when an established English translation exists. Avoid leaning on the same handful of famous English-language quotes.',
       cryptogram_guidance:
         tier === 'warmup'
           ? 'Prefer repeated common letters and at least one clue-friendly word; repetition is acceptable when it makes the puzzle gentler.'
@@ -461,6 +483,16 @@ export const generatePuzzlePhraseBatch = async (params: {
     'Output keys per candidate: target_string, author, challenge_type. ' +
 	    `challenge_type must be one of: ${challengeTypeList}. ` +
 	    'challenge_type must equal preferred_challenge_type. ' +
+    // Authenticity is the highest-priority rule set: better to return fewer
+    // famous-but-exact lines than to invent or approximate.
+    'AUTHENTICITY (highest priority): target_string must be a REAL line from a published source — a quote, lyric, screen line, book line, speech line, saying, or proverb that actually exists. ' +
+    'Use the exact verbatim wording. NEVER compose an original line, never paraphrase, and never guess wording from vague memory — if you are not certain of the exact words, pick a different line you know exactly. ' +
+    'Every line must be a complete, self-contained thought that stands alone without the surrounding scene or paragraph. No mid-sentence fragments, no trailing half-clauses, no setup-only lines. ' +
+    'Lines originally in other languages are welcome ONLY in their widely published English translation (official subtitles, dub, or published book translation) — never your own translation. ' +
+    'ATTRIBUTION: author must name the true source within 28 characters using only letters, digits, spaces, dots, apostrophes, and dashes (no commas). ' +
+    "Real person: 'MARK TWAIN'. Fictional or screen character: 'CHARACTER - WORK', e.g. 'CHANDLER - FRIENDS' or 'ITACHI UCHIHA - NARUTO'. Traditional sayings: \"ORIGIN PROVERB\", e.g. 'JAPANESE PROVERB'. " +
+    "Use 'UNKNOWN' only for genuinely anonymous traditional lines. " +
+    'VARIETY: no two candidates in the batch may come from the same work or author; vary cultures, eras, and mediums. ' +
 	    `Aim for ${promptProfile.wordCountBounds.min}-${promptProfile.wordCountBounds.max} words when it sounds natural. ` +
 	    `Prefer ${preferredBounds.min}-${preferredBounds.max} total characters for readability, but anything within ${flexibleBounds.min}-${flexibleBounds.max} total characters is allowed if the phrase fits the tier's hardness and clue profile. ` +
 	    `Use at least ${promptProfile.recommendedMinUniqueWords} unique words and avoid repeating whole words. ` +

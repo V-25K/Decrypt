@@ -63,10 +63,10 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
     }
   };
 
-  // Compact vertical rail: count lives inside each button, no label.
+  // Two compact pill buttons, count inside each — no label, thumb-sized.
   return (
     <div
-      className="pointer-events-auto flex flex-col items-center gap-1.5"
+      className="pointer-events-auto flex items-center justify-center gap-2"
       data-testid="community-vote-bar"
     >
       <button
@@ -78,7 +78,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         }}
         disabled={busy}
         className={cn(
-          'btn-3d flex h-12 w-10 flex-col items-center justify-center gap-0.5 rounded-xl',
+          'btn-3d flex h-11 min-w-16 items-center justify-center gap-1.5 rounded-xl px-3',
           state.myVote === 'like' ? 'btn-primary' : 'btn-neutral'
         )}
         aria-label={`Like this challenge (${state.likes})`}
@@ -86,7 +86,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         data-testid="community-vote-like"
       >
         <span className="text-base leading-none">👍</span>
-        <span className="text-[10px] font-black leading-none tabular-nums">
+        <span className="text-xs font-black leading-none tabular-nums">
           {state.likes}
         </span>
       </button>
@@ -99,7 +99,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         }}
         disabled={busy}
         className={cn(
-          'btn-3d flex h-12 w-10 flex-col items-center justify-center gap-0.5 rounded-xl',
+          'btn-3d flex h-11 min-w-16 items-center justify-center gap-1.5 rounded-xl px-3',
           state.myVote === 'dislike' ? 'btn-retry' : 'btn-neutral'
         )}
         aria-label={`Dislike this challenge (${state.dislikes})`}
@@ -107,7 +107,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         data-testid="community-vote-dislike"
       >
         <span className="text-base leading-none">👎</span>
-        <span className="text-[10px] font-black leading-none tabular-nums">
+        <span className="text-xs font-black leading-none tabular-nums">
           {state.dislikes}
         </span>
       </button>
