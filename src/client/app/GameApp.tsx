@@ -2833,7 +2833,9 @@ export const GameApp = () => {
   ]);
 
   if (loading) {
-    return <LoadingScreen />;
+    // Standalone boot: solid dark base — no backdrop exists yet, and the
+    // cream page background reads as a white flash.
+    return <LoadingScreen className="loading-screen-solid" />;
   }
 
 	  if (bootstrapError || !profile || !inventory || !puzzle) {

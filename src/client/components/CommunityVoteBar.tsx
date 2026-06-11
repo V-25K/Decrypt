@@ -63,14 +63,12 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
     }
   };
 
+  // Compact vertical rail: count lives inside each button, no label.
   return (
     <div
-      className="pointer-events-auto mt-3 flex items-center justify-center gap-2"
+      className="pointer-events-auto flex flex-col items-center gap-1.5"
       data-testid="community-vote-bar"
     >
-      <span className="text-[10px] font-black uppercase tracking-[0.04em] text-white/80">
-        Rate this challenge
-      </span>
       <button
         type="button"
         onClick={(event) => {
@@ -80,18 +78,18 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         }}
         disabled={busy}
         className={cn(
-          'btn-3d btn-round flex h-11 w-11 items-center justify-center text-lg',
+          'btn-3d flex h-12 w-10 flex-col items-center justify-center gap-0.5 rounded-xl',
           state.myVote === 'like' ? 'btn-primary' : 'btn-neutral'
         )}
-        aria-label="Like this challenge"
+        aria-label={`Like this challenge (${state.likes})`}
         aria-pressed={state.myVote === 'like'}
         data-testid="community-vote-like"
       >
-        👍
+        <span className="text-base leading-none">👍</span>
+        <span className="text-[10px] font-black leading-none tabular-nums">
+          {state.likes}
+        </span>
       </button>
-      <span className="min-w-5 text-center text-xs font-black tabular-nums text-white">
-        {state.likes}
-      </span>
       <button
         type="button"
         onClick={(event) => {
@@ -101,18 +99,18 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         }}
         disabled={busy}
         className={cn(
-          'btn-3d btn-round flex h-11 w-11 items-center justify-center text-lg',
+          'btn-3d flex h-12 w-10 flex-col items-center justify-center gap-0.5 rounded-xl',
           state.myVote === 'dislike' ? 'btn-retry' : 'btn-neutral'
         )}
-        aria-label="Dislike this challenge"
+        aria-label={`Dislike this challenge (${state.dislikes})`}
         aria-pressed={state.myVote === 'dislike'}
         data-testid="community-vote-dislike"
       >
-        👎
+        <span className="text-base leading-none">👎</span>
+        <span className="text-[10px] font-black leading-none tabular-nums">
+          {state.dislikes}
+        </span>
       </button>
-      <span className="min-w-5 text-center text-xs font-black tabular-nums text-white">
-        {state.dislikes}
-      </span>
     </div>
   );
 };

@@ -47,9 +47,18 @@ export const StatsScreen = ({
   const extraUnlocked = unlockedFlairs.filter(
     (flair) => !catalogFlairNames.has(flair)
   );
-  const unlockedCount =
-    catalogFlairEntries.filter((entry) => unlockedSet.has(entry.flair)).length +
-    extraUnlocked.length;
+  // Unlocked flairs always lead, regardless of catalog position; the
+  // still-locked goals trail behind them.
+  const unlockedFlairNames = [
+    ...extraUnlocked,
+    ...catalogFlairEntries
+      .filter((entry) => unlockedSet.has(entry.flair))
+      .map((entry) => entry.flair),
+  ];
+  const lockedEntries = catalogFlairEntries.filter(
+    (entry) => !unlockedSet.has(entry.flair)
+  );
+  const unlockedCount = unlockedFlairNames.length;
   const totalCount = catalogFlairEntries.length + extraUnlocked.length;
 
   return (
@@ -164,7 +173,7 @@ export const StatsScreen = ({
                 >
                   No Flair
                 </button>
-                {extraUnlocked.map((flair) => (
+                {unlockedFlairNames.map((flair) => (
                   <button
                     key={flair}
                     className={cn(
@@ -179,41 +188,20 @@ export const StatsScreen = ({
                     {profile.activeFlair === flair ? `✓ ${flair}` : flair}
                   </button>
                 ))}
-                {catalogFlairEntries.map((entry) =>
-                  unlockedSet.has(entry.flair) ? (
-                    <button
-                      key={entry.flair}
-                      className={cn(
-                        'btn-3d btn-flair-chip rounded-lg border px-2 py-1 text-xs font-black uppercase',
-                        profile.activeFlair === entry.flair ? 'btn-pressed' : ''
-                      )}
-                      onClick={() => onSetActiveFlair(entry.flair)}
-                      disabled={flairSaveBusy}
-                      style={flairChipStyle(
-                        entry.flair,
-                        profile.activeFlair === entry.flair
-                      )}
-                      data-testid={`flair-option-${entry.flair.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
-                    >
-                      {profile.activeFlair === entry.flair
-                        ? `✓ ${entry.flair}`
-                        : entry.flair}
-                    </button>
-                  ) : (
-                    <div
-                      key={entry.flair}
-                      className="app-border rounded-lg border border-dashed px-2 py-1 text-center opacity-60"
-                      title={`Unlock via "${entry.questTitle}"`}
-                    >
-                      <div className="app-text-muted text-xs font-black uppercase">
-                        🔒 {entry.flair}
-                      </div>
-                      <div className="app-text-soft text-[9px] font-semibold">
-                        {entry.questTitle}
-                      </div>
+                {lockedEntries.map((entry) => (
+                  <div
+                    key={entry.flair}
+                    className="app-border rounded-lg border border-dashed px-2 py-1 text-center opacity-60"
+                    title={`Unlock via "${entry.questTitle}"`}
+                  >
+                    <div className="app-text-muted text-xs font-black uppercase">
+                      🔒 {entry.flair}
                     </div>
-                  )
-                )}
+                    <div className="app-text-soft text-[9px] font-semibold">
+                      {entry.questTitle}
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
           )}

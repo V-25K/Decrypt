@@ -47,6 +47,13 @@ body,
   background: transparent;
 }
 
+/* Standalone loading (initial app boot, full-screen waits): a dark base so
+   the cream page background never flashes through. Suspense fallbacks that
+   sit over a backdrop image keep the transparent shell. */
+.loading-screen-solid {
+  background: #0b1416;
+}
+
 .loading-glass-mark {
   height: 88px;
   width: 88px;

@@ -84,7 +84,10 @@ export const CreatorAcclaimInfo = () => {
       {open && (
         <span
           data-testid="creator-acclaim-info-popover"
-          className="app-surface-strong app-border absolute right-0 top-7 z-30 block w-56 rounded-lg border px-3 py-2.5 text-left shadow-xl"
+          // Fixed and viewport-clamped: anchoring to the tiny button pushed
+          // the panel off-screen on phones. Mobile gets a centered sheet
+          // that always fits; larger screens get the same, just narrower.
+          className="app-surface-strong app-border fixed left-1/2 top-1/3 z-50 block w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-left shadow-xl"
           onClick={(event) => event.stopPropagation()}
         >
           <span className="app-text block text-[11px] font-black">
