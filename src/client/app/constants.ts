@@ -12,7 +12,9 @@ export type UiSpriteType =
   | 'stats'
   | 'leaderboard'
   | 'settings'
-  | 'sound';
+  | 'sound'
+  | 'thumbUp'
+  | 'thumbDown';
 
 export const coinEmoji = '\u{1FA99}';
 export const crossMarkEmoji = '\u{274C}';
@@ -61,6 +63,8 @@ export const uiSpriteLabel: Record<UiSpriteType, string> = {
   leaderboard: 'Leaderboard',
   settings: 'Settings',
   sound: 'Sound',
+  thumbUp: 'Thumbs up',
+  thumbDown: 'Thumbs down',
 };
 
 export const uiSpriteAssetPath: Record<UiSpriteType, string> = {
@@ -75,6 +79,8 @@ export const uiSpriteAssetPath: Record<UiSpriteType, string> = {
   leaderboard: '/ui_leaderboard.png',
   settings: '/ui_settings.png',
   sound: '/ui_sound.png',
+  thumbUp: '/ui_thumb_up.png',
+  thumbDown: '/ui_thumb_down.png',
 };
 
 export const coinHeartRefillCost = 350;

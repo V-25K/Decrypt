@@ -3,6 +3,7 @@ import { showToast } from '@devvit/web/client';
 import { trpc } from '../trpc';
 import { cn } from '../utils';
 import { applyOptimisticVote, type VoteState } from './community-vote-logic';
+import { UiSprite } from './UiSprite';
 
 // Result-screen like/dislike for community challenges. Self-hides for daily
 // puzzles and for the creator's own challenge, so it can be rendered
@@ -85,7 +86,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         aria-pressed={state.myVote === 'like'}
         data-testid="community-vote-like"
       >
-        <span className="text-base leading-none">👍</span>
+        <UiSprite icon="thumbUp" decorative className="h-5 w-5" />
         <span className="text-xs font-black leading-none tabular-nums">
           {state.likes}
         </span>
@@ -106,7 +107,7 @@ export const CommunityVoteBar = ({ levelId }: { levelId: string | null }) => {
         aria-pressed={state.myVote === 'dislike'}
         data-testid="community-vote-dislike"
       >
-        <span className="text-base leading-none">👎</span>
+        <UiSprite icon="thumbDown" decorative className="h-5 w-5" />
         <span className="text-xs font-black leading-none tabular-nums">
           {state.dislikes}
         </span>

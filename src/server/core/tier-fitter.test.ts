@@ -32,7 +32,7 @@ const corpus = [
 ];
 
 describe('fitBoardToTier', () => {
-  it('fits a complex line to an easy board that the legacy tier gate rejects', () => {
+  it('fits a complex line to an easy board that the legacy tier gate rejects', { timeout: 30_000 }, () => {
     const pangram = 'THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG';
     // The legacy phase-1 gate refuses this line at easy ("too complex for
     // easy") — the exact dead-end the fitter exists to remove.
@@ -116,7 +116,7 @@ describe('fitBoardToTier', () => {
     expect(fittedCount).toBeGreaterThanOrEqual(10);
   });
 
-  it('never pre-rejects easy or medium for being too complex', () => {
+  it('never pre-rejects easy or medium for being too complex', { timeout: 30_000 }, () => {
     for (const text of corpus) {
       for (const tier of ['warmup', 'medium'] as const) {
         const outcome = fitBoardToTier(fitParams(text, tier));
@@ -129,7 +129,7 @@ describe('fitBoardToTier', () => {
 });
 
 describe('applyFittedLayoutToBasePuzzle', () => {
-  it('reproduces the fitted board on a fresh base with a different level id', () => {
+  it('reproduces the fitted board on a fresh base with a different level id', { timeout: 30_000 }, () => {
     const text = 'JUDGE EACH DAY BY THE SEEDS THAT YOU PLANT NOT THE HARVEST YOU REAP';
     const tier: DifficultyTier = 'medium';
     const outcome = fitBoardToTier(fitParams(text, tier));

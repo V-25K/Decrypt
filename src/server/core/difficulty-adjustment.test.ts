@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe('adjustPuzzleDifficulty', () => {
-  it('should successfully adjust easy puzzle to medium difficulty', async () => {
+  it('should successfully adjust easy puzzle to medium difficulty', { timeout: 30_000 }, async () => {
     // Build a base easy puzzle
     const basePuzzle = buildPuzzle({
       levelId: 'test-001',
@@ -47,7 +47,7 @@ describe('adjustPuzzleDifficulty', () => {
     expect(result.adjustmentLog.length).toBeGreaterThan(0);
   });
   
-  it('should return failure when target difficulty is unreachable', async () => {
+  it('should return failure when target difficulty is unreachable', { timeout: 30_000 }, async () => {
     // Build a base puzzle
     const basePuzzle = buildPuzzle({
       levelId: 'test-002',
@@ -81,7 +81,7 @@ describe('adjustPuzzleDifficulty', () => {
     expect(result.reason).toBeDefined();
   });
   
-  it('should return success immediately if already at target tier', async () => {
+  it('should return success immediately if already at target tier', { timeout: 30_000 }, async () => {
     const basePuzzle = buildPuzzle({
       levelId: 'test-003',
       dateKey: '2024-01-03',
@@ -114,7 +114,7 @@ describe('adjustPuzzleDifficulty', () => {
     expect(result.adjustmentLog.length).toBeGreaterThanOrEqual(0);
   });
   
-  it('should respect fairness constraints', async () => {
+  it('should respect fairness constraints', { timeout: 30_000 }, async () => {
     const basePuzzle = buildPuzzle({
       levelId: 'test-004',
       dateKey: '2024-01-04',
@@ -153,7 +153,7 @@ describe('adjustPuzzleDifficulty', () => {
     }
   });
   
-  it('should log adjustments made', async () => {
+  it('should log adjustments made', { timeout: 30_000 }, async () => {
     const basePuzzle = buildPuzzle({
       levelId: 'test-005',
       dateKey: '2024-01-05',

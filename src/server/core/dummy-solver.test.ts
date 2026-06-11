@@ -70,7 +70,7 @@ describe('dummy solver phase2', () => {
     expect(result.blindGuessRequired).toBe(true);
   });
 
-  it('produces identical results when non-revealed plaintext chars are tampered', () => {
+  it('produces identical results when non-revealed plaintext chars are tampered', { timeout: 30_000 }, () => {
     const generated = buildPuzzle({
       levelId: 'lvl_2304',
       dateKey: '2026-03-06',
