@@ -18,6 +18,7 @@ const questsClaimMutation = vi.fn();
 const profileJoinCommunityMutation = vi.fn();
 const profileSetActiveFlairMutation = vi.fn();
 const profileSetAudioEnabledMutation = vi.fn();
+const profileSetThemePreferenceMutation = vi.fn();
 const leaderboardDailyQuery = vi.fn();
 const leaderboardLevelQuery = vi.fn();
 const leaderboardAllTimeQuery = vi.fn();
@@ -96,6 +97,7 @@ vi.mock('./trpc', () => ({
       joinCommunity: { mutate: profileJoinCommunityMutation },
       setActiveFlair: { mutate: profileSetActiveFlairMutation },
       setAudioEnabled: { mutate: profileSetAudioEnabledMutation },
+      setThemePreference: { mutate: profileSetThemePreferenceMutation },
     },
     store: {
       getProducts: { query: storeProductsQuery },
@@ -163,6 +165,7 @@ const profileFixture = () => ({
 	  bestGlobalRank: 2,
 	  bestOverallRank: 2,
   audioEnabled: true,
+  themePreference: 'default' as const,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',
@@ -367,6 +370,11 @@ const primeMocks = () => {
     reason: null,
     profile: profileFixture(),
   });
+  profileSetThemePreferenceMutation.mockResolvedValue({
+    success: true,
+    reason: null,
+    profile: { ...profileFixture(), themePreference: 'minimal' },
+  });
   shareResultMutation.mockResolvedValue({
     success: true,
     reason: null,
@@ -526,6 +534,7 @@ afterEach(() => {
   questsClaimMutation.mockReset();
   profileJoinCommunityMutation.mockReset();
   profileSetAudioEnabledMutation.mockReset();
+  profileSetThemePreferenceMutation.mockReset();
   leaderboardDailyQuery.mockReset();
   leaderboardLevelQuery.mockReset();
   leaderboardAllTimeQuery.mockReset();
@@ -600,6 +609,42 @@ describe('Game updates', { timeout: 15000 }, () => {
       () => localStorageState.get(sfxEnabledStorageKey) === '0'
     );
     expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('switches to the minimal theme from settings and persists it', async () => {
+    primeMocks();
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="settings-button"]')));
+
+    const rootBefore = document.querySelector('.theme-app');
+    expect(rootBefore?.classList.contains('theme-minimal')).toBe(false);
+    expect(rootBefore?.classList.contains('home-backdrop')).toBe(true);
+
+    document
+      .querySelector('[data-testid="settings-button"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="theme-option-minimal"]')));
+
+    document
+      .querySelector('[data-testid="theme-option-minimal"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() => profileSetThemePreferenceMutation.mock.calls.length === 1);
+    expect(profileSetThemePreferenceMutation).toHaveBeenCalledWith({
+      theme: 'minimal',
+    });
+    await waitFor(
+      () => localStorageState.get('decrypt-theme-preference-v1') === 'minimal'
+    );
+
+    const root = document.querySelector('.theme-app');
+    expect(root?.classList.contains('theme-minimal')).toBe(true);
+    // The photo backdrops and glass-panel overrides must not apply in minimal.
+    expect(root?.classList.contains('home-backdrop')).toBe(false);
+    expect(root?.classList.contains('hub-live')).toBe(false);
+    expect(root?.classList.contains('home-live')).toBe(false);
   });
 
   it('renders endless as playable when a catalog is active', async () => {

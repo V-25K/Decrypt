@@ -32,6 +32,18 @@ const baseProgress = (): QuestProgress => ({
 });
 
 describe('quest catalog', () => {
+  it('grants each flair from exactly one quest', () => {
+    // Duplicate flair names merge two quests' rewards into one locker entry
+    // (and a duplicate React key in the flair locker grid).
+    const flairs = questCatalog
+      .map((quest) => quest.reward.flair)
+      .filter((flair): flair is string => flair !== null);
+    const duplicates = flairs.filter(
+      (flair, index) => flairs.indexOf(flair) !== index
+    );
+    expect(duplicates).toEqual([]);
+  });
+
   it('keeps progression groups ordered by increasing target', () => {
     for (const group of Object.values(questProgressionGroups)) {
       const targets = group.map((questId) => questCatalogById[questId]?.target ?? -1);

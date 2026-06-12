@@ -113,6 +113,7 @@ export const defaultUserProfile = (): UserProfile =>
     bestGlobalRank: 0,
     bestOverallRank: 0,
     audioEnabled: true,
+    themePreference: 'default',
     communityJoinRecorded: false,
     communityJoinRewardClaimed: false,
     unlockedFlairs: [],
@@ -241,6 +242,13 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
     bestGlobalRank: numberFromHash(hash, 'bestGlobalRank', 0),
     bestOverallRank: numberFromHash(hash, 'bestOverallRank', 0),
     audioEnabled: stringFromHash(hash, 'audioEnabled', '1') === '1',
+    // Sanitized here (not just schema-validated): an unknown stored value must
+    // degrade to 'default', never trip the safeParse fallback that resets the
+    // whole profile.
+    themePreference:
+      stringFromHash(hash, 'themePreference', 'default') === 'minimal'
+        ? 'minimal'
+        : 'default',
     communityJoinRecorded: stringFromHash(hash, 'communityJoinRecorded', '0') === '1',
     communityJoinRewardClaimed:
       stringFromHash(hash, 'communityJoinRewardClaimed', '0') === '1',
@@ -306,6 +314,7 @@ export const saveUserProfile = async (
     bestGlobalRank: `${normalizedProfile.bestGlobalRank}`,
     bestOverallRank: `${normalizedProfile.bestOverallRank}`,
     audioEnabled: normalizedProfile.audioEnabled ? '1' : '0',
+    themePreference: normalizedProfile.themePreference,
     communityJoinRecorded: normalizedProfile.communityJoinRecorded ? '1' : '0',
     communityJoinRewardClaimed: normalizedProfile.communityJoinRewardClaimed
       ? '1'

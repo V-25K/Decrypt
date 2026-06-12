@@ -380,7 +380,7 @@ export const questCatalog: QuestDefinition[] = [
     progressField: 'lifetimeAcclaimedChallenges',
     target: 25,
     groupKey: 'creator',
-    reward: { coins: 1500, inventory: {}, flair: 'Hall of Fame' },
+    reward: { coins: 1500, inventory: {}, flair: 'Living Legend' },
   },
   {
     id: 'milestone_likes_10',

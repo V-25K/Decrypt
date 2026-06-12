@@ -408,6 +408,86 @@ body,
   z-index: 0;
 }
 
+/* Minimal theme: one flat solid background on every screen — no photo
+   backdrops, glass panels, or glow. Light vs. dark follows the player's
+   Reddit appearance via prefers-color-scheme (Devvit forwards it to the
+   web view); there is deliberately no in-app light/dark toggle. */
+.theme-app.theme-minimal {
+  color-scheme: light;
+  --app-bg: #f6f4f1;
+  --app-surface: #ffffff;
+  --app-surface-strong: #ffffff;
+  --app-surface-subtle: rgba(70, 92, 136, 0.12);
+  --outcome-positive: #1e7a3c;
+  --outcome-negative: #b3263c;
+  background: var(--app-bg);
+}
+
+/* The result screen was styled for the photo backdrop: a full-screen dim
+   wash plus white borders/text and pale rating tints on the quote cluster.
+   On the flat minimal background those must use the theme's own ink. */
+.theme-app.theme-minimal [data-testid='success-overlay'],
+.theme-app.theme-minimal [data-testid='result-screen'] {
+  --app-overlay: transparent;
+}
+
+.theme-app.theme-minimal [data-testid='outcome-time-pill'],
+.theme-app.theme-minimal [data-testid='outcome-overlay-quote'],
+.theme-app.theme-minimal [data-testid='outcome-rating-pill'] {
+  border-color: var(--app-outline);
+}
+
+.theme-app.theme-minimal [data-testid='outcome-time-pill'] [class*='text-white'],
+.theme-app.theme-minimal [data-testid='outcome-overlay-quote'] [class*='text-white'],
+.theme-app.theme-minimal [data-testid='outcome-rating-pill'] [class*='text-white'] {
+  color: var(--app-text);
+}
+
+.theme-app.theme-minimal [data-testid='outcome-rating-pill'] .text-emerald-100 {
+  color: var(--outcome-positive);
+}
+
+.theme-app.theme-minimal [data-testid='outcome-rating-pill'] .text-rose-100 {
+  color: var(--outcome-negative);
+}
+
+/* Punctuation and result-quote styling assume a dark photo behind them;
+   on a flat background they must read in the theme's own ink. */
+.theme-app.theme-minimal .puzzle-punctuation-mark {
+  color: var(--app-text);
+  text-shadow: none;
+}
+
+.theme-app.theme-minimal .outcome-quote-author {
+  text-shadow: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .theme-app.theme-minimal {
+    color-scheme: dark;
+    --app-bg: #0b1416;
+    --app-surface: #15232a;
+    --app-surface-strong: #1c2d35;
+    --app-surface-subtle: rgba(126, 159, 199, 0.22);
+    --app-overlay: rgba(0, 0, 0, 0.55);
+    --app-text: #f3f5f6;
+    --app-text-muted: rgba(243, 245, 246, 0.78);
+    --app-text-soft: rgba(243, 245, 246, 0.6);
+    --app-outline: rgba(243, 245, 246, 0.66);
+    --app-outline-soft: rgba(243, 245, 246, 0.26);
+    --tile-locked-text: rgba(243, 245, 246, 0.45);
+    --outcome-positive: #6ee7b7;
+    --outcome-negative: #fda4af;
+  }
+
+  /* The 3D button under-shadows are tuned for the cream page (beige and
+     pastel hards); on the dark flat background they read as light halos. */
+  .theme-app.theme-minimal .btn-3d {
+    --btn-shadow-hard: rgba(0, 0, 0, 0.62);
+    --btn-shadow-soft: rgba(0, 0, 0, 0.34);
+  }
+}
+
 .challenge-layer {
   position: relative;
   z-index: 1;

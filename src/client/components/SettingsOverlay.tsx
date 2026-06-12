@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import type { ThemePreference } from '../../shared/game';
 import type { DeviceTier } from '../app/types';
 import { UiSprite } from './UiSprite';
 import { cn } from '../utils';
@@ -9,9 +10,17 @@ type SettingsOverlayProps = {
   settingsCardRef: RefObject<HTMLElement | null>;
   audioEnabled: boolean;
   audioBusy: boolean;
+  themePreference: ThemePreference;
+  themeBusy: boolean;
   onToggleAudio: () => void;
+  onSelectTheme: (theme: ThemePreference) => void;
   onClose: () => void;
 };
+
+const themeOptions: ReadonlyArray<{ value: ThemePreference; label: string }> = [
+  { value: 'default', label: 'Default' },
+  { value: 'minimal', label: 'Minimal' },
+];
 
 export const SettingsOverlay = ({
   deviceTier,
@@ -19,7 +28,10 @@ export const SettingsOverlay = ({
   settingsCardRef,
   audioEnabled,
   audioBusy,
+  themePreference,
+  themeBusy,
   onToggleAudio,
+  onSelectTheme,
   onClose,
 }: SettingsOverlayProps) => (
   <div
@@ -93,6 +105,45 @@ export const SettingsOverlay = ({
               <span className="block h-5 w-5 rounded-full bg-[#111111]" />
             </button>
           </div>
+        </section>
+        <section className="app-surface-strong rounded-lg border app-border px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <UiSprite icon="settings" decorative className="h-4 w-4 shrink-0" />
+            <h3
+              className={`${
+                deviceTier === 'mobile' ? 'text-[10px]' : 'text-[11px]'
+              } app-text font-black uppercase`}
+            >
+              Theme
+            </h3>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {themeOptions.map((option) => (
+              <button
+                key={option.value}
+                data-testid={`theme-option-${option.value}`}
+                type="button"
+                className={cn(
+                  'btn-3d btn-compact rounded-lg border py-1.5 text-[10px] font-black uppercase',
+                  themePreference === option.value ? 'btn-primary btn-pressed' : 'btn-neutral',
+                  themeBusy ? 'opacity-70' : ''
+                )}
+                onClick={() => onSelectTheme(option.value)}
+                disabled={themeBusy}
+                aria-pressed={themePreference === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p
+            className={`${
+              deviceTier === 'mobile' ? 'text-[9px]' : 'text-[10px]'
+            } app-text-muted mt-2 font-semibold normal-case`}
+          >
+            Minimal uses a plain background and follows your Reddit light or
+            dark mode on its own.
+          </p>
         </section>
       </div>
     </section>

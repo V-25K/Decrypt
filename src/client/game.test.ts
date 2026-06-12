@@ -144,6 +144,7 @@ const profileFixture = (coins = 500) => ({
   endlessSolveTimeTotalSec: 0,
   bestOverallRank: 0,
   audioEnabled: true,
+  themePreference: 'default' as const,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],
   activeFlair: '',

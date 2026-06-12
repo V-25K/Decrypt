@@ -289,6 +289,15 @@ export const inventorySchema = z.object({
 
 export type Inventory = z.infer<typeof inventorySchema>;
 
+// 'default' is the full art theme; 'minimal' is a flat solid-color look that
+// follows the player's Reddit light/dark appearance (no in-app toggle).
+export const themePreferenceSchema = z.union([
+  z.literal('default'),
+  z.literal('minimal'),
+]);
+
+export type ThemePreference = z.infer<typeof themePreferenceSchema>;
+
 export const userProfileSchema = z.object({
   coins: z.number().int().nonnegative(),
   hearts: z.number().int().nonnegative().max(maxHearts),
@@ -325,6 +334,7 @@ export const userProfileSchema = z.object({
   bestGlobalRank: z.number().int().nonnegative().default(0),
   bestOverallRank: z.number().int().nonnegative(),
   audioEnabled: z.boolean().default(true),
+  themePreference: themePreferenceSchema.default('default'),
   // Tracks whether the player has ever successfully completed the "join community" user action.
   // This is separate from reward claiming so we can show "Joined" UI even in dev/playtest subs.
   communityJoinRecorded: z.boolean().default(false),
@@ -783,6 +793,15 @@ export const profileSetActiveFlairResponseSchema = z.object({
 });
 
 export const profileSetAudioEnabledResponseSchema =
+  profileSetActiveFlairResponseSchema;
+
+export const profileSetThemePreferenceInputSchema = z
+  .object({
+    theme: themePreferenceSchema,
+  })
+  .strict();
+
+export const profileSetThemePreferenceResponseSchema =
   profileSetActiveFlairResponseSchema;
 
 export const profileJoinCommunityResponseSchema = z.object({

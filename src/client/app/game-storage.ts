@@ -1,5 +1,5 @@
 import type { ChallengeMode } from './challenge-session-state';
-import type { ChallengeType, EndlessSort } from '../../shared/game';
+import type { ChallengeType, EndlessSort, ThemePreference } from '../../shared/game';
 import type { AppScreen, RouterOutputs } from './types';
 
 export type PersistedOutcomeState = {
@@ -17,6 +17,7 @@ const expandedScreenIntentKey = 'decrypt-expanded-screen-intent';
 const expandedChallengeModeIntentKey = 'decrypt-expanded-challenge-mode-intent';
 const expandedScreenIntentTtlMs = 5000;
 const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
+const themePreferenceStorageKey = 'decrypt-theme-preference-v1';
 const correctGuessStateStorageKeyPrefix = 'decrypt-correct-guess-tiles-v1:';
 const storageMigrationMarkerPrefix = 'decrypt-storage-migrated-v1:';
 const expandedIntentScreens = [
@@ -77,6 +78,26 @@ const correctGuessStorageKey = (userId: string, levelId: string): string =>
 
 const storageMigrationMarkerKey = (userId: string): string =>
   `${storageMigrationMarkerPrefix}${userId}`;
+
+// Device-local mirror of the profile's theme preference so the very first
+// paint after boot uses the right theme (the profile arrives async).
+export const readThemePreference = (): ThemePreference => {
+  try {
+    return localStorage.getItem(themePreferenceStorageKey) === 'minimal'
+      ? 'minimal'
+      : 'default';
+  } catch (_error) {
+    return 'default';
+  }
+};
+
+export const persistThemePreference = (theme: ThemePreference): void => {
+  try {
+    localStorage.setItem(themePreferenceStorageKey, theme);
+  } catch (_error) {
+    // Ignore storage failures; the server-side preference still applies.
+  }
+};
 
 export const setExpandedScreenIntent = (screen: AppScreen): void => {
   try {

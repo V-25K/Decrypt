@@ -7,6 +7,8 @@ import {
   profileSetAudioEnabledResponseSchema,
   profileSetActiveFlairInputSchema,
   profileSetActiveFlairResponseSchema,
+  profileSetThemePreferenceInputSchema,
+  profileSetThemePreferenceResponseSchema,
 } from '../../../shared/game';
 import { isPrimaryCommunitySubreddit, primaryCommunitySubreddit } from '../../../shared/community';
 import { syncCommunityFlair } from '../../core/community-flair';
@@ -189,6 +191,22 @@ export const profileRouter = router({
       };
       await saveUserProfile(userId, updatedProfile);
       return profileSetAudioEnabledResponseSchema.parse({
+        success: true,
+        reason: null,
+        profile: updatedProfile,
+      });
+    }),
+  setThemePreference: authedProcedure
+    .input(profileSetThemePreferenceInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      const userId = ctx.userId;
+      const profile = await getUserProfile(userId);
+      const updatedProfile = {
+        ...profile,
+        themePreference: input.theme,
+      };
+      await saveUserProfile(userId, updatedProfile);
+      return profileSetThemePreferenceResponseSchema.parse({
         success: true,
         reason: null,
         profile: updatedProfile,

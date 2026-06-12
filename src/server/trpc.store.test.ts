@@ -584,3 +584,74 @@ describe('profile.joinCommunity', () => {
     });
   });
 });
+
+describe('profile.setThemePreference', () => {
+  it('saves the minimal theme and echoes it on the profile', async () => {
+    getUserProfileMock.mockResolvedValue({
+      coins: 25,
+      hearts: 3,
+      lastHeartRefillTs: 0,
+      infiniteHeartsExpiryTs: 0,
+      currentStreak: 0,
+      dailyCurrentStreak: 0,
+      endlessCurrentStreak: 0,
+      lastPlayedDateKey: '',
+      totalWordsSolved: 0,
+      logicTasksCompleted: 0,
+      totalLevelsCompleted: 0,
+      flawlessWins: 0,
+      speedWins: 0,
+      dailyFlawlessWins: 0,
+      endlessFlawlessWins: 0,
+      dailySpeedWins: 0,
+      endlessSpeedWins: 0,
+      dailyChallengesPlayed: 0,
+      endlessChallengesPlayed: 0,
+      dailyFirstTryWins: 0,
+      endlessFirstTryWins: 0,
+      questsCompleted: 0,
+      dailyModeClears: 0,
+      endlessModeClears: 0,
+      dailySolveTimeTotalSec: 0,
+      endlessSolveTimeTotalSec: 0,
+      bestOverallRank: 0,
+      communityJoinRecorded: false,
+      communityJoinRewardClaimed: false,
+      unlockedFlairs: [],
+      activeFlair: '',
+    });
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.profile.setThemePreference({ theme: 'minimal' });
+
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      't2_u_test',
+      expect.objectContaining({ themePreference: 'minimal' })
+    );
+    expect(result).toMatchObject({
+      success: true,
+      reason: null,
+      profile: expect.objectContaining({ themePreference: 'minimal' }),
+    });
+  });
+
+  it('rejects theme values outside the catalog', async () => {
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+
+    await expect(
+      // @ts-expect-error intentionally invalid input
+      caller.profile.setThemePreference({ theme: 'neon' })
+    ).rejects.toThrow();
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+  });
+});

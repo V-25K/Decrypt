@@ -104,6 +104,7 @@ const defaultPaymentProfileSnapshot = (): UserProfile => ({
 	  bestGlobalRank: 0,
 	  bestOverallRank: 0,
   audioEnabled: true,
+  themePreference: 'default',
   communityJoinRecorded: false,
   communityJoinRewardClaimed: false,
   unlockedFlairs: [],

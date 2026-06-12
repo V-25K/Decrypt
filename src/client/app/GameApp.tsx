@@ -76,6 +76,7 @@ import {
   challengeTypeMetadata,
   type ChallengeType,
   type EndlessSort,
+  type ThemePreference,
 } from '../../shared/game';
 import type {
   AppScreen,
@@ -120,8 +121,10 @@ import {
   migrateSessionStorageForUser,
   persistCorrectGuessIndices,
   persistOutcomeState,
+  persistThemePreference,
   readEntrypointScreen,
   readOutcomeState,
+  readThemePreference,
   setExpandedChallengeModeIntent,
   setExpandedScreenIntent,
 } from './game-storage';
@@ -558,6 +561,10 @@ export const GameApp = () => {
     useState<HeartShopReturnIntent | null>(null);
   const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => isSfxEnabled());
   const [audioPreferenceBusy, setAudioPreferenceBusy] = useState(false);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    readThemePreference()
+  );
+  const [themePreferenceBusy, setThemePreferenceBusy] = useState(false);
   const [questStatus, setQuestStatus] = useState<QuestStatus | null>(null);
   const [questUiState, dispatchQuestUi] = useReducer(
     questUiReducer,
@@ -762,6 +769,8 @@ export const GameApp = () => {
 	      return;
 	    }
 	    setSfxEnabled(persistSfxEnabled(profile.audioEnabled));
+	    setThemePreference(profile.themePreference);
+	    persistThemePreference(profile.themePreference);
 	  }, [profile]);
 
   useEffect(() => {
@@ -1568,8 +1577,25 @@ export const GameApp = () => {
 
   useVisibilityMute();
 
+  // Hearts regenerate on a wall-clock schedule, so any visible countdown
+  // (hub header "+1 in mm:ss", infinite-hearts remaining) must tick even
+  // outside an active challenge — and heart math anywhere (e.g. retry's
+  // lives check on the result screen) must not run on a frozen clock.
+  const heartClockPending = profile
+    ? (() => {
+        const idleHeartState = getHeartState({
+          hearts: profile.hearts,
+          infiniteHeartsExpiryTs: profile.infiniteHeartsExpiryTs,
+          lastHeartRefillTs: profile.lastHeartRefillTs,
+          nowTs: headerNowTs,
+        });
+        return idleHeartState.heartsNotFull || idleHeartState.hasInfiniteHearts;
+      })()
+    : false;
   useHeaderClock({
-    enabled: activeScreen === 'challenge' && !isComplete && !isGameOver,
+    enabled:
+      (activeScreen === 'challenge' && !isComplete && !isGameOver) ||
+      heartClockPending,
     onTick: (headerNowTs) =>
       dispatchLayoutTiming({ type: 'setHeaderNowTs', headerNowTs }),
   });
@@ -2539,6 +2565,34 @@ export const GameApp = () => {
     }
   };
 
+  const handleThemeSelect = async (nextTheme: ThemePreference) => {
+    if (!profile || themePreferenceBusy || profile.themePreference === nextTheme) {
+      return;
+    }
+    const previousTheme = profile.themePreference;
+    setThemePreferenceBusy(true);
+    setThemePreference(nextTheme);
+    persistThemePreference(nextTheme);
+    setProfile((previous) =>
+      previous ? { ...previous, themePreference: nextTheme } : previous
+    );
+    try {
+      const result = await trpc.profile.setThemePreference.mutate({
+        theme: nextTheme,
+      });
+      setProfile(result.profile);
+    } catch (_error) {
+      setProfile((previous) =>
+        previous ? { ...previous, themePreference: previousTheme } : previous
+      );
+      setThemePreference(previousTheme);
+      persistThemePreference(previousTheme);
+      showToast('Unable to save theme preference.');
+    } finally {
+      setThemePreferenceBusy(false);
+    }
+  };
+
   const handleHomePlay = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (homeTab === 'endless') {
       void loadModeAndOpenChallenge('endless', event);
@@ -2845,7 +2899,14 @@ export const GameApp = () => {
 	      bootstrapError?.toLowerCase().includes('caught up') === true;
 	    const needsRecoveryActions = isUnavailablePuzzle || isCaughtUpBootstrap;
 		    return (
-		      <div className="theme-app result-backdrop app-surface-subtle relative flex h-full items-center justify-center overflow-hidden p-4">
+		      <div
+		        className={cn(
+		          'theme-app relative flex h-full items-center justify-center overflow-hidden p-4',
+		          themePreference === 'minimal'
+		            ? 'theme-minimal'
+		            : 'result-backdrop app-surface-subtle'
+		        )}
+		      >
 		        <div className="app-surface-strong app-border relative z-10 w-full max-w-[360px] rounded-2xl border px-5 py-6 text-center shadow-[0_18px_44px_rgba(0,0,0,0.42)]">
 	          {isUnavailablePuzzle && (
 	            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-xl border border-black/30 bg-black/10">
@@ -2976,6 +3037,7 @@ export const GameApp = () => {
     showSuccessOverlay,
     isDailyComplete,
   } = appViewState;
+  const minimalTheme = themePreference === 'minimal';
   const showVirtualKeyboard =
     isChallengeScreen &&
     deviceTier === 'mobile' &&
@@ -3260,20 +3322,25 @@ export const GameApp = () => {
       onKeyDownCapture={handleButtonKeyDownCapture}
       className={cn(
         'theme-app relative h-full w-full overflow-hidden',
-        showChallengeBackdrop ? 'challenge-backdrop' : '',
-        showChallengeBackdrop ? challengeBackgroundClass : '',
-        isHubScreen ? 'home-backdrop' : '',
-        isHubScreen ? 'hub-live' : '',
-        isHomeScreen ? 'home-live' : '',
-        showOutcomeOverlay ? 'result-backdrop' : '',
-        showOutcomeOverlay ? 'app-surface-subtle' : ''
+        // Minimal theme: flat solid background everywhere — none of the
+        // photo backdrops or glass-panel variable overrides apply.
+        minimalTheme ? 'theme-minimal' : '',
+        !minimalTheme && showChallengeBackdrop ? 'challenge-backdrop' : '',
+        !minimalTheme && showChallengeBackdrop ? challengeBackgroundClass : '',
+        !minimalTheme && isHubScreen ? 'home-backdrop' : '',
+        !minimalTheme && isHubScreen ? 'hub-live' : '',
+        !minimalTheme && isHomeScreen ? 'home-live' : '',
+        !minimalTheme && showOutcomeOverlay ? 'result-backdrop' : '',
+        !minimalTheme && showOutcomeOverlay ? 'app-surface-subtle' : ''
       )}
     >
       <div
         className={cn(
           'flex h-full w-full justify-center overflow-hidden',
           isChallengeScreen ? 'challenge-layer' : '',
-          isChallengeScreen && !showOutcomeOverlay ? 'challenge-live' : ''
+          isChallengeScreen && !showOutcomeOverlay && !minimalTheme
+            ? 'challenge-live'
+            : ''
         )}
       >
         <div
@@ -3841,7 +3908,10 @@ export const GameApp = () => {
           settingsCardRef={settingsCardRef}
           audioEnabled={sfxEnabled}
           audioBusy={audioPreferenceBusy}
+          themePreference={themePreference}
+          themeBusy={themePreferenceBusy}
           onToggleAudio={handleAudioToggle}
+          onSelectTheme={(theme) => void handleThemeSelect(theme)}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
@@ -3868,6 +3938,9 @@ export const GameApp = () => {
       {heartPurchaseDialogOpen && profile && (
         <HeartPurchaseDialog
           coins={profile.coins}
+          hearts={profile.hearts}
+          infiniteHeartsExpiryTs={profile.infiniteHeartsExpiryTs}
+          lastHeartRefillTs={profile.lastHeartRefillTs}
           busy={heartPurchaseBusy}
           limitReached={coinHeartLimitReached}
           purchasesToday={heartPurchaseLimitStatus?.purchasesToday ?? 0}
@@ -3879,7 +3952,11 @@ export const GameApp = () => {
           onRefill={() => void handleCoinHeartRefill()}
           onTopUp={() => void handleCoinHeartTopUp()}
           onOpenShopPackages={openHeartShopPackages}
-          onCancel={() => setHeartPurchaseDialogOpen(false)}
+          onResume={() => setHeartPurchaseDialogOpen(false)}
+          onGoHome={() => {
+            setHeartPurchaseDialogOpen(false);
+            openHome();
+          }}
         />
       )}
     </div>
