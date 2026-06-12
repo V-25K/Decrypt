@@ -74,6 +74,12 @@ body,
   flex-shrink: 0;
 }
 
+/* Empty heart slots: dimmed-out sprite (header lives row, heart dialog). */
+.hud-heart-empty {
+  filter: grayscale(1) brightness(0.75);
+  opacity: 0.35;
+}
+
 .ui-sprite {
   image-rendering: pixelated;
   flex-shrink: 0;
@@ -420,7 +426,41 @@ body,
   --app-surface-subtle: rgba(70, 92, 136, 0.12);
   --outcome-positive: #1e7a3c;
   --outcome-negative: #b3263c;
+  --minimal-pattern-ink: rgba(17, 17, 17, 0.05);
   background: var(--app-bg);
+}
+
+/* Home and result screens get a faint repeating cipher motif (tile, key,
+   lock) so the flat background doesn't feel empty. The SVG is a mask, so
+   the pattern is painted in --minimal-pattern-ink and re-tints itself for
+   light/dark automatically. */
+.theme-app.theme-minimal.minimal-pattern::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--minimal-pattern-ink);
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round'%3E%3Crect x='10' y='10' width='20' height='20' rx='4'/%3E%3Cpath d='M15 25h10'/%3E%3Ccircle cx='65' cy='19' r='5'/%3E%3Cpath d='M69 23l13 13'/%3E%3Cpath d='M76 30l-3.5 3.5'/%3E%3Cpath d='M82 36l-3.5 3.5'/%3E%3Crect x='58' y='62' width='18' height='13' rx='2'/%3E%3Cpath d='M61.5 62v-4.5a5.5 5.5 0 0 1 11 0V62'/%3E%3Crect x='14' y='58' width='20' height='20' rx='4'/%3E%3Cpath d='M19 73h10'/%3E%3Cpath d='M24 64v4'/%3E%3C/g%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round'%3E%3Crect x='10' y='10' width='20' height='20' rx='4'/%3E%3Cpath d='M15 25h10'/%3E%3Ccircle cx='65' cy='19' r='5'/%3E%3Cpath d='M69 23l13 13'/%3E%3Cpath d='M76 30l-3.5 3.5'/%3E%3Cpath d='M82 36l-3.5 3.5'/%3E%3Crect x='58' y='62' width='18' height='13' rx='2'/%3E%3Cpath d='M61.5 62v-4.5a5.5 5.5 0 0 1 11 0V62'/%3E%3Crect x='14' y='58' width='20' height='20' rx='4'/%3E%3Cpath d='M19 73h10'/%3E%3Cpath d='M24 64v4'/%3E%3C/g%3E%3C/svg%3E");
+  -webkit-mask-size: 96px 96px;
+  mask-size: 96px 96px;
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+}
+
+/* Challenge grid: borderless tiles, matching the default theme's look. */
+.theme-app.theme-minimal .tile-btn {
+  border-color: transparent;
+  border-bottom-width: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.theme-app.theme-minimal .tile-btn:hover:not(:disabled),
+.theme-app.theme-minimal .tile-btn:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
 }
 
 /* The result screen was styled for the photo backdrop: a full-screen dim
@@ -478,13 +518,21 @@ body,
     --tile-locked-text: rgba(243, 245, 246, 0.45);
     --outcome-positive: #6ee7b7;
     --outcome-negative: #fda4af;
+    --minimal-pattern-ink: rgba(243, 245, 246, 0.06);
   }
 
-  /* The 3D button under-shadows are tuned for the cream page (beige and
-     pastel hards); on the dark flat background they read as light halos. */
+  /* The 3D under-shadow must stay visible against both the button and the
+     near-black page, so dark minimal uses a light rim instead of black. */
   .theme-app.theme-minimal .btn-3d {
-    --btn-shadow-hard: rgba(0, 0, 0, 0.62);
-    --btn-shadow-soft: rgba(0, 0, 0, 0.34);
+    --btn-shadow-hard: rgba(166, 188, 199, 0.55);
+    --btn-shadow-soft: rgba(0, 0, 0, 0.4);
+  }
+
+  /* Dimmed (empty) hearts go nearly invisible on the dark background with
+     the default darkening filter; ghost them lighter instead. */
+  .theme-app.theme-minimal .hud-heart-empty {
+    filter: grayscale(1) brightness(2.1);
+    opacity: 0.4;
   }
 }
 

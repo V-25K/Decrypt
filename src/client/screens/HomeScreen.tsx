@@ -28,6 +28,8 @@ type HomeScreenProps = {
   onEndlessSortChange: (sort: EndlessSort) => void;
   endlessCaughtUpMessage: string | null;
   onEndlessCaughtUpHome: () => void;
+  dailyCaughtUpMessage: string | null;
+  onDailyCaughtUpEndless: () => void;
 };
 
 const parseEndlessCategoryFilter = (value: string): ChallengeType | null => {
@@ -72,6 +74,8 @@ export const HomeScreen = ({
   onEndlessSortChange,
   endlessCaughtUpMessage,
   onEndlessCaughtUpHome,
+  dailyCaughtUpMessage,
+  onDailyCaughtUpEndless,
 }: HomeScreenProps) => (
   <section className="flex min-h-0 flex-1 flex-col" data-testid="home-screen">
     <main className="flex min-h-0 flex-1 flex-col px-3 py-3">
@@ -119,6 +123,35 @@ export const HomeScreen = ({
             className="home-stage-panel panel-clear rounded-xl px-4 py-4 text-center"
             data-testid="home-daily-panel"
           >
+            {dailyCaughtUpMessage && (
+              <section
+                className="app-surface-subtle app-border app-text mb-3 rounded-xl border px-3 py-3 text-center"
+                data-testid="home-daily-caught-up"
+              >
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/35 bg-black/25">
+                  <img
+                    src="/ui_key.png"
+                    alt=""
+                    loading="eager"
+                    className="ui-sprite h-8 w-8"
+                  />
+                </div>
+                <p className="mt-2 text-[13px] font-black uppercase leading-snug">
+                  All clear
+                </p>
+                <p className="app-text-muted mt-1 text-[11px] font-extrabold leading-snug">
+                  {dailyCaughtUpMessage}
+                </p>
+                <button
+                  type="button"
+                  className="btn-3d btn-primary mt-3 w-full rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+                  onClick={onDailyCaughtUpEndless}
+                  data-testid="home-daily-caught-up-endless"
+                >
+                  Try Endless
+                </button>
+              </section>
+            )}
             <p className="app-text-muted mt-1 text-xs font-semibold uppercase">
               Daily Cipher #{formattedLevel}
             </p>

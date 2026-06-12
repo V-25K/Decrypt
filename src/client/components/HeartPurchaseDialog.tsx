@@ -95,9 +95,7 @@ export const HeartPurchaseDialog = ({
                 decorative
                 className={cn(
                   'h-5 w-5',
-                  hasInfiniteHearts || index < currentLives
-                    ? ''
-                    : 'grayscale brightness-75 opacity-35'
+                  hasInfiniteHearts || index < currentLives ? '' : 'hud-heart-empty'
                 )}
               />
             ))}

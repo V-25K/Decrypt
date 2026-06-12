@@ -10,25 +10,9 @@ body {
   overflow: hidden;
 }
 
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-}
-
-body.boot-bg-challenge::before {
-  background:
-    linear-gradient(rgba(0, 0, 0, 0.69), rgba(0, 0, 0, 0.69)),
-    url('/backgrounds/img1.webp') center / cover no-repeat;
-}
-
-body.boot-bg-home::before {
-  background:
-    linear-gradient(rgba(8, 12, 16, 0.26), rgba(10, 18, 11, 0.44)),
-    radial-gradient(circle at 50% 32%, rgba(255, 169, 77, 0.09), transparent 42%),
-    radial-gradient(circle at 50% 58%, rgba(150, 255, 173, 0.1), rgba(7, 12, 8, 0.16)),
-    url('/backgrounds/home.webp') center / cover no-repeat;
-}
+/* Boot stays a solid dark base; the photo backdrops only appear once the
+   app itself renders them. Painting an image here made loading flash
+   image-then-solid. */
 
 #root {
   position: relative;

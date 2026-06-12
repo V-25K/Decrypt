@@ -580,6 +580,38 @@ describe('Game updates', { timeout: 15000 }, () => {
     expect(showToastMock).toHaveBeenCalledWith('Endless mode is coming soon.');
   });
 
+  it('shows the daily caught-up panel on home instead of toast-only', async () => {
+    primeMocks();
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="home-play-button"]')));
+
+    // Daily pool runs dry on the next load attempt.
+    loadLevelQuery.mockRejectedValueOnce(new Error("You're all caught up."));
+
+    document
+      .querySelector('[data-testid="home-play-button"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="home-daily-caught-up"]'))
+    );
+    expect(document.querySelector('[data-testid="home-daily-panel"]')).toBeTruthy();
+    expect(document.body.textContent ?? '').toContain('All clear');
+
+    // The panel offers switching the challenge type right there.
+    document
+      .querySelector('[data-testid="home-daily-caught-up-endless"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="home-endless-panel"]'))
+    );
+    expect(
+      document.querySelector('[data-testid="home-daily-caught-up"]')
+    ).toBeFalsy();
+  });
+
   it('remembers the settings audio toggle state', async () => {
     primeMocks();
 

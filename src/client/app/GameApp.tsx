@@ -472,6 +472,8 @@ export const GameApp = () => {
   const [endlessSort, setEndlessSort] = useState<EndlessSort>('random');
   const [endlessCaughtUpMessage, setEndlessCaughtUpMessage] =
     useState<string | null>(null);
+  const [dailyCaughtUpMessage, setDailyCaughtUpMessage] =
+    useState<string | null>(null);
   const [challengeSession, dispatchChallengeSession] = useReducer(
     challengeSessionReducer,
     initialChallengeSessionState
@@ -1208,6 +1210,8 @@ export const GameApp = () => {
       });
       if (nextMode === 'endless') {
         setEndlessCaughtUpMessage(null);
+      } else {
+        setDailyCaughtUpMessage(null);
       }
       dispatchAppRuntime({ type: 'setBootstrapError', update: null });
       patchChallengeSession({
@@ -2452,17 +2456,25 @@ export const GameApp = () => {
           message.toLowerCase().includes('no endless challenges'))
       ) {
         await refreshBootstrapState();
+        // Land on the home screen in a caught-up state for whichever mode
+        // ran dry, so the player can switch challenge type right there —
+        // a toast alone reads like a broken Next button.
         if (nextMode === 'endless') {
           setEndlessCaughtUpMessage(
             buildEndlessCaughtUpMessage(endlessCategoryFilter)
           );
           setHomeTab('endless');
-          setActiveScreen('home');
+        } else {
+          setDailyCaughtUpMessage(
+            'You solved every Daily cipher available right now. New ciphers land daily — or switch to Endless.'
+          );
+          setHomeTab('daily');
         }
+        setActiveScreen('home');
         showToast(
           nextMode === 'endless'
             ? buildEndlessCaughtUpMessage(endlessCategoryFilter)
-            : "You're all caught up."
+            : "You're all caught up on Daily."
         );
         return;
       }
@@ -2535,6 +2547,11 @@ export const GameApp = () => {
   const handleEndlessCaughtUpHome = () => {
     setEndlessCaughtUpMessage(null);
     setHomeTab('daily');
+  };
+
+  const handleDailyCaughtUpEndless = () => {
+    setDailyCaughtUpMessage(null);
+    handleHomeTabSelect('endless');
   };
 
   const handleAudioToggle = async () => {
@@ -3323,8 +3340,13 @@ export const GameApp = () => {
       className={cn(
         'theme-app relative h-full w-full overflow-hidden',
         // Minimal theme: flat solid background everywhere — none of the
-        // photo backdrops or glass-panel variable overrides apply.
+        // photo backdrops or glass-panel variable overrides apply. Home and
+        // result get a faint theme-tinted cipher pattern so the flat
+        // background doesn't feel empty.
         minimalTheme ? 'theme-minimal' : '',
+        minimalTheme && (isHomeScreen || showOutcomeOverlay)
+          ? 'minimal-pattern'
+          : '',
         !minimalTheme && showChallengeBackdrop ? 'challenge-backdrop' : '',
         !minimalTheme && showChallengeBackdrop ? challengeBackgroundClass : '',
         !minimalTheme && isHubScreen ? 'home-backdrop' : '',
@@ -3337,6 +3359,8 @@ export const GameApp = () => {
       <div
         className={cn(
           'flex h-full w-full justify-center overflow-hidden',
+          // Keeps all content above the minimal-pattern ::before layer.
+          minimalTheme ? 'relative z-[1]' : '',
           isChallengeScreen ? 'challenge-layer' : '',
           isChallengeScreen && !showOutcomeOverlay && !minimalTheme
             ? 'challenge-live'
@@ -3402,7 +3426,7 @@ export const GameApp = () => {
                                   decorative
                                   className={cn(
                                     'h-[clamp(18px,5.2vw,22px)] w-[clamp(18px,5.2vw,22px)]',
-                                    index < currentLives ? '' : 'grayscale brightness-75 opacity-35'
+                                    index < currentLives ? '' : 'hud-heart-empty'
                                   )}
                                 />
 	                            </span>
@@ -3776,6 +3800,8 @@ export const GameApp = () => {
               onEndlessSortChange={handleEndlessSortChange}
               endlessCaughtUpMessage={endlessCaughtUpMessage}
               onEndlessCaughtUpHome={handleEndlessCaughtUpHome}
+              dailyCaughtUpMessage={dailyCaughtUpMessage}
+              onDailyCaughtUpEndless={handleDailyCaughtUpEndless}
             />
           )}
 
