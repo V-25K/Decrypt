@@ -1423,6 +1423,10 @@ export const GameApp = () => {
         if (cancelled) {
           return;
         }
+        const autoClaimedCoins = bootstrap.autoClaimedDailyRewards?.coins ?? 0;
+        if (autoClaimedCoins > 0) {
+          showToast(`Claimed your unclaimed daily rewards: +${autoClaimedCoins} coins`);
+        }
         cancelDeferredNonCritical = scheduleNonCriticalWarmup(() => {
           if (cancelled) {
             return;
@@ -3340,11 +3344,11 @@ export const GameApp = () => {
       className={cn(
         'theme-app relative h-full w-full overflow-hidden',
         // Minimal theme: flat solid background everywhere — none of the
-        // photo backdrops or glass-panel variable overrides apply. Home and
-        // result get a faint theme-tinted cipher pattern so the flat
-        // background doesn't feel empty.
+        // photo backdrops or glass-panel variable overrides apply. Home,
+        // challenge, and result get a faint theme-tinted cipher pattern so the
+        // flat background doesn't feel empty.
         minimalTheme ? 'theme-minimal' : '',
-        minimalTheme && (isHomeScreen || showOutcomeOverlay)
+        minimalTheme && (isHomeScreen || isChallengeScreen || showOutcomeOverlay)
           ? 'minimal-pattern'
           : '',
         !minimalTheme && showChallengeBackdrop ? 'challenge-backdrop' : '',

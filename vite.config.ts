@@ -25,6 +25,7 @@ const manualChunks = (id: string): string | undefined => {
   if (
     normalizedId.endsWith('/src/client/app/game-storage.ts') ||
     normalizedId.endsWith('/src/client/app/challenge-backgrounds.ts') ||
+    normalizedId.endsWith('/src/client/app/level-number.ts') ||
     normalizedId.endsWith('/src/shared/game.ts')
   ) {
     return 'preview-lite';

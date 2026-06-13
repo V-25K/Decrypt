@@ -72,3 +72,103 @@ body {
     animation: none;
   }
 }
+
+/* ---- Inline feed-preview loading skeleton. Used only by preview.html (the
+   classes are preview-prefixed, so this block is inert for the other entry
+   pages, which keep the boot glass above). The markup exists twice — static
+   in preview.html so it paints before any JS, and in renderSkeleton() in
+   preview.ts — and a parity test in preview.test.ts keeps them identical. */
+
+.preview-skeleton {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 20px 12px 18px;
+}
+
+.preview-skeleton-title,
+.preview-skeleton-stats,
+.preview-skeleton-tile,
+.preview-skeleton-cta {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.preview-skeleton-title {
+  width: min(72%, 340px);
+  height: 20px;
+}
+
+.preview-skeleton-stats {
+  width: min(60%, 250px);
+  height: 11px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.preview-skeleton-puzzle {
+  width: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.preview-skeleton-line {
+  display: flex;
+  gap: 6px;
+}
+
+.preview-skeleton-tile {
+  width: 22px;
+  height: 30px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.preview-skeleton-cta {
+  width: 186px;
+  height: 50px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* One light sweep across the whole skeleton — transform-only, cheap. */
+.preview-skeleton::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.055) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-120%);
+  animation: preview-skeleton-sweep 1.9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes preview-skeleton-sweep {
+  to {
+    transform: translateX(340%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-skeleton::after {
+    animation: none;
+  }
+}

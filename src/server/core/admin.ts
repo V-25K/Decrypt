@@ -721,7 +721,6 @@ export const applyChallengeEdit = async (params: {
   levelId: string;
   text: string;
   author: string;
-  tier: DifficultyTier;
 }): Promise<{ success: boolean; message: string }> => {
   const puzzle = await getPuzzlePrivate(params.levelId);
   if (!puzzle) {
@@ -741,22 +740,15 @@ export const applyChallengeEdit = async (params: {
       message: `Invalid author. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`,
     };
   }
+  // The difficulty tier is not editable — an edit always rebuilds the board
+  // at its existing tier. Only the line and author can change, and the line
+  // stays editable even after the board has plays (the rebuild is still
+  // validated and solver-checked, so it can never become unfair).
+  const tier = difficultyToTier(puzzle.difficulty);
   const text = sanitizePhrase(params.text);
   const textChanged = sanitizePhrase(puzzle.targetText) !== text;
-  const tierChanged = difficultyToTier(puzzle.difficulty) !== params.tier;
 
-  if (textChanged || tierChanged) {
-    const engagement = await getLevelEngagement(params.levelId);
-    if (engagement.plays > 0) {
-      return {
-        success: false,
-        message:
-          'Players already solved this board, so the text and tier are locked. You can still fix the author credit, or remove the post and inject a new challenge.',
-      };
-    }
-  }
-
-  if (!textChanged && !tierChanged) {
+  if (!textChanged) {
     if (author === puzzle.author) {
       return { success: true, message: 'No changes to save.' };
     }
@@ -772,19 +764,17 @@ export const applyChallengeEdit = async (params: {
   }
 
   const newSignature = normalizeContent(text);
-  if (textChanged) {
-    const owner = await getUsedSignatureOwner(newSignature);
-    if (owner && owner !== params.levelId) {
-      return {
-        success: false,
-        message: 'That quote is already used by another challenge. Try a different line.',
-      };
-    }
+  const owner = await getUsedSignatureOwner(newSignature);
+  if (owner && owner !== params.levelId) {
+    return {
+      success: false,
+      message: 'That quote is already used by another challenge. Try a different line.',
+    };
   }
 
   const layout = await getCachedFittedLayout({
     text,
-    tier: params.tier,
+    tier,
     author,
     challengeType: puzzle.challengeType,
   });
@@ -801,7 +791,7 @@ export const applyChallengeEdit = async (params: {
       success: false,
       message:
         feasible.length > 0
-          ? `${tierDisplayName(params.tier)} doesn't work for this line. Available: ${feasible.join(', ')}.`
+          ? `${tierDisplayName(tier)} doesn't work for this line. It fits: ${feasible.join(', ')}. To change difficulty, remove the post and inject a new challenge.`
           : report.tiers.find((entry) => entry.reason)?.reason ??
             "This line can't become a puzzle yet. Try another quote.",
     };
@@ -833,7 +823,7 @@ export const applyChallengeEdit = async (params: {
       message: validation.reasons[0] ?? 'The edited board could not be finished. Try again.',
     };
   }
-  const band = solverBandForTier(params.tier);
+  const band = solverBandForTier(tier);
   const solver = runDummySolver({
     puzzle: puzzlePrivate,
     revealedIndices: puzzlePrivate.prefilledIndices,
@@ -845,7 +835,7 @@ export const applyChallengeEdit = async (params: {
   if (!solver.solvable || solver.blindGuessRequired || solver.solvedRatio < band.floor) {
     return {
       success: false,
-      message: `The edited board doesn’t play fairly at ${tierDisplayName(params.tier)}. Try another tier or line.`,
+      message: `The edited line doesn’t play fairly at ${tierDisplayName(tier)}. Try a different line.`,
     };
   }
   await replacePuzzleDataInPlace({
@@ -858,7 +848,7 @@ export const applyChallengeEdit = async (params: {
   });
   return {
     success: true,
-    message: `${tierDisplayName(params.tier)} challenge updated.`,
+    message: `Challenge line updated (${tierDisplayName(tier)}).`,
   };
 };
 

@@ -85,6 +85,7 @@ import {
   touchQualifiedLevelPlay,
 } from './engagement';
 import {
+  autoClaimMissedDailyRewards,
   updateQuestProgressOnCompletion,
   updateQuestProgressOnCoinSpend,
   updateQuestProgressOnShare,
@@ -500,6 +501,14 @@ const getNewlyUnlockedChainIds = (params: {
 export const bootstrapGame = async () => {
     const userId = assertUserId();
     await registerKnownUser(userId);
+    const todayDateKey = formatDateKey(new Date());
+    // Claim any daily rewards the player completed but never claimed before the
+    // date rolled over, so they aren't silently lost. Runs before the profile
+    // fetch below so the returned coins/inventory already include the grants.
+    const autoClaimedDailyRewards = await autoClaimMissedDailyRewards(
+      userId,
+      todayDateKey
+    );
     const [profile, inventory, dailyPointer, isModerator] = await Promise.all([
       getUserProfile(userId),
       getInventory(userId),
@@ -520,12 +529,16 @@ export const bootstrapGame = async () => {
       subredditName: context.subredditName ?? null,
       postId: context.postId ?? null,
       currentDailyLevelId: dailyPointer,
-      todayDateKey: formatDateKey(new Date()),
+      todayDateKey,
       profile,
 	      inventory,
 	      endlessCatalog,
 	      isModerator,
       communityNotifications,
+      autoClaimedDailyRewards: {
+        coins: autoClaimedDailyRewards.rewardCoins,
+        questIds: autoClaimedDailyRewards.autoClaimedQuestIds,
+      },
 		};
 };
 

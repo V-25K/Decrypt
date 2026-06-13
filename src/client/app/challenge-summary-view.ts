@@ -6,7 +6,10 @@ import {
   formatChallengeType,
   formatDifficultyLabel,
 } from './game-formatters';
+import { formatLevelNumber } from './level-number';
 import type { Puzzle } from './types';
+
+export { formatLevelNumber } from './level-number';
 
 export type ChallengeSummaryView = {
   backgroundAsset: string;
@@ -15,14 +18,6 @@ export type ChallengeSummaryView = {
   challengeTypeLabel: string;
   difficultyLabel: string;
   formattedLevel: string;
-};
-
-export const formatLevelNumber = (rawLevelId: string): string => {
-  const match = rawLevelId.match(/(\d+)$/);
-  if (!match || !match[1]) {
-    return rawLevelId;
-  }
-  return `${Number(match[1])}`;
 };
 
 export const getChallengeSummaryView = ({

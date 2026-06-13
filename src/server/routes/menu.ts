@@ -171,36 +171,38 @@ menu.post('/mod-edit-challenge', async (c) => {
     return c.json<UiResponse>({ showToast: prepared.error }, 200);
   }
   const edit = prepared.context;
-  const tierOptions = (['warmup', 'medium', 'hard', 'expert'] as const).map(
-    (tier) => ({ label: tierDisplayName(tier), value: tier })
-  );
   return c.json<UiResponse>(
     {
       showForm: {
         name: 'mod_edit_challenge_form',
         form: {
           title: 'Edit Challenge',
-          description: edit.boardLocked
-            ? `${edit.plays} player(s) already played this board, so the text and tier are locked. You can still fix the author credit.`
-            : 'Change the text, author, or tier. The board is rebuilt and checked before anything is saved.',
+          description:
+            edit.plays > 0
+              ? `Edit the line or author. Heads up: ${edit.plays} player(s) already played this board, so saving a new line rebuilds it (at the same difficulty). The Challenge ID and difficulty can't be changed.`
+              : "Edit the line or author. The board is rebuilt and checked at the same difficulty before saving. The Challenge ID and difficulty can't be changed.",
           acceptLabel: 'Save Changes',
           fields: [
             {
               type: 'string',
               name: 'levelId',
-              label: 'Challenge ID',
+              label: 'Challenge ID (fixed)',
               defaultValue: edit.levelId,
+              disabled: true,
+            },
+            {
+              type: 'string',
+              name: 'tierDisplay',
+              label: 'Difficulty (fixed)',
+              defaultValue: tierDisplayName(edit.tier),
               disabled: true,
             },
             {
               type: 'paragraph',
               name: 'text',
-              label: 'Challenge text',
+              label: 'Challenge line',
+              required: true,
               defaultValue: edit.text,
-              disabled: edit.boardLocked,
-              ...(edit.boardLocked
-                ? { helpText: 'Locked: players already solved this board.' }
-                : {}),
             },
             {
               type: 'string',
@@ -208,19 +210,6 @@ menu.post('/mod-edit-challenge', async (c) => {
               label: 'Author',
               required: true,
               defaultValue: edit.author,
-            },
-            {
-              type: 'select',
-              name: 'difficulty',
-              label: 'Tier',
-              required: true,
-              multiSelect: false,
-              defaultValue: [edit.tier],
-              options: tierOptions,
-              disabled: edit.boardLocked,
-              ...(edit.boardLocked
-                ? { helpText: 'Locked: players already solved this board.' }
-                : {}),
             },
           ],
         },

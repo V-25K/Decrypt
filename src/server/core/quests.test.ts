@@ -3,6 +3,7 @@ import type { Inventory, QuestProgress, UserProfile } from '../../shared/game';
 
 const {
   hGetMock,
+  hGetAllMock,
   hSetNXMock,
   hDelMock,
   getDailyQuestProgressMock,
@@ -15,6 +16,7 @@ const {
   saveUserProfileMock,
 } = vi.hoisted(() => ({
   hGetMock: vi.fn(),
+  hGetAllMock: vi.fn(),
   hSetNXMock: vi.fn(),
   hDelMock: vi.fn(),
   getDailyQuestProgressMock: vi.fn(),
@@ -32,7 +34,7 @@ vi.mock('@devvit/web/server', () => ({
     hGet: hGetMock,
     hSetNX: hSetNXMock,
     hDel: hDelMock,
-    hGetAll: vi.fn(),
+    hGetAll: hGetAllMock,
     hLen: vi.fn(async () => 0),
     incrBy: vi.fn(async () => 1),
     mGet: vi.fn(async (keys: string[]) => keys.map(() => null)),
@@ -58,7 +60,12 @@ vi.mock('./keys', () => ({
   keyUserQuestLifetime: (userId: string) => `lifetime:${userId}`,
 }));
 
-import { claimQuest, updateQuestProgressOnCompletion } from './quests';
+import {
+  autoClaimDailyQuestsForDate,
+  autoClaimMissedDailyRewards,
+  claimQuest,
+  updateQuestProgressOnCompletion,
+} from './quests';
 
 const progressFixture = (overrides?: Partial<QuestProgress>): QuestProgress => ({
   dailyPlayCount: 0,
@@ -122,6 +129,7 @@ const inventoryFixture = (): Inventory => ({
 
 afterEach(() => {
   hGetMock.mockReset();
+  hGetAllMock.mockReset();
   hSetNXMock.mockReset();
   hDelMock.mockReset();
   getDailyQuestProgressMock.mockReset();
@@ -235,5 +243,102 @@ describe('updateQuestProgressOnCompletion', () => {
         lifetimeFlawless: 1,
       })
     );
+  });
+});
+
+describe('autoClaimDailyQuestsForDate', () => {
+  it('claims completed-but-unclaimed daily quests and grants their coins', async () => {
+    // daily_play_1 is complete (dailyPlayCount >= 1) and nothing is claimed yet.
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture({ dailyPlayCount: 1 }));
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getInventoryMock.mockResolvedValue(inventoryFixture());
+    hGetAllMock.mockResolvedValue({});
+    hSetNXMock.mockResolvedValue(1);
+
+    const result = await autoClaimDailyQuestsForDate({
+      userId: 'u1',
+      dateKey: '2026-06-11',
+    });
+
+    expect(result.autoClaimedQuestIds).toEqual(['daily_play_1']);
+    expect(result.rewardCoins).toBe(10);
+    expect(saveUserProfileMock).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ coins: 110 })
+    );
+  });
+
+  it('skips daily quests that were already claimed', async () => {
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture({ dailyPlayCount: 1 }));
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getInventoryMock.mockResolvedValue(inventoryFixture());
+    hGetAllMock.mockResolvedValue({ 'claim:daily_play_1': '1' });
+
+    const result = await autoClaimDailyQuestsForDate({
+      userId: 'u1',
+      dateKey: '2026-06-11',
+    });
+
+    expect(result.autoClaimedQuestIds).toEqual([]);
+    expect(result.rewardCoins).toBe(0);
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+  });
+
+  it('skips daily quests that are not yet complete', async () => {
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture());
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getInventoryMock.mockResolvedValue(inventoryFixture());
+    hGetAllMock.mockResolvedValue({});
+
+    const result = await autoClaimDailyQuestsForDate({
+      userId: 'u1',
+      dateKey: '2026-06-11',
+    });
+
+    expect(result.autoClaimedQuestIds).toEqual([]);
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('autoClaimMissedDailyRewards', () => {
+  it('sweeps the last active day when it predates today', async () => {
+    getUserProfileMock.mockResolvedValue(
+      profileFixture({ lastPlayedDateKey: '2026-06-11' })
+    );
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture({ dailyPlayCount: 1 }));
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+    getInventoryMock.mockResolvedValue(inventoryFixture());
+    hGetAllMock.mockResolvedValue({});
+    hSetNXMock.mockResolvedValue(1);
+
+    const result = await autoClaimMissedDailyRewards('u1', '2026-06-12');
+
+    expect(result.autoClaimedQuestIds).toEqual(['daily_play_1']);
+    expect(result.rewardCoins).toBe(10);
+    expect(getDailyQuestProgressMock).toHaveBeenCalledWith('u1', '2026-06-11');
+  });
+
+  it('does nothing when the last active day is today', async () => {
+    getUserProfileMock.mockResolvedValue(
+      profileFixture({ lastPlayedDateKey: '2026-06-12' })
+    );
+
+    const result = await autoClaimMissedDailyRewards('u1', '2026-06-12');
+
+    expect(result.autoClaimedQuestIds).toEqual([]);
+    expect(result.rewardCoins).toBe(0);
+    expect(getDailyQuestProgressMock).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the profile has no recorded play day', async () => {
+    getUserProfileMock.mockResolvedValue(profileFixture({ lastPlayedDateKey: '' }));
+
+    const result = await autoClaimMissedDailyRewards('u1', '2026-06-12');
+
+    expect(result.autoClaimedQuestIds).toEqual([]);
+    expect(getDailyQuestProgressMock).not.toHaveBeenCalled();
   });
 });

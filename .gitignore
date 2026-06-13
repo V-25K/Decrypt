@@ -42,6 +42,7 @@ tmp/
 progress.md
 .agents/
 skills-lock.json
+.playwright-mcp
 
 # Inside tools/: keep the versioned project tsconfigs, ignore local-only helpers
 # (Devvit MCP wrapper / docs cache used by Codex + Claude, plus the audit driver).

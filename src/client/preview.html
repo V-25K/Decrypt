@@ -7,7 +7,6 @@
       content="width=device-width, initial-scale=1.0"
     />
     <link rel="preload" as="image" href="/backgrounds/img1.webp" type="image/webp" fetchpriority="high" />
-    <link rel="preload" as="image" href="/loading_glass.png" fetchpriority="high" />
     <link rel="preload" as="image" href="/ui_lock.png" fetchpriority="high" />
     <link rel="preload" as="image" href="/ui_question.png" fetchpriority="high" />
     <link rel="stylesheet" href="/boot.css" />
@@ -15,8 +14,35 @@
   </head>
   <body>
     <div id="root">
-      <div class="boot-loading-shell">
-        <img class="boot-loading-glass" src="/loading_glass.png" alt="" />
+      <!-- Static copy of renderSkeleton() in preview.ts so the first paint
+           needs zero JS. Keep both in sync — preview.test.ts pins parity. -->
+      <div class="preview-skeleton" data-testid="preview-skeleton" aria-busy="true">
+        <div class="preview-skeleton-title"></div>
+        <div class="preview-skeleton-puzzle">
+          <div class="preview-skeleton-line">
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+          </div>
+          <div class="preview-skeleton-line">
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+          </div>
+          <div class="preview-skeleton-line">
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+            <span class="preview-skeleton-tile"></span>
+          </div>
+        </div>
+        <div class="preview-skeleton-stats"></div>
+        <div class="preview-skeleton-cta"></div>
       </div>
     </div>
     <script type="module" src="preview.ts"></script>

@@ -27,10 +27,12 @@ vi.mock('@devvit/web/server', () => ({
 }));
 
 import {
+  defaultUserProfile,
   getDailyQuestProgress,
   getInventory,
   getUserProfile,
   saveDailyQuestProgress,
+  saveUserProfile,
 } from './state';
 
 const progressFixture = (overrides?: Partial<QuestProgress>): QuestProgress => ({
@@ -128,5 +130,32 @@ describe('state storage behavior', () => {
       shield: '0',
       rocket: '0',
     });
+  });
+
+  it('persists and reads back the theme preference (survives a session)', async () => {
+    await saveUserProfile('u1', {
+      ...defaultUserProfile(),
+      themePreference: 'minimal',
+    });
+    const savePayload = hSetMock.mock.calls.find(
+      (call) => call[0] === 'decrypt:user:u1:profile'
+    )?.[1] as Record<string, string> | undefined;
+    expect(savePayload?.themePreference).toBe('minimal');
+
+    // A later load returns what was stored — the theme is not local-only.
+    hGetAllMock.mockResolvedValue({ coins: '100', themePreference: 'minimal' });
+    const profile = await getUserProfile('u1');
+    expect(profile.themePreference).toBe('minimal');
+  });
+
+  it('degrades an unknown stored theme to default without resetting the profile', async () => {
+    hGetAllMock.mockResolvedValue({ coins: '50', themePreference: 'rainbow' });
+
+    const profile = await getUserProfile('u1');
+
+    // Sanitized to 'default', but the rest of the profile is preserved (the
+    // whole-profile safeParse fallback must not fire).
+    expect(profile.themePreference).toBe('default');
+    expect(profile.coins).toBe(50);
   });
 });

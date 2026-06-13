@@ -463,6 +463,31 @@ body,
   box-shadow: none;
 }
 
+/* The borderless-tile rule above (specificity 0,3,0) also outweighs the
+   single-class state rules, so it strips the selected/correct/wrong tile
+   backgrounds — leaving the selected cell's dark text on the flat page
+   (invisible in dark minimal). Re-assert the stateful backgrounds at
+   matching specificity so the active cell reads on both light and dark. */
+.theme-app.theme-minimal .tile-state-selected {
+  background: var(--tile-selected-bg);
+  color: var(--tile-selected-text);
+  box-shadow: 0 0 0 2px var(--tile-selected-bg);
+}
+
+/* Correct letters match the default theme: coloured text only, no fill. The
+   borderless .tile-btn rule already makes the background transparent; we just
+   keep the green ink (readable in dark via the --tile-correct-text override
+   in the dark block below). */
+.theme-app.theme-minimal .tile-state-correct {
+  background: transparent;
+  color: var(--tile-correct-text);
+}
+
+.theme-app.theme-minimal .tile-state-wrong {
+  background: var(--tile-wrong-bg);
+  color: var(--tile-wrong-text);
+}
+
 /* The result screen was styled for the photo backdrop: a full-screen dim
    wash plus white borders/text and pale rating tints on the quote cluster.
    On the flat minimal background those must use the theme's own ink. */
@@ -516,16 +541,57 @@ body,
     --app-outline: rgba(243, 245, 246, 0.66);
     --app-outline-soft: rgba(243, 245, 246, 0.26);
     --tile-locked-text: rgba(243, 245, 246, 0.45);
+    /* Correct letters are fill-less here, so the green ink must read against
+       the near-black page (the default #2d6c33 is too dark). */
+    --tile-correct-text: #6ee7b7;
     --outcome-positive: #6ee7b7;
     --outcome-negative: #fda4af;
     --minimal-pattern-ink: rgba(243, 245, 246, 0.06);
   }
 
-  /* The 3D under-shadow must stay visible against both the button and the
-     near-black page, so dark minimal uses a light rim instead of black. */
+  /* Per-variant 3D under-shadows: like the default theme and light minimal,
+     each button's hard shadow is a darker shade of its own face color, made
+     opaque so it doesn't sink into the near-black page (#0b1416). Variant
+     rules below share this rule's (0,3,0) specificity, so order matters:
+     base first, variants after. */
   .theme-app.theme-minimal .btn-3d {
-    --btn-shadow-hard: rgba(166, 188, 199, 0.55);
+    /* Neutral faces (--app-surface-strong #1c2d35): the face hue deepened
+       just past the page background, reading as a dark notch on both the
+       page and panels. */
+    --btn-shadow-hard: rgba(8, 13, 16, 1);
     --btn-shadow-soft: rgba(0, 0, 0, 0.4);
+  }
+
+  .theme-app.theme-minimal .btn-primary {
+    --btn-shadow-hard: rgba(197, 83, 23, 1);
+  }
+
+  .theme-app.theme-minimal .btn-secondary {
+    --btn-shadow-hard: rgba(44, 58, 88, 1);
+  }
+
+  .theme-app.theme-minimal .btn-danger {
+    /* A pure-black face has no darker shade; keep this variant's own
+       default-theme cream rim so the edge stays legible. */
+    --btn-shadow-hard: rgba(233, 227, 223, 0.58);
+  }
+
+  .theme-app.theme-minimal .btn-retry {
+    --btn-shadow-hard: rgba(158, 119, 22, 1);
+  }
+
+  .theme-app.theme-minimal .btn-home {
+    --btn-shadow-hard: rgba(42, 139, 68, 1);
+  }
+
+  .theme-app.theme-minimal .btn-close {
+    /* The default rgba(95,25,19) shade sinks into the page here; lifted a
+       step while staying far darker than the #dc6a62 face. */
+    --btn-shadow-hard: rgba(125, 38, 31, 1);
+  }
+
+  .theme-app.theme-minimal .btn-share-result {
+    --btn-shadow-hard: rgba(191, 82, 22, 1);
   }
 
   /* Dimmed (empty) hearts go nearly invisible on the dark background with

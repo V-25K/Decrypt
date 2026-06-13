@@ -679,6 +679,41 @@ describe('Game updates', { timeout: 15000 }, () => {
     expect(root?.classList.contains('home-live')).toBe(false);
   });
 
+  it('applies the persisted minimal theme from the loaded profile on boot', async () => {
+    primeMocks();
+    // A returning player whose saved preference is minimal. localStorage is
+    // cleared each test, so the theme must come from the bootstrapped profile —
+    // proving persistence is server-backed, not local-only.
+    bootstrapQuery.mockResolvedValue({
+      userId: 't2_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postId: 't3_test',
+      currentDailyLevelId: 'lvl_0001',
+      todayDateKey: '2026-03-16',
+      profile: { ...profileFixture(), themePreference: 'minimal' },
+      inventory: inventoryFixture(),
+      endlessCatalog: {
+        available: false,
+        activeCatalogVersion: null,
+        runtimeCatalogVersion: null,
+        publishedLevelCount: 0,
+        bundledVersions: [],
+      },
+    });
+
+    await renderGame();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor(() => Boolean(document.querySelector('[data-testid="settings-button"]')));
+
+    // Applied on load without the player opening Settings or re-selecting.
+    const root = document.querySelector('.theme-app');
+    expect(root?.classList.contains('theme-minimal')).toBe(true);
+    expect(profileSetThemePreferenceMutation).not.toHaveBeenCalled();
+    // The effect also mirrors it to localStorage for a correct next first paint.
+    expect(localStorageState.get('decrypt-theme-preference-v1')).toBe('minimal');
+  });
+
   it('renders endless as playable when a catalog is active', async () => {
     primeMocks();
     getCompletedOutcomeQuery.mockResolvedValue({ accepted: true, solveSeconds: 100 }); bootstrapQuery.mockResolvedValue({

@@ -341,3 +341,60 @@ export const claimQuest = async (params: {
     throw error;
   }
 };
+
+/**
+ * Claims every completed-but-unclaimed DAILY quest for a given dateKey. Built
+ * on claimQuest, so each grant stays idempotent (hSetNX) — re-running is safe.
+ * The completed/unclaimed pre-filter means that once a day is fully claimed
+ * this is just two reads with no writes.
+ */
+export const autoClaimDailyQuestsForDate = async (params: {
+  userId: string;
+  dateKey: string;
+}): Promise<{ autoClaimedQuestIds: string[]; rewardCoins: number }> => {
+  const [daily, claimedIds] = await Promise.all([
+    getDailyQuestProgress(params.userId, params.dateKey),
+    getClaimedQuestIds({ userId: params.userId, dateKey: params.dateKey }),
+  ]);
+  const claimable = questCatalog.filter(
+    (quest) =>
+      quest.category === 'daily' &&
+      !claimedIds.includes(quest.id) &&
+      isQuestDefinitionComplete(quest, daily)
+  );
+  const autoClaimedQuestIds: string[] = [];
+  let rewardCoins = 0;
+  // Sequential: each claimQuest read-modify-writes the profile.
+  for (const quest of claimable) {
+    const result = await claimQuest({
+      userId: params.userId,
+      dateKey: params.dateKey,
+      questId: quest.id,
+    });
+    if (result.success) {
+      autoClaimedQuestIds.push(quest.id);
+      rewardCoins += result.rewardCoins;
+    }
+  }
+  return { autoClaimedQuestIds, rewardCoins };
+};
+
+/**
+ * Auto-claims daily rewards the player completed but never claimed before the
+ * date rolled over. Daily quest progress is keyed by dateKey (90-day TTL) and
+ * the rollover is lazy, so yesterday's unclaimed completions are otherwise
+ * unreachable. We sweep the user's LAST ACTIVE day when it predates today —
+ * that's the only day that can hold completed-unclaimed dailies. dateKeys are
+ * `YYYY-MM-DD`, so a string compare is chronological.
+ */
+export const autoClaimMissedDailyRewards = async (
+  userId: string,
+  today: string
+): Promise<{ autoClaimedQuestIds: string[]; rewardCoins: number }> => {
+  const profile = await getUserProfile(userId);
+  const last = profile.lastPlayedDateKey;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(last) || last >= today) {
+    return { autoClaimedQuestIds: [], rewardCoins: 0 };
+  }
+  return autoClaimDailyQuestsForDate({ userId, dateKey: last });
+};

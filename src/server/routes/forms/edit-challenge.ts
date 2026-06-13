@@ -1,23 +1,16 @@
 import { Hono } from 'hono';
 import type { UiResponse } from '@devvit/web/shared';
 import { applyChallengeEdit } from '../../core/admin';
-import { sanitizePhrase, type DifficultyTier } from '../../core/content';
+import { sanitizePhrase } from '../../core/content';
 import { rejectWithoutAdminAccess } from './shared/auth';
 import { firstValue, normalizeLoose } from './shared/parse';
 
+// The level ID and difficulty tier are display-only in the edit form, so the
+// submit only carries the editable fields.
 type ModEditChallengeFormRequest = {
   levelId?: unknown;
   text?: unknown;
   author?: unknown;
-  difficulty?: unknown;
-};
-
-const parseTier = (raw: unknown): DifficultyTier | null => {
-  const value = firstValue(raw);
-  if (value === 'warmup' || value === 'medium' || value === 'hard' || value === 'expert') {
-    return value;
-  }
-  return null;
 };
 
 export const editChallengeRoutes = new Hono();
@@ -54,11 +47,7 @@ editChallengeRoutes.post('/mod-edit-challenge-submit', async (c) => {
     if (!author) {
       return c.json<UiResponse>({ showToast: 'Author cannot be empty.' }, 200);
     }
-    const tier = parseTier(body.difficulty);
-    if (!tier) {
-      return c.json<UiResponse>({ showToast: 'Choose a tier from the list.' }, 200);
-    }
-    const result = await applyChallengeEdit({ levelId, text, author, tier });
+    const result = await applyChallengeEdit({ levelId, text, author });
     return c.json<UiResponse>({ showToast: result.message }, 200);
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown error';

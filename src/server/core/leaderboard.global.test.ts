@@ -30,7 +30,12 @@ vi.mock('./share-receipts', () => ({
   getShareCompletionReceipt: vi.fn(),
 }));
 
-import { computeScore, recordGlobalLoss, recordGlobalWin } from './leaderboard';
+import {
+  combinedGlobalRatingScore,
+  computeScore,
+  recordGlobalLoss,
+  recordGlobalWin,
+} from './leaderboard';
 
 const profileFixture = (): UserProfile => ({
   coins: 0,
@@ -177,7 +182,10 @@ describe('global rating leaderboard writes', () => {
     );
     expect(zAddMock).toHaveBeenCalledWith('decrypt:leaderboard:global:rating', {
       member: 'u1',
-      score: result.profile.globalRating,
+      score: combinedGlobalRatingScore(
+        result.profile.globalRating,
+        result.profile.globalScore
+      ),
     });
   });
 
@@ -262,7 +270,7 @@ describe('global rating leaderboard writes', () => {
     expect(result.profile.globalWinStreak).toBe(1);
     expect(zAddMock).toHaveBeenCalledWith('decrypt:leaderboard:global:rating', {
       member: 'u1',
-      score: 523,
+      score: combinedGlobalRatingScore(523, 650),
     });
   });
 
@@ -285,5 +293,27 @@ describe('global rating leaderboard writes', () => {
     expect(result.profile.globalRating).toBeLessThan(520);
     expect(result.profile.globalWinStreak).toBe(0);
     expect(result.profile.ratingLosses).toBe(1);
+  });
+});
+
+describe('combinedGlobalRatingScore tiebreak', () => {
+  it('ranks the player with more total points higher when ratings tie', () => {
+    const fewerPoints = combinedGlobalRatingScore(1500, 1000);
+    const morePoints = combinedGlobalRatingScore(1500, 5000);
+    expect(morePoints).toBeGreaterThan(fewerPoints);
+    // The rating band stays exact regardless of the points tiebreak.
+    expect(Math.floor(fewerPoints)).toBe(1500);
+    expect(Math.floor(morePoints)).toBe(1500);
+  });
+
+  it('keeps rating dominant over the points tiebreak', () => {
+    const higherRatingNoPoints = combinedGlobalRatingScore(1501, 0);
+    const lowerRatingMaxPoints = combinedGlobalRatingScore(1500, 9_999_999);
+    expect(higherRatingNoPoints).toBeGreaterThan(lowerRatingMaxPoints);
+  });
+
+  it('never reaches the next rating even at the points cap', () => {
+    expect(combinedGlobalRatingScore(1500, 50_000_000)).toBeLessThan(1501);
+    expect(Math.floor(combinedGlobalRatingScore(1500, 50_000_000))).toBe(1500);
   });
 });

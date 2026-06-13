@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import previewHtmlRaw from './preview.html?raw';
 import type { GameInlineStatusResponse, GamePreviewResponse } from '../shared/game';
 
 const requestExpandedModeMock = vi.fn();
@@ -21,6 +22,14 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error('Timed out waiting for preview render.');
+};
+
+const elementSignature = (element: Element): string => {
+  const attrs = ['data-testid', 'aria-busy']
+    .map((name) => `${name}=${element.getAttribute(name) ?? ''}`)
+    .join(' ');
+  const children = Array.from(element.children).map(elementSignature);
+  return `${element.tagName}.${element.className}[${attrs}](${children.join(',')})`;
 };
 
 const previewFixture = (): GamePreviewResponse => ({
@@ -104,14 +113,30 @@ describe('preview entrypoint', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows the loading glass while the preview request is pending', async () => {
+  it('shows the branded skeleton while the preview request is pending', async () => {
     globalThis.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     await import('./preview');
 
-    expect(document.querySelector<HTMLImageElement>('[data-testid="loading-glass"]')?.src).toContain(
-      '/loading_glass.png'
+    expect(document.querySelector('[data-testid="preview-skeleton"]')).toBeTruthy();
+    expect(document.querySelectorAll('.preview-skeleton-tile').length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-testid="loading-glass"]')).toBeNull();
+  });
+
+  it('keeps the static preview.html skeleton in sync with the JS-rendered one', async () => {
+    globalThis.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    await import('./preview');
+
+    const rendered = document.querySelector('#root [data-testid="preview-skeleton"]');
+    const staticDocument = new DOMParser().parseFromString(previewHtmlRaw, 'text/html');
+    const staticSkeleton = staticDocument.querySelector(
+      '#root [data-testid="preview-skeleton"]'
     );
+    if (!rendered || !staticSkeleton) {
+      throw new Error('Skeleton missing from the rendered DOM or the static preview.html.');
+    }
+    expect(elementSignature(staticSkeleton)).toBe(elementSignature(rendered));
   });
 
 	  it('renders the puzzle preview for incomplete challenges', async () => {
@@ -123,13 +148,20 @@ describe('preview entrypoint', () => {
     await import('./preview');
 
     await waitFor(() => Boolean(document.querySelector('.preview-puzzle-mask')));
-    expect(document.body.textContent ?? '').toContain('Play');
+    expect(document.querySelector('[data-testid="preview-skeleton"]')).toBeNull();
+    expect(document.querySelector('.preview-cta')?.textContent).toBe('Play');
+    expect(document.querySelector('.preview-cta img')).toBeNull();
+    expect(document.querySelector('.preview-tap-hint')).toBeNull();
+    expect(document.querySelector('.preview-eyebrow')).toBeNull();
     expect(document.body.textContent ?? '').toContain('Can you decrypt this?');
-    expect(document.body.textContent ?? '').toContain('Plays: 7');
-    expect(document.body.textContent ?? '').toContain('Book lines (Medium)');
-    expect(document.body.textContent ?? '').not.toContain('Book line lines');
-    expect(document.body.textContent ?? '').toContain('Win: 43%');
-    expect(document.querySelector('.preview-meta-inner')).toBeTruthy();
+    expect(document.querySelector('.preview-stats')).toBeTruthy();
+    expect(document.querySelector('.preview-stat-plays')?.textContent).toBe('7 plays');
+    expect(document.querySelector('.preview-stat-win')?.textContent).toBe('43% solved');
+    const difficulty = document.querySelector('.preview-stat-difficulty');
+    expect(difficulty?.textContent).toBe('Medium');
+    expect(difficulty?.classList.contains('preview-difficulty-medium')).toBe(true);
+    expect(document.querySelector('.preview-stat-daily')).toBeNull();
+    expect(document.querySelector('.preview-shimmer')).toBeTruthy();
     expect(document.querySelector('.preview-title')).toBeTruthy();
 	    expect(document.querySelector('.preview-creator-avatar')).toBeTruthy();
 	    expect(document.querySelector<HTMLImageElement>('.preview-lock-sprite')?.src).toContain(
@@ -237,7 +269,7 @@ describe('preview entrypoint', () => {
     expect(document.querySelector('.preview-creator')).toBeTruthy();
     expect(document.querySelector('.preview-creator-no-avatar')).toBeTruthy();
     expect(document.querySelector('.preview-creator-avatar')).toBeNull();
-    expect(document.body.textContent ?? '').toContain('- Created by');
+    expect(document.querySelector('.preview-creator-label')?.textContent).toBe('by');
     expect(document.querySelector('.preview-creator-name')?.textContent ?? '').toContain(
       'creator_without_avatar'
     );
@@ -264,8 +296,62 @@ describe('preview entrypoint', () => {
     await waitFor(() => Boolean(document.querySelector('.preview-puzzle-mask')));
     expect(document.querySelector('.preview-creator')).toBeNull();
     expect(document.querySelector('.preview-creator-avatar')).toBeNull();
-    expect(document.body.textContent ?? '').not.toContain('Created by');
-    expect(document.body.textContent ?? '').not.toContain('Decrypt');
+    expect(document.querySelector('.preview-creator-label')).toBeNull();
+    // No "Daily #N" label anywhere — the stats line is just the metrics.
+    expect(document.querySelector('.preview-stat-daily')).toBeNull();
+    expect(document.body.textContent ?? '').not.toContain('Daily #');
+  });
+
+  it('labels and tints the difficulty per tier band', async () => {
+    const tierCases = [
+      { difficulty: 2, tone: 'easy', label: 'Easy' },
+      { difficulty: 7, tone: 'hard', label: 'Hard' },
+      { difficulty: 9, tone: 'expert', label: 'Expert' },
+    ];
+    for (const tierCase of tierCases) {
+      vi.resetModules();
+      document.body.innerHTML = '<div id="root"></div>';
+      const preview = previewFixture();
+      mockFetchSequence(
+        {
+          levelId: 'lvl_0001',
+          completed: false,
+        },
+        {
+          ...preview,
+          puzzle: { ...preview.puzzle, difficulty: tierCase.difficulty },
+        }
+      );
+
+      await import('./preview');
+
+      await waitFor(() => Boolean(document.querySelector('.preview-stat-difficulty')));
+      const difficulty = document.querySelector('.preview-stat-difficulty');
+      expect(difficulty?.textContent).toBe(tierCase.label);
+      expect(difficulty?.classList.contains(`preview-difficulty-${tierCase.tone}`)).toBe(
+        true
+      );
+    }
+  });
+
+  it('applies the minimal theme when the player prefers it', async () => {
+    localStorage.setItem('decrypt-theme-preference-v1', 'minimal');
+    mockFetchSequence({ levelId: 'lvl_0001', completed: false }, previewFixture());
+
+    await import('./preview');
+
+    await waitFor(() => Boolean(document.querySelector('.preview-puzzle-mask')));
+    expect(document.body.classList.contains('preview-minimal')).toBe(true);
+    expect(document.querySelector('.preview-shell')).toBeTruthy();
+  });
+
+  it('keeps the photo theme when no minimal preference is stored', async () => {
+    mockFetchSequence({ levelId: 'lvl_0001', completed: false }, previewFixture());
+
+    await import('./preview');
+
+    await waitFor(() => Boolean(document.querySelector('.preview-puzzle-mask')));
+    expect(document.body.classList.contains('preview-minimal')).toBe(false);
   });
 
 	  it('mounts the real game result path for completed challenges', async () => {

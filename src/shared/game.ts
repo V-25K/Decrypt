@@ -449,6 +449,14 @@ export const gameBootstrapResponseSchema = z.object({
       moderatorPendingReviewCount: 0,
       moderatorRevisionReviewCount: 0,
     }),
+  // Daily rewards auto-claimed on this load because the player completed them
+  // on a prior day but never claimed before the date rolled over.
+  autoClaimedDailyRewards: z
+    .object({
+      coins: z.number().int().nonnegative(),
+      questIds: z.array(z.string().min(1)),
+    })
+    .default({ coins: 0, questIds: [] }),
 });
 
 export const gameLoadLevelInputSchema = z.object({

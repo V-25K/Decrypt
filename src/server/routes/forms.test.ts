@@ -486,7 +486,6 @@ describe('mod-edit-challenge-submit', () => {
         levelId: 'lvl_0042',
         text: 'The only way to do great work is to love what you do',
         author: 'New Author',
-        difficulty: 'medium',
       }),
     });
 
@@ -495,7 +494,6 @@ describe('mod-edit-challenge-submit', () => {
       levelId: 'lvl_0042',
       text: 'THE ONLY WAY TO DO GREAT WORK IS TO LOVE WHAT YOU DO',
       author: 'New Author',
-      tier: 'medium',
     });
     await expect(response.json()).resolves.toEqual({
       showToast: 'Medium challenge updated.',
@@ -511,7 +509,6 @@ describe('mod-edit-challenge-submit', () => {
       body: JSON.stringify({
         text: 'Some quote here for the board',
         author: 'Author',
-        difficulty: 'medium',
       }),
     });
 
@@ -521,7 +518,7 @@ describe('mod-edit-challenge-submit', () => {
     expect(body.showToast).toContain('Re-open the menu');
   });
 
-  it('rejects unsupported tier values', async () => {
+  it('rejects empty challenge text', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
 
     const response = await forms.request('http://localhost/mod-edit-challenge-submit', {
@@ -529,16 +526,14 @@ describe('mod-edit-challenge-submit', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         levelId: 'lvl_0042',
-        text: 'Some quote here for the board',
+        text: '',
         author: 'Author',
-        difficulty: 'impossible',
       }),
     });
 
     expect(response.status).toBe(200);
     expect(applyChallengeEditMock).not.toHaveBeenCalled();
-    await expect(response.json()).resolves.toEqual({
-      showToast: 'Choose a tier from the list.',
-    });
+    const body = await response.json();
+    expect(body.showToast).toContain('cannot be empty');
   });
 });

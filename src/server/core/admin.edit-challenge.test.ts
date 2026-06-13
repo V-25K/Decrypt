@@ -111,7 +111,6 @@ describe('applyChallengeEdit', () => {
       levelId: 'lvl_0042',
       text: sampleText,
       author: 'New Author',
-      tier: 'medium',
     });
 
     expect(result.success).toBe(true);
@@ -124,20 +123,32 @@ describe('applyChallengeEdit', () => {
     expect(replaced.puzzlePrivate.targetText).toBe(sampleText);
   });
 
-  it('locks text and tier changes once the board has plays', async () => {
+  it('allows editing the line even after the board has plays', { timeout: 30_000 }, async () => {
     getPuzzlePrivateMock.mockResolvedValue(injectedPuzzle());
-    getLevelEngagementMock.mockResolvedValue({ plays: 3 });
+    getLevelEngagementMock.mockResolvedValue({ plays: 7 });
+    const newText = 'JUDGE EACH DAY BY THE SEEDS THAT YOU PLANT NOT THE HARVEST YOU REAP';
+    const fitted = fitBoardToTier({
+      text: newText,
+      tier: 'medium',
+      dateKey: '2026-06-10',
+      author: 'NEW AUTHOR',
+      challengeType: 'QUOTE',
+      logicalPercent: 100,
+    });
+    expect(fitted.fitted).toBe(true);
+    if (!fitted.fitted) {
+      return;
+    }
+    getCachedFittedLayoutMock.mockResolvedValue(fitted.layout);
 
     const result = await applyChallengeEdit({
       levelId: 'lvl_0042',
-      text: 'A COMPLETELY DIFFERENT QUOTE FOR THIS BOARD',
-      author: 'OLD AUTHOR',
-      tier: 'medium',
+      text: newText,
+      author: 'New Author',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('locked');
-    expect(replacePuzzleDataInPlaceMock).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(replacePuzzleDataInPlaceMock).toHaveBeenCalledTimes(1);
   });
 
   it('refuses community challenges', async () => {
@@ -150,7 +161,6 @@ describe('applyChallengeEdit', () => {
       levelId: 'lvl_0042',
       text: sampleText,
       author: 'New Author',
-      tier: 'medium',
     });
 
     expect(result.success).toBe(false);
@@ -177,13 +187,15 @@ describe('applyChallengeEdit', () => {
 
     const result = await applyChallengeEdit({
       levelId: 'lvl_0042',
-      text: sampleText,
+      text: 'JUDGE EACH DAY BY THE SEEDS THAT YOU PLANT NOT THE HARVEST',
       author: 'OLD AUTHOR',
-      tier: 'expert',
     });
 
     expect(result.success).toBe(false);
-    expect(result.message).toContain('Available: Easy, Medium');
+    // The existing tier (Medium, difficulty 5) doesn't fit the new line; the
+    // message names the tiers that do, since difficulty can only change via
+    // re-inject.
+    expect(result.message).toContain('It fits: Easy, Medium');
     expect(replacePuzzleDataInPlaceMock).not.toHaveBeenCalled();
   });
 
@@ -209,11 +221,10 @@ describe('applyChallengeEdit', () => {
       levelId: 'lvl_0042',
       text: newText,
       author: 'New Author',
-      tier: 'medium',
     });
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('Medium challenge updated');
+    expect(result.message).toContain('Challenge line updated');
     expect(replacePuzzleDataInPlaceMock).toHaveBeenCalledTimes(1);
     const replaced = replacePuzzleDataInPlaceMock.mock.calls[0]?.[0] as {
       levelId: string;

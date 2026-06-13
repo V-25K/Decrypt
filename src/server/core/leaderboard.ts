@@ -493,6 +493,30 @@ export const recordAllTimeLevelScore = async (params: {
   ]);
 };
 
+/**
+ * Global rating-leaderboard ties break by total points. A Redis sorted set
+ * orders by a single numeric score (and falls back to member id on ties), so
+ * we pack both signals into one score: the rating as the integer part and a
+ * saturating fraction of total points (always < 1) as the tiebreaker. Thus
+ * `floor(score)` is always the exact rating, and among players on the same
+ * rating the one with more total points sorts higher. Points past the cap
+ * saturate the fraction (rare); entries written before this packing existed
+ * have a fraction of 0, so they simply sit at the bottom of their rating band
+ * until that player next plays.
+ */
+const globalTiebreakCap = 10_000_000;
+export const combinedGlobalRatingScore = (
+  rating: number,
+  globalScore: number
+): number => {
+  const safeRating = Math.max(0, Math.trunc(rating));
+  const safePoints = Math.min(
+    Math.max(0, Math.trunc(globalScore)),
+    globalTiebreakCap
+  );
+  return safeRating + safePoints / (globalTiebreakCap + 1);
+};
+
 export const recordGlobalWin = async (params: {
   userId: string;
   levelId: string;
@@ -610,7 +634,10 @@ export const recordGlobalWin = async (params: {
     };
     await redis.zAdd(keyGlobalRatingLeaderboard, {
       member: params.userId,
-      score: nextProfile.globalRating,
+      score: combinedGlobalRatingScore(
+        nextProfile.globalRating,
+        nextProfile.globalScore
+      ),
     });
     return {
       profile: nextProfile,
@@ -622,7 +649,10 @@ export const recordGlobalWin = async (params: {
 
   await redis.zAdd(keyGlobalRatingLeaderboard, {
     member: params.userId,
-    score: ratedProfile.globalRating,
+    score: combinedGlobalRatingScore(
+      ratedProfile.globalRating,
+      ratedProfile.globalScore
+    ),
   });
   return {
     profile: ratedProfile,
@@ -680,7 +710,10 @@ export const recordGlobalLoss = async (params: {
   };
   await redis.zAdd(keyGlobalRatingLeaderboard, {
     member: params.userId,
-    score: nextProfile.globalRating,
+    score: combinedGlobalRatingScore(
+      nextProfile.globalRating,
+      nextProfile.globalScore
+    ),
   });
   return {
     profile: nextProfile,
@@ -1087,8 +1120,10 @@ export const getGlobalTop = async (
           return {
             userId: entry.member,
             username: userMeta.username,
-            score: Math.round(entry.score),
-            rating: Math.round(entry.score),
+            // The zset score packs the rating (integer part) with a
+            // total-points tiebreak fraction; floor recovers the exact rating.
+            score: Math.floor(entry.score),
+            rating: Math.floor(entry.score),
             snoovatarUrl: userMeta.snoovatarUrl,
             globalScore,
             challengesCompleted,

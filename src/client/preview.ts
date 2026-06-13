@@ -6,10 +6,10 @@ import {
   getStableChallengeBackgroundIndex,
 } from './app/challenge-backgrounds';
 import {
+  readThemePreference,
   setExpandedChallengeModeIntent,
   setExpandedScreenIntent,
 } from './app/game-storage';
-import { challengeTypeMetadata, challengeTypeSchema } from '../shared/game';
 import type {
   GameInlineStatusResponse,
   GamePreviewResponse,
@@ -49,29 +49,25 @@ const createElement = <K extends keyof HTMLElementTagNameMap>(
   return element;
 };
 
-const formatPreviewChallengeType = (value: string | undefined): string => {
-  const normalized = (value ?? 'QUOTE')
-    .toUpperCase()
-    .replace(/[^A-Z_]/g, '')
-    .trim();
-  const parsed = challengeTypeSchema.safeParse(normalized);
-  return parsed.success ? challengeTypeMetadata[parsed.data].shortLabel : 'Quote';
+type PreviewDifficultyView = {
+  label: string;
+  tone: 'easy' | 'medium' | 'hard' | 'expert';
 };
 
-const formatPreviewDifficultyLabel = (value: number | undefined): string => {
+const getPreviewDifficultyView = (value: number | undefined): PreviewDifficultyView => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return 'Medium';
+    return { label: 'Medium', tone: 'medium' };
   }
   if (value <= 3) {
-    return 'Easy';
+    return { label: 'Easy', tone: 'easy' };
   }
   if (value <= 5) {
-    return 'Medium';
+    return { label: 'Medium', tone: 'medium' };
   }
   if (value <= 8) {
-    return 'Hard';
+    return { label: 'Hard', tone: 'hard' };
   }
-  return 'Expert';
+  return { label: 'Expert', tone: 'expert' };
 };
 
 const openExpandedGame = async (event: MouseEvent): Promise<void> => {
@@ -306,6 +302,11 @@ const renderPuzzle = (puzzle: PuzzlePublic): HTMLElement => {
   }
 
   mask.append(puzzleElement);
+  // A real element, not a mask pseudo: ::after is taken by the overflow "..."
+  // indicator. Hidden entirely under prefers-reduced-motion (preview.css).
+  const shimmer = createElement('span', 'preview-shimmer');
+  shimmer.setAttribute('aria-hidden', 'true');
+  mask.append(shimmer);
   return mask;
 };
 
@@ -332,66 +333,92 @@ const watchPuzzleOverflow = (mask: HTMLElement): void => {
 
 const renderTitleRow = (titleText = fallbackPreviewTitle): HTMLElement => {
   const header = createElement('header', 'preview-top-row');
-  const title = createElement('div', 'preview-title', titleText || fallbackPreviewTitle);
-  header.append(title);
+  header.append(createElement('div', 'preview-title', titleText || fallbackPreviewTitle));
   return header;
 };
 
-const renderMetricsRow = (preview: GamePreviewResponse): HTMLElement => {
-  const meta = createElement('div', 'preview-meta');
-  const inner = createElement('div', 'preview-meta-inner');
-  const challengeTypeLabel = formatPreviewChallengeType(preview.puzzle.challengeType);
-  const difficultyLabel = formatPreviewDifficultyLabel(preview.puzzle.difficulty);
-  inner.append(
-    createElement('span', undefined, `Plays: ${preview.challengeMetrics.plays.toLocaleString()}`),
+// One quiet line of facts — no containers, no icons. Separators are drawn
+// by CSS so the text content stays clean for accessibility and tests.
+const renderStatsLine = (preview: GamePreviewResponse): HTMLElement => {
+  const stats = createElement('div', 'preview-stats');
+  const difficultyView = getPreviewDifficultyView(preview.puzzle.difficulty);
+  stats.append(
     createElement(
       'span',
-      'preview-meta-center',
-      `${challengeTypeLabel} lines (${difficultyLabel})`
+      'preview-stat-plays',
+      `${preview.challengeMetrics.plays.toLocaleString()} plays`
     ),
-    createElement('span', undefined, `Win: ${preview.challengeMetrics.winRatePct}%`)
+    createElement(
+      'span',
+      'preview-stat-win',
+      `${preview.challengeMetrics.winRatePct}% solved`
+    ),
+    createElement(
+      'span',
+      `preview-stat-difficulty preview-difficulty-${difficultyView.tone}`,
+      difficultyView.label
+    )
   );
-  meta.append(inner);
-  return meta;
+  return stats;
 };
 
 const renderFooter = (creator?: PreviewCreator, ctaLabel = 'Play'): HTMLElement => {
   const footer = createElement('div', 'preview-footer');
-  const cta = createElement('span', 'preview-cta', ctaLabel);
-  if (!creator?.username) {
-    footer.append(cta);
-    return footer;
+  footer.append(createElement('span', 'preview-cta', ctaLabel));
+  if (creator?.username) {
+    const username = creator.username;
+    const creatorElement = createElement('span', 'preview-creator');
+    if (creator.avatarUrl) {
+      const avatar = createElement('span', 'preview-creator-avatar');
+      const image = createElement('img', 'preview-creator-image');
+      image.src = creator.avatarUrl;
+      image.alt = username;
+      avatar.append(image);
+      creatorElement.append(avatar);
+    } else {
+      creatorElement.classList.add('preview-creator-no-avatar');
+    }
+    const creatorText = createElement('span', 'preview-creator-text');
+    creatorText.append(
+      createElement('span', 'preview-creator-label', 'by'),
+      createElement('span', 'preview-creator-name', username)
+    );
+    creatorElement.append(creatorText);
+    footer.append(creatorElement);
   }
-
-  const creatorElement = createElement('span', 'preview-creator');
-  const label = createElement('span', 'preview-creator-label', '- Created by');
-  const creatorText = createElement('span', 'preview-creator-text');
-  const username = creator.username;
-  if (creator.avatarUrl) {
-    const avatar = createElement('span', 'preview-creator-avatar');
-    const image = createElement('img', 'preview-creator-image');
-    image.src = creator.avatarUrl;
-    image.alt = username;
-    avatar.append(image);
-    creatorElement.append(avatar);
-  } else {
-    creatorElement.classList.add('preview-creator-no-avatar');
-  }
-  creatorText.append(label, createElement('span', 'preview-creator-name', username));
-  creatorElement.append(creatorText);
-  footer.append(cta, creatorElement);
   return footer;
 };
 
+// Branded loading skeleton. MUST mirror the static shell in preview.html
+// exactly (that copy paints before any JS runs); the parity is pinned by a
+// test in preview.test.ts. Styles live in public/boot.css.
+const previewSkeletonTileCounts = [5, 4, 6] as const;
+
+const renderSkeleton = (): HTMLElement => {
+  const skeleton = createElement('div', 'preview-skeleton');
+  skeleton.setAttribute('data-testid', 'preview-skeleton');
+  skeleton.setAttribute('aria-busy', 'true');
+
+  const puzzle = createElement('div', 'preview-skeleton-puzzle');
+  for (const tileCount of previewSkeletonTileCounts) {
+    const line = createElement('div', 'preview-skeleton-line');
+    for (let tileIndex = 0; tileIndex < tileCount; tileIndex += 1) {
+      line.append(createElement('span', 'preview-skeleton-tile'));
+    }
+    puzzle.append(line);
+  }
+
+  skeleton.append(
+    createElement('div', 'preview-skeleton-title'),
+    puzzle,
+    createElement('div', 'preview-skeleton-stats'),
+    createElement('div', 'preview-skeleton-cta')
+  );
+  return skeleton;
+};
+
 const renderLoading = (root: HTMLElement): void => {
-  const shell = createElement('div', 'boot-loading-shell preview-loading-screen');
-  shell.setAttribute('aria-live', 'polite');
-  const image = createElement('img', 'boot-loading-glass');
-  image.setAttribute('data-testid', 'loading-glass');
-  image.src = '/loading_glass.png';
-  image.alt = '';
-  shell.append(image);
-  root.replaceChildren(shell);
+  root.replaceChildren(renderSkeleton());
 };
 
 const renderError = (root: HTMLElement): void => {
@@ -412,15 +439,12 @@ const renderRemoved = (root: HTMLElement, levelId: string | null): void => {
   button.type = 'button';
   button.setAttribute('aria-label', 'Open the next Decrypt challenge');
   const content = createElement('div', 'preview-removed-content');
-  const iconWrap = createElement('span', 'preview-removed-icon');
   const lockIcon = createElement('img', 'preview-removed-icon-img');
   lockIcon.src = '/ui_lock.png';
   lockIcon.alt = '';
   lockIcon.loading = 'eager';
-  iconWrap.append(lockIcon);
   content.append(
-    iconWrap,
-    createElement('span', 'preview-removed-eyebrow', 'Moderated cipher'),
+    lockIcon,
     createElement('span', 'preview-removed-title', 'Cipher removed'),
     createElement(
       'span',
@@ -428,11 +452,7 @@ const renderRemoved = (root: HTMLElement, levelId: string | null): void => {
       'This challenge left the game, but there is another one ready.'
     )
   );
-  button.append(
-    renderTitleRow('Decrypt'),
-    content,
-    renderFooter(undefined, 'Next challenge')
-  );
+  button.append(content, renderFooter(undefined, 'Next challenge'));
   button.addEventListener('click', (event) => {
     void openNextChallenge(event, levelId);
   });
@@ -452,10 +472,9 @@ const renderPreview = (root: HTMLElement, preview: GamePreviewResponse): void =>
   );
 
   const title = renderTitleRow(preview.previewTitle || fallbackPreviewTitle);
-  const meta = renderMetricsRow(preview);
   const puzzleMask = renderPuzzle(preview.puzzle);
 
-  button.append(title, meta, puzzleMask, renderFooter(preview.creator));
+  button.append(title, puzzleMask, renderStatsLine(preview), renderFooter(preview.creator));
   wireExpandedMode(button);
   root.replaceChildren(button);
   watchPuzzleOverflow(puzzleMask);
@@ -478,13 +497,15 @@ const loadPreviewStatus = async (): Promise<GameInlineStatusResponse> => {
 };
 
 const mountCompletedGame = async (root: HTMLElement): Promise<void> => {
-  root.replaceChildren();
   root.setAttribute('data-initial-screen', 'challenge');
   root.classList.add('h-full');
   document.documentElement.classList.add('h-full');
   document.body.classList.add('h-full');
   document.body.classList.remove('preview-body');
+  // Keep the loading skeleton on screen while the game chunk downloads;
+  // clear only right before React takes the root.
   const gameModule = await import('./game');
+  root.replaceChildren();
   gameModule.mountGame(root);
 };
 
@@ -493,6 +514,12 @@ const mountPreview = async (): Promise<void> => {
   if (!root) {
     throw new Error('Missing preview root element.');
   }
+
+  // Mirror the player's theme (device-local, same source the app uses for its
+  // first paint). Minimal swaps the photo backdrop for the flat minimal
+  // palette; anything else — including no stored preference — keeps the photo
+  // design, so this degrades safely.
+  document.body.classList.toggle('preview-minimal', readThemePreference() === 'minimal');
 
   renderLoading(root);
   try {
