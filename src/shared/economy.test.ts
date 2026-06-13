@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyEndlessRewardTaper,
   completionRewards,
+  earnsFlawlessCoinBonus,
   endlessRewardTaper,
 } from './economy';
 
@@ -38,5 +39,28 @@ describe('applyEndlessRewardTaper', () => {
       coins: endlessRewardTaper.floorCoins,
       tapered: true,
     });
+  });
+});
+
+describe('earnsFlawlessCoinBonus', () => {
+  it('rewards a clean, unassisted, non-continued clear', () => {
+    expect(
+      earnsFlawlessCoinBonus({ mistakes: 0, usedPowerups: 0, continued: false })
+    ).toBe(true);
+  });
+
+  it('withholds the bonus when any power-up was used', () => {
+    expect(
+      earnsFlawlessCoinBonus({ mistakes: 0, usedPowerups: 1, continued: false })
+    ).toBe(false);
+  });
+
+  it('withholds the bonus on a mistake or a continued run', () => {
+    expect(
+      earnsFlawlessCoinBonus({ mistakes: 1, usedPowerups: 0, continued: false })
+    ).toBe(false);
+    expect(
+      earnsFlawlessCoinBonus({ mistakes: 0, usedPowerups: 0, continued: true })
+    ).toBe(false);
   });
 });

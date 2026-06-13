@@ -320,7 +320,7 @@ export const applyRocket = (
   }
 
   const candidateIndices = [...unresolvedUnlockedIndices];
-  const targetCount = Math.min(4, candidateIndices.length);
+  const targetCount = Math.min(3, candidateIndices.length);
   const selectedTargetIndices: number[] = [];
   for (let i = 0; i < targetCount; i += 1) {
     const pick = Math.floor(random() * candidateIndices.length);

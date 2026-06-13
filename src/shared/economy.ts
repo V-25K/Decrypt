@@ -10,6 +10,19 @@ export const completionRewards = {
   flawlessBonus: 15,
 } as const;
 
+/**
+ * The flawless coin bonus rewards a genuinely clean, unassisted clear: no
+ * mistakes, no power-ups, and not a continued run. Power-ups count here so that
+ * buying your way through a puzzle is a real coin trade-off, not just a small
+ * leaderboard dent.
+ */
+export const earnsFlawlessCoinBonus = (params: {
+  mistakes: number;
+  usedPowerups: number;
+  continued: boolean;
+}): boolean =>
+  params.mistakes === 0 && params.usedPowerups === 0 && !params.continued;
+
 export const communityJoinRewardCoins = 100;
 
 export const coinHeartRefillCost = 350;

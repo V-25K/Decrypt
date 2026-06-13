@@ -18,6 +18,7 @@ export {
   coinHeartRefillCost,
   coinHeartTopUpCost,
   maxCoinHeartPurchasesPerDay,
+  earnsFlawlessCoinBonus,
 } from '../../shared/economy';
 
 export const getDailyRetryScoreFactor = (retryCount: number): number => {

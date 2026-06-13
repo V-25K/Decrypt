@@ -180,7 +180,9 @@ describe('gameplay lock + powerup rules', () => {
   });
 
   it('rocket excludes locked tiles and can reveal blind tiles', () => {
-    const puzzle = buildLockedPuzzle('ABA AAB CAA');
+    // 'CAB' first so the seeded rng (always index 0) selects letter C on its
+    // first of three draws, guaranteeing the blind C tile in word 2 is hit.
+    const puzzle = buildLockedPuzzle('CAB AAB CAA');
     const blindIndex = firstIndex(wordLetterIndices(puzzle, 2));
     puzzle.blindIndices = [blindIndex];
     const lockedWordIndices = new Set(wordLetterIndices(puzzle, 1));
