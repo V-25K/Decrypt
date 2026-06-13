@@ -2,29 +2,17 @@
 
 Daily cryptogram-style puzzle game built for Reddit using Devvit Web.
 
+## For players
+Crack a daily cipher: tap a tile, type the letter you think it hides, and watch
+matching tiles fill in. Solve before you run out of hearts to climb the global
+leaderboard, earn coins, complete quests, and unlock flair. You can also create
+and share your own challenges for the community to solve.
+
 ## Features
 - Inline gameplay with expanded view support.
 - Daily automated puzzles plus manual moderator tools.
 - Leaderboards, quests, and powerups.
 - In-app purchases (Reddit Gold) for bundles.
-
-## Architecture
-- `src/client`: UI and app experience running in Reddit webviews.
-- `src/server`: Hono/Devvit server routes, scheduler hooks, and tRPC API.
-- `src/server/trpc`: Domain routers (`game`, `leaderboard`, `quests`, `admin`, etc.) plus shared procedures.
-- `src/shared`: Runtime-safe schemas/types reused by client and server.
-
-## Production Practices
-- Strict TypeScript + schema validation at API boundaries.
-- Feature routers are separated by responsibility to keep modules small and testable.
-- Centralized server app composition (`createApp`) with shared unhandled-error handling.
-- Devvit-specific config lives in `devvit.json`, with settings validated through `/internal/settings/*` endpoints.
-
-## Local Tools
-- `npm run lines:check -- --text "QUOTE HERE"` checks a single line against your local manual registry.
-- `npm run lines:check -- --file .\my-lines.txt` batch-checks one line per row from a text file.
-- `npm run lines:check -- --corpus-file .\data\manual-line-registry.json --text "QUOTE HERE"` lets you point at a different registry file.
-- The checker uses the same normalization and near-duplicate rules as the game, but it does not inspect live Redis history from deployed installs.
 
 ## Legal
 - Terms: `TERMS_AND_CONDITIONS.md`
@@ -40,6 +28,18 @@ Daily cryptogram-style puzzle game built for Reddit using Devvit Web.
 - Verified with `npm run type-check`, `npm run lint`, `npm run build`, full `npm run test`, focused Difficulty 2.0 smoke tests, and bounded Devvit playtest/log checks on `decrypttest_dev`.
 
 ## Versions
+- 1.0.0
+  - First stable release: daily cryptogram gameplay with hearts, power-ups
+    (hammer, wand, rocket, shield), padlock chains, and blind tiles.
+  - Global rating/leaderboards, quests, daily streaks, and unlockable flair that
+    carries the player's global rank.
+  - Player-created community challenges with creator acclaim, plus a moderator
+    toolkit (daily reroll, manual injection, challenge editing).
+  - Reddit payments bundles, AI-assisted daily generation, and Decrypt
+    Difficulty 2.0 calibration.
+  - Hardening pass: self-play guard, padlock-unlock and correct-letter guess-race
+    fixes, and rebalanced power-ups (rocket reveals 3 letters; flawless coin
+    bonus requires a no-power-up clear).
 - 0.1.0
   - Added Decrypt Difficulty 2.0 with V2 private breakdowns, human-centered phrase profiling, solver fairness separation, and telemetry calibration guardrails.
   - Added manual/community difficulty preview explanations with confidence, anchor coverage, fairness status, and suggested layout changes.

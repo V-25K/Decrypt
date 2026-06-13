@@ -81,7 +81,7 @@
       },
       {
         "label": "Decrypt: Clear Subreddit Game Data",
-        "description": "Clear this subreddit's Decrypt game data, including players, challenges, community ciphers, and progress",
+        "description": "Clear this subreddit's Decrypt game data",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-clear-subreddit-data"
