@@ -1975,6 +1975,116 @@ describe('Game', { timeout: 15000 }, () => {
     expect(submitGuessMutation).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps padlocks unlocked when a follow-up guess lands around the unlock refresh', async () => {
+    const lockedPuzzle = {
+      ...puzzleFixture('_'),
+      words: ['ABCD'],
+      tiles: [
+        { index: 0, isLetter: true, displayChar: '_', cipherNumber: 1, isBlind: false, isGold: false, isLocked: false },
+        { index: 1, isLetter: true, displayChar: '_', cipherNumber: 2, isBlind: false, isGold: false, isLocked: true },
+        { index: 2, isLetter: true, displayChar: 'C', cipherNumber: 3, isBlind: false, isGold: false, isLocked: false },
+        { index: 3, isLetter: true, displayChar: '_', cipherNumber: 4, isBlind: false, isGold: false, isLocked: false },
+      ],
+    };
+    const unlockedPuzzle = {
+      ...lockedPuzzle,
+      tiles: [
+        { ...lockedPuzzle.tiles[0], displayChar: 'A' },
+        { ...lockedPuzzle.tiles[1], isLocked: false },
+        lockedPuzzle.tiles[2],
+        lockedPuzzle.tiles[3],
+      ],
+    };
+    primeBaseMocks({ mode: 'expanded', puzzle: lockedPuzzle });
+
+    // Hold the unlock refresh open so we can interleave a follow-up guess. The
+    // deferred is installed only after the initial load (which also uses
+    // getCurrentView) so first paint is not blocked.
+    const refreshDeferred = deferredPromise<typeof unlockedPuzzle>();
+
+    const followUpGuess = deferredPromise<{
+      ok: true;
+      isCorrect: true;
+      errorCode: null;
+      revealedTiles: Array<{ index: number; letter: string }>;
+      revealedIndices: number[];
+      revealedLetter: string;
+      newlyUnlockedChainIds: number[];
+      lockProgressChanged: boolean;
+      heartsRemaining: number;
+      shieldConsumed: boolean;
+      isLevelComplete: boolean;
+      isGameOver: boolean;
+    }>();
+    submitGuessMutation
+      .mockResolvedValueOnce({
+        ok: true,
+        isCorrect: true,
+        errorCode: null,
+        revealedTiles: [{ index: 0, letter: 'A' }],
+        revealedIndices: [0],
+        revealedLetter: 'A',
+        newlyUnlockedChainIds: [1],
+        lockProgressChanged: true,
+        heartsRemaining: 3,
+        shieldConsumed: false,
+        isLevelComplete: false,
+        isGameOver: false,
+      })
+      .mockImplementationOnce(() => followUpGuess.promise);
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await waitForChallengeScreen();
+
+    const buttons = () =>
+      Array.from(
+        document.querySelectorAll('[data-testid="puzzle-token-wrap"] button')
+      ) as HTMLButtonElement[];
+    expect(buttons()[1]?.hasAttribute('disabled')).toBe(true);
+
+    // From here on, the next getCurrentView (the unlock refresh) stays pending.
+    getCurrentViewQuery.mockReturnValue(refreshDeferred.promise);
+
+    // Guess the key tile; the server reports the padlock chain unlocked.
+    buttons()[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(() => buttons()[0]?.getAttribute('data-tile-state') === 'selected');
+    expect(typeLetterWithProxy('A')).toBe(true);
+    await waitFor(() => submitGuessMutation.mock.calls.length === 1);
+    // Selection optimistically advances past the (still) locked tile to tile 3.
+    await waitFor(() => buttons()[3]?.getAttribute('data-tile-state') === 'selected');
+
+    // The unlock refresh is still in flight. Queue a follow-up guess: it must
+    // wait for the authoritative view rather than dispatching off a pre-unlock
+    // snapshot (which used to clobber the unlocked board back to locked).
+    expect(typeLetterWithProxy('D')).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(submitGuessMutation).toHaveBeenCalledTimes(1);
+
+    // Resolve the refresh: the unlocked board is adopted, then the follow-up
+    // guess runs on top of it.
+    refreshDeferred.resolve(unlockedPuzzle);
+    await waitFor(() => submitGuessMutation.mock.calls.length === 2);
+    followUpGuess.resolve({
+      ok: true,
+      isCorrect: true,
+      errorCode: null,
+      revealedTiles: [{ index: 3, letter: 'D' }],
+      revealedIndices: [3],
+      revealedLetter: 'D',
+      newlyUnlockedChainIds: [],
+      lockProgressChanged: false,
+      heartsRemaining: 3,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: false,
+    });
+
+    // After the follow-up guess applies, the previously locked tile stays
+    // unlocked instead of reverting until a manual reload.
+    await waitFor(() => buttons()[3]?.textContent?.includes('D') ?? false);
+    expect(buttons()[1]?.hasAttribute('disabled')).toBe(false);
+  });
+
   it('skips stale sibling input when the first correct guess auto-fills matching cipher tiles', async () => {
     const siblingPuzzle = {
       levelId: 'lvl_0001',

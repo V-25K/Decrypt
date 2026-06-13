@@ -16,13 +16,13 @@ const buildShareBadges = (params: {
 }): string[] => {
   const badges: string[] = [];
   if (params.mistakes === 0) {
-    badges.push('Flawless');
+    badges.push('🎯 Flawless');
   }
   if (params.usedPowerups === 0) {
-    badges.push('No powerups');
+    badges.push('🧠 No power-ups');
   }
   if (params.heartsRemaining >= 2) {
-    badges.push('Strong finish');
+    badges.push('❤️ Hearts to spare');
   }
   return badges;
 };
@@ -35,18 +35,18 @@ const buildShareComment = (params: {
   score: number;
 }): string => {
   const badges = buildShareBadges(params);
-  const lines = [
-    `- Score: **${params.score}**`,
-    `- Time: **${formatDuration(params.solveSeconds)}**`,
-    `- Mistakes: **${params.mistakes}**`,
-    `- Powerups: **${params.usedPowerups}**`,
-  ];
+  const time = formatDuration(params.solveSeconds);
+  const score = params.score.toLocaleString();
+  const headline =
+    params.mistakes === 0
+      ? `🔓 **Flawless decrypt!** I cracked this cipher in **${time}** for **${score}** points.`
+      : `🔓 **Cracked the cipher!** Solved it in **${time}** for **${score}** points.`;
 
+  const lines = [headline];
   if (badges.length > 0) {
-    lines.push('', `Highlights: **${badges.join(' | ')}**`);
+    lines.push('', badges.join('  ·  '));
   }
-
-  lines.push('', 'Can you beat this run?');
+  lines.push('', 'Think you can beat my run? Tap in and decrypt it. 👇');
   return lines.map(cleanLine).join('\n');
 };
 

@@ -703,6 +703,130 @@ describe('submitGuessForSession', () => {
       })
     );
   });
+
+  it('does not count a mistake when the guessed letter is correct for the tile', async () => {
+    // Models the fast-repeat race: the same letter occupies several blanks and
+    // an earlier guess already revealed this tile, so revealFromGuess reports
+    // "not correct" (nothing new to reveal) even though the letter is right.
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({
+        activeLevelId: 'lvl_0001',
+        mode: 'daily',
+        guessCount: 2,
+        wrongGuesses: 1,
+        mistakesMade: 1,
+        shieldIsActive: false,
+        revealedIndices: [0],
+      })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [{ index: 0, char: 'A', isLetter: true, wordIndex: 0 }],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(2);
+
+    const result = await submitGuessForSession({
+      levelId: 'lvl_0001',
+      tileIndex: 0,
+      guessedLetter: 'a',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.isGameOver).toBe(false);
+    expect(saveSessionStateMock).toHaveBeenCalledWith(
+      't2_test',
+      't3_test',
+      expect.objectContaining({ mistakesMade: 1, wrongGuesses: 1 })
+    );
+  });
+
+  it('does not consume the shield when the guessed letter is correct for the tile', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({
+        activeLevelId: 'lvl_0001',
+        mode: 'daily',
+        guessCount: 2,
+        wrongGuesses: 0,
+        mistakesMade: 0,
+        shieldIsActive: true,
+        revealedIndices: [0],
+      })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [{ index: 0, char: 'A', isLetter: true, wordIndex: 0 }],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(3);
+
+    const result = await submitGuessForSession({
+      levelId: 'lvl_0001',
+      tileIndex: 0,
+      guessedLetter: 'a',
+    });
+
+    expect(result.shieldConsumed).toBe(false);
+    expect(saveSessionStateMock).toHaveBeenCalledWith(
+      't2_test',
+      't3_test',
+      expect.objectContaining({ shieldIsActive: true, mistakesMade: 0 })
+    );
+  });
+
+  it('still counts a mistake when the guessed letter is wrong for the tile', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({
+        activeLevelId: 'lvl_0001',
+        mode: 'daily',
+        guessCount: 2,
+        wrongGuesses: 0,
+        mistakesMade: 0,
+        shieldIsActive: false,
+        revealedIndices: [],
+      })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [{ index: 0, char: 'A', isLetter: true, wordIndex: 0 }],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(2);
+
+    const result = await submitGuessForSession({
+      levelId: 'lvl_0001',
+      tileIndex: 0,
+      guessedLetter: 'z',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(saveSessionStateMock).toHaveBeenCalledWith(
+      't2_test',
+      't3_test',
+      expect.objectContaining({ mistakesMade: 1, wrongGuesses: 1 })
+    );
+  });
 });
 
 describe('getCurrentPuzzleView', () => {

@@ -140,7 +140,26 @@ export const OutcomeOverlay = memo(({
                           bubble.rank <= criticalOutcomeAvatarCount ? 'high' : 'low'
                         }
                         onError={(event) => {
-                          event.currentTarget.style.display = 'none';
+                          // A transient avatar fetch failure used to hide the
+                          // image for good (only a reload recovered it). Retry
+                          // the load a couple of times with backoff; only fall
+                          // back to the bare colour bubble if it keeps failing.
+                          const img = event.currentTarget;
+                          const attempts = Number(img.dataset.retry ?? '0');
+                          if (attempts >= 2) {
+                            img.style.display = 'none';
+                            return;
+                          }
+                          img.dataset.retry = String(attempts + 1);
+                          const src = img.src;
+                          window.setTimeout(() => {
+                            if (!img.isConnected) {
+                              return;
+                            }
+                            img.style.display = '';
+                            img.src = '';
+                            img.src = src;
+                          }, 300 * (attempts + 1));
                         }}
                       />
                     </div>

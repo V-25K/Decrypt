@@ -2686,7 +2686,7 @@ const tallyCommunityVotes = (
   return { likes, dislikes };
 };
 
-const getCommunityLevelAuthorId = async (
+export const getCommunityLevelAuthorId = async (
   levelId: string
 ): Promise<string | null> => {
   const submissionId = await redis.hGet(keyCommunitySubmissionsByLevel, levelId);

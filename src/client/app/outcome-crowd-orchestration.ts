@@ -229,16 +229,22 @@ export const useOutcomeCrowdOrchestration = ({
   useEffect(() => {
     const outcomeCrowdWidth = outcomeCrowdViewport.width;
     const outcomeCrowdHeight = outcomeCrowdViewport.height;
-    if (
-      activeScreen !== 'challenge' ||
-      !isComplete ||
-      outcomeCrowdWidth <= 0 ||
-      outcomeCrowdHeight <= 0
-    ) {
+    if (activeScreen !== 'challenge' || !isComplete) {
       outcomeCrowdBubblesRef.current = [];
       return deferOutcomeCrowdStateUpdate(() => {
         setOutcomeCrowdBubbles([]);
         setCompletionCrowdReady(false);
+      });
+    }
+    if (outcomeCrowdWidth <= 0 || outcomeCrowdHeight <= 0) {
+      // Viewport isn't measured yet — DON'T drop readiness here. Readiness
+      // (avatars preloaded) is owned by the preload effect; the viewport effect
+      // only runs while ready is true, so clearing it on a transient 0-size
+      // measurement deadlocks the crowd until a reload. Leave ready alone and
+      // wait for the viewport effect's rAF retry to re-measure.
+      outcomeCrowdBubblesRef.current = [];
+      return deferOutcomeCrowdStateUpdate(() => {
+        setOutcomeCrowdBubbles([]);
       });
     }
     if (completionCrowdAvatarUrls.length === 0) {

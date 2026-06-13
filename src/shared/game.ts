@@ -474,6 +474,9 @@ export const gameLoadLevelResponseSchema = z.object({
   levelId: z.string().min(1),
   puzzle: puzzlePublicSchema,
   alreadyCompleted: z.boolean(),
+  // True when the viewer is the creator of this community challenge: they
+  // can't earn from it, so the client shows the result page instead of play.
+  isOwnChallenge: z.boolean().default(false),
   retryCount: z.number().int().nonnegative(),
   nextRetryCost: z.number().int().nonnegative(),
   retryScoreFactor: z.number().nonnegative(),

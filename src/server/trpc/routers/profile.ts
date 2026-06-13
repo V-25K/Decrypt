@@ -13,6 +13,8 @@ import {
 import { isPrimaryCommunitySubreddit, primaryCommunitySubreddit } from '../../../shared/community';
 import { syncCommunityFlair } from '../../core/community-flair';
 import { communityJoinRewardCoins } from '../../core/constants';
+import { getUserRankSummary } from '../../core/leaderboard';
+import { formatDateKey } from '../../core/serde';
 import {
   getCoinHeartPurchaseStatus,
   purchaseCoinHeartRefill,
@@ -154,10 +156,16 @@ export const profileRouter = router({
         });
       }
       try {
+        const { globalRank } = await getUserRankSummary({
+          userId,
+          dateKey: formatDateKey(new Date()),
+        });
         await syncCommunityFlair({
           subredditName: ctx.subredditName,
           username: ctx.username,
           flair: nextFlair,
+          globalRank,
+          userId,
         });
       } catch (error) {
         return profileSetActiveFlairResponseSchema.parse({

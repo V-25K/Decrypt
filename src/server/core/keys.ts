@@ -67,6 +67,11 @@ export const keyChallengeEvaluationPublishIndex =
 
 export const keyUserProfile = (userId: string) => `decrypt:user:${userId}:profile`;
 
+// Last subreddit user-flair text written for this user (flair + global rank),
+// so repeated syncs only call the Reddit API when the text actually changes.
+export const keyUserFlairText = (userId: string) =>
+  `decrypt:user:${userId}:flair_text`;
+
 export const keyPlayerDifficultyRating = (userId: string) =>
   `decrypt:user:${userId}:difficulty_rating`;
 

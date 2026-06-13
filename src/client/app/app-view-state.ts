@@ -11,6 +11,9 @@ export type AppViewStateParams = {
   isInlineMode: boolean;
   mode: HomeTab;
   requiresPaidRetry: boolean;
+  // The viewer opened their own community challenge: show the solution as a
+  // result screen (no win treatment, no rewards) instead of a playable board.
+  isOwnChallengeReveal?: boolean;
 };
 
 export type AppViewState = {
@@ -37,6 +40,7 @@ export const getAppViewState = ({
   isInlineMode,
   mode,
   requiresPaidRetry,
+  isOwnChallengeReveal = false,
 }: AppViewStateParams): AppViewState => {
   const isHomeScreen = activeScreen === 'home';
   const isCommunityScreen = activeScreen === 'community';
@@ -51,7 +55,8 @@ export const getAppViewState = ({
     isQuestScreen ||
     isStatsScreen ||
     isLeaderboardScreen;
-  const showOutcomeOverlay = isChallengeScreen && (isGameOver || isComplete);
+  const showOutcomeOverlay =
+    isChallengeScreen && (isGameOver || isComplete || isOwnChallengeReveal);
 
   return {
     layoutTestId: isInlineMode ? 'layout-inline' : 'layout-expanded-stacked',

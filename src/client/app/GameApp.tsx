@@ -498,6 +498,9 @@ export const GameApp = () => {
     []
   );
   const [completionResult, setCompletionResult] = useState<RouterOutputs['game']['completeSession'] | null>(null);
+  // The viewer opened their own community challenge — show the solution as a
+  // result screen with no rewards instead of letting them play (and earn).
+  const [ownChallengeReveal, setOwnChallengeReveal] = useState(false);
   const [completionSolveSeconds, setCompletionSolveSeconds] = useState<number | null>(null);
   const [completionRatingDelta, setCompletionRatingDelta] = useState<number | null>(null);
   const [completionPointsGained, setCompletionPointsGained] = useState<number | null>(null);
@@ -1438,6 +1441,7 @@ export const GameApp = () => {
         setPuzzleView(loaded.puzzle, { resetSelection: true });
         applyDailyRetryState(loaded);
         setChallengeMetrics(loaded.challengeMetrics ?? defaultChallengeMetrics);
+        setOwnChallengeReveal(loaded.isOwnChallenge);
         const storageUserId = bootstrap.userId;
         const persistedOutcome = readOutcomeState(storageUserId);
         const outcomeDecision = getBootstrapOutcomeDecision({
@@ -1449,7 +1453,20 @@ export const GameApp = () => {
         if (outcomeDecision.shouldClearStalePersisted) {
           persistOutcomeState(storageUserId, null);
         }
-        if (outcomeDecision.branch === 'restore-persisted') {
+        if (loaded.isOwnChallenge) {
+          // The creator can't play (or earn from) their own challenge. Show the
+          // solution as a no-reward result screen; the server also rejects any
+          // completion for own challenges as a backstop.
+          persistOutcomeState(storageUserId, null);
+          setCompletionResult(null);
+          setCompletionSolveSeconds(null);
+          setCompletionRatingDelta(null);
+          setCompletionPointsGained(null);
+          setFailureRatingDelta(null);
+          setChallengeStartTs(null);
+          clearTileFeedback();
+          showToast("This is your challenge, so you can't play it — here's the solution.");
+        } else if (outcomeDecision.branch === 'restore-persisted') {
           const restoredOutcome = outcomeDecision.persistedOutcome;
           patchChallengeSession(
             buildRestoredOutcomeSessionPatch({
@@ -1534,16 +1551,20 @@ export const GameApp = () => {
           setFailureRatingDelta(null);
           setChallengeStartTs(null);
           clearTileFeedback();
-        } else if (shouldStartLoadedLevel) {
+        } else if (shouldStartLoadedLevel && !loaded.isOwnChallenge) {
           await startLevel(loaded.levelId, activeMode);
         }
-        const view = await trpc.game.getCurrentView.query({
-          levelId: loaded.levelId,
-        });
-        if (cancelled) {
-          return;
+        // Own challenges never start a session, so there's no server view to
+        // fetch — the result screen renders the solution from the loaded puzzle.
+        if (!loaded.isOwnChallenge) {
+          const view = await trpc.game.getCurrentView.query({
+            levelId: loaded.levelId,
+          });
+          if (cancelled) {
+            return;
+          }
+          applyServerPuzzleView(loaded.levelId, view, { resetSelection: true });
         }
-        applyServerPuzzleView(loaded.levelId, view, { resetSelection: true });
       } catch (error) {
         if (!cancelled) {
           dispatchAppRuntime({
@@ -1857,48 +1878,56 @@ export const GameApp = () => {
         : sessionPatch
     );
     const shouldRefresh = shouldRefreshPuzzleViewAfterGuess(result);
-    const viewPromise = shouldRefresh ? refreshCurrentView(levelId) : null;
     if (result.newlyUnlockedChainIds.length > 0) {
       showToast('Locks unlocked.');
     }
-      if (result.isLevelComplete) {
-        await finishLevel();
-      } else if (pendingFailure) {
-        guessQueueRef.current = [];
-        dispatchGuessWork({
-          type: 'syncQueuedGuessCount',
-          queuedGuessCount: 0,
-        });
-        setContinuePrompt({
-          levelId,
-          mode,
-          heartsRemaining: result.heartsRemaining,
-          ratingDelta: result.ratingDelta,
-        });
-        setRequiresPaidRetry(false);
-        setCompletionResult(null);
-        setCompletionSolveSeconds(null);
-        setCompletionRatingDelta(null);
-        setCompletionPointsGained(null);
-        setFailureRatingDelta(result.ratingDelta);
-    } else {
-      if (viewPromise) {
-        void viewPromise
-          .then((view) => {
-            if (
-              !completionInProgressRef.current &&
-              !hasAvailableLetters(view)
-            ) {
-              void finishLevel().catch(() => undefined);
-            }
-          })
-          .catch(() => undefined);
-      } else if (
-        !completionInProgressRef.current &&
-        !hasAvailableLetters(nextPuzzle)
-      ) {
-        void finishLevel().catch(() => undefined);
+    if (result.isLevelComplete) {
+      await finishLevel();
+    } else if (pendingFailure) {
+      guessQueueRef.current = [];
+      dispatchGuessWork({
+        type: 'syncQueuedGuessCount',
+        queuedGuessCount: 0,
+      });
+      setContinuePrompt({
+        levelId,
+        mode,
+        heartsRemaining: result.heartsRemaining,
+        ratingDelta: result.ratingDelta,
+      });
+      setRequiresPaidRetry(false);
+      setCompletionResult(null);
+      setCompletionSolveSeconds(null);
+      setCompletionRatingDelta(null);
+      setCompletionPointsGained(null);
+      setFailureRatingDelta(result.ratingDelta);
+    } else if (shouldRefresh) {
+      // Await the authoritative server view before returning so a freshly
+      // unlocked padlock (or any lock-progress change) is committed to state
+      // and adopted as the puzzle the *next* queued guess builds on. Firing
+      // this without awaiting let a follow-up guess rewrite the board from a
+      // pre-unlock snapshot, leaving padlocks visually "stuck" (and their
+      // tiles ungessable) until the player reloaded the page.
+      try {
+        const view = await refreshCurrentView(levelId);
+        nextPuzzle = view;
+        puzzleRef.current = view;
+        if (!completionInProgressRef.current && !hasAvailableLetters(view)) {
+          void finishLevel().catch(() => undefined);
+        }
+      } catch {
+        if (
+          !completionInProgressRef.current &&
+          !hasAvailableLetters(nextPuzzle)
+        ) {
+          void finishLevel().catch(() => undefined);
+        }
       }
+    } else if (
+      !completionInProgressRef.current &&
+      !hasAvailableLetters(nextPuzzle)
+    ) {
+      void finishLevel().catch(() => undefined);
     }
     return nextPuzzle;
   };
@@ -3043,6 +3072,7 @@ export const GameApp = () => {
     isInlineMode,
     mode,
     requiresPaidRetry,
+    isOwnChallengeReveal: ownChallengeReveal,
   });
   const {
     layoutTestId,

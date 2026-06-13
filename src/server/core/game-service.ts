@@ -60,6 +60,7 @@ import {
   getFastSolveBonus,
   qualifiesForFastSolveBonus,
   flawlessBonusCoins,
+  earnsFlawlessCoinBonus,
   getDailyRetryScoreFactor,
   minSolveSeconds,
   sessionInactivityThresholdMs,
@@ -99,9 +100,11 @@ import {
 import { getEndlessCatalogStatus, getNextEndlessCatalogLevelId } from './endless-catalog';
 import { hasAdminAccess } from './admin-auth';
 import {
+  getCommunityLevelAuthorId,
   getCommunityNotificationSummary,
   recordCommunityEndlessCompletion,
 } from './community';
+import { syncCommunityFlair } from './community-flair';
 import { formatDateKey } from './serde';
 import {
   keyCompletionFinalizeJournal,
@@ -523,6 +526,23 @@ export const bootstrapGame = async () => {
       getCommunityNotificationSummary({ userId, isModerator }),
     ]);
 
+    // Keep the player's subreddit flair (equipped flair + global rank) current.
+    // Best-effort and deduped — never block or fail bootstrap on a flair sync.
+    void (async () => {
+      try {
+        const { globalRank } = await getUserRankSummary({ userId, dateKey: todayDateKey });
+        await syncCommunityFlair({
+          subredditName: context.subredditName,
+          username: context.username,
+          flair: profile.activeFlair,
+          globalRank,
+          userId,
+        });
+      } catch {
+        // Flair is cosmetic; swallow (e.g. flair disabled on the subreddit).
+      }
+    })();
+
 	    return {
       userId,
       username: context.username ?? null,
@@ -659,14 +679,19 @@ export const loadLevelForUser = async (params: {
     : new Set<string>();
   
   const postId = context.postId ?? null;
-  const [challengeMetrics, failedLevel, retryCount, activeSession] = await Promise.all([
-    getLevelEngagement(levelId),
-    params.mode === 'daily' ? hasFailedLevel(userId, levelId) : Promise.resolve(false),
-    params.mode === 'daily'
-      ? getDailyRetryCount(userId, levelId)
-      : Promise.resolve(0),
-    postId ? getSessionState(userId, postId) : Promise.resolve(null),
-  ]);
+  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId] =
+    await Promise.all([
+      getLevelEngagement(levelId),
+      params.mode === 'daily' ? hasFailedLevel(userId, levelId) : Promise.resolve(false),
+      params.mode === 'daily'
+        ? getDailyRetryCount(userId, levelId)
+        : Promise.resolve(0),
+      postId ? getSessionState(userId, postId) : Promise.resolve(null),
+      getCommunityLevelAuthorId(levelId),
+    ]);
+  const isOwnChallenge = Boolean(
+    ownChallengeAuthorId && ownChallengeAuthorId === userId
+  );
   const retryState = buildDailyRetryState({
     mode: params.mode,
     retryCount,
@@ -688,6 +713,7 @@ export const loadLevelForUser = async (params: {
     levelId,
     puzzle: puzzlePublic,
     alreadyCompleted: completed.has(levelId),
+    isOwnChallenge,
     ...retryState,
     challengeMetrics,
   };
@@ -1054,12 +1080,22 @@ export const submitGuessForSession = async (params: {
     guessedLetter,
   });
 
+  const targetTile = puzzle.tiles[params.tileIndex];
+  const guessedLetterMatchesTile = Boolean(
+    targetTile && targetTile.isLetter && targetTile.char === guessedLetter
+  );
   let shieldConsumed = false;
   if (revealResult.isCorrect) {
     nextSession = addRevealedIndices(
       nextSession,
       revealResult.revealedTiles.map((tile) => tile.index)
     );
+  } else if (guessedLetterMatchesTile) {
+    // The guessed letter is correct for this tile, but nothing new was revealed
+    // — typically a fast repeat of a letter that an earlier guess already filled
+    // in (the same letter can occupy several blanks and all resolve at once).
+    // A correct letter must never cost a heart or burn a shield, so treat this
+    // as a benign no-op rather than a mistake.
   } else if (nextSession.shieldIsActive) {
     nextSession = {
       ...nextSession,
@@ -1254,12 +1290,37 @@ export const completeSessionForLevel = async (params: {
   const userId = assertUserId();
   const postId = assertPostId();
   await assertPuzzlePlayable(params.levelId);
-  const [session, puzzle, profile, inventory] = await Promise.all([
-    getSessionState(userId, postId),
-    loadPuzzlePrivate(params.levelId),
-    getUserProfile(userId),
-    getInventory(userId),
-  ]);
+  const [session, puzzle, profile, inventory, ownChallengeAuthorId] =
+    await Promise.all([
+      getSessionState(userId, postId),
+      loadPuzzlePrivate(params.levelId),
+      getUserProfile(userId),
+      getInventory(userId),
+      getCommunityLevelAuthorId(params.levelId),
+    ]);
+
+  // Loophole guard: a creator can never earn coins, points, or ELO on their
+  // own challenge. Reject the completion before any reward path runs, no matter
+  // what the client sends.
+  if (ownChallengeAuthorId && ownChallengeAuthorId === userId) {
+    await clearSessionState(userId, postId);
+    return {
+      ok: true,
+      accepted: false,
+      solveSeconds: 0,
+      score: 0,
+      rewardCoins: 0,
+      mistakes: session?.mistakesMade ?? 0,
+      usedPowerups: session?.usedPowerups ?? 0,
+      retryCount: 0,
+      retryScoreFactor: 1,
+      isRecoveryRun: false,
+      isCurrentDaily: false,
+      rewardNotice: null,
+      profile,
+      inventory,
+    };
+  }
 
   if (!session) {
     const journal = await redis.hGetAll(
@@ -1479,7 +1540,13 @@ export const completeSessionForLevel = async (params: {
 	      hasContinuedLevel(userId, params.levelId),
 	    ]);
 	    let rewardCoins = defaultCoinsReward;
-	    if (trackedSession.mistakesMade === 0 && !continuedLevel) {
+	    if (
+	      earnsFlawlessCoinBonus({
+	        mistakes: trackedSession.mistakesMade,
+	        usedPowerups: trackedSession.usedPowerups,
+	        continued: continuedLevel,
+	      })
+	    ) {
 	      rewardCoins += flawlessBonusCoins;
 	    }
     

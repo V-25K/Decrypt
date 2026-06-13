@@ -37,14 +37,11 @@ describe('shareResultAsComment', () => {
     expect(submitCommentMock).toHaveBeenCalledWith({
       id: 't3_testpost',
       text:
-        '- Score: **321**\n' +
-        '- Time: **01:35**\n' +
-        '- Mistakes: **1**\n' +
-        '- Powerups: **3**\n' +
+        '🔓 **Cracked the cipher!** Solved it in **01:35** for **321** points.\n' +
         '\n' +
-        'Highlights: **Strong finish**\n' +
+        '❤️ Hearts to spare\n' +
         '\n' +
-        'Can you beat this run?',
+        'Think you can beat my run? Tap in and decrypt it. 👇',
       runAs: 'USER',
     });
     expect(result).toEqual({
@@ -108,14 +105,11 @@ describe('shareResultAsComment', () => {
     expect(submitCommentMock).toHaveBeenCalledWith({
       id: 't3_testpost',
       text:
-        '- Score: **777**\n' +
-        '- Time: **01:28**\n' +
-        '- Mistakes: **0**\n' +
-        '- Powerups: **0**\n' +
+        '🔓 **Flawless decrypt!** I cracked this cipher in **01:28** for **777** points.\n' +
         '\n' +
-        'Highlights: **Flawless | No powerups | Strong finish**\n' +
+        '🎯 Flawless  ·  🧠 No power-ups  ·  ❤️ Hearts to spare\n' +
         '\n' +
-        'Can you beat this run?',
+        'Think you can beat my run? Tap in and decrypt it. 👇',
       runAs: 'USER',
     });
   });
