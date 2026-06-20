@@ -469,14 +469,18 @@ const parseManualPuzzleFormValues = (body: {
   if (!rawAuthor) {
     return {
       valid: false,
-      response: { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
+      response: {
+        showToast: `Invalid author. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`,
+      },
     };
   }
   const author = parseAuthor(body.author);
   if (!author) {
     return {
       valid: false,
-      response: { showToast: 'Invalid author. Use letters, numbers, spaces, . \' and - (max 28).' },
+      response: {
+        showToast: `Invalid author. Use letters, numbers, spaces, . ' and - (max ${maxPuzzleAuthorLength}).`,
+      },
     };
   }
   if (author !== normalizeLoose(rawAuthor)) {

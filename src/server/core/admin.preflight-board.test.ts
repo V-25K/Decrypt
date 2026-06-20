@@ -67,7 +67,7 @@ vi.mock('./content', () => {
     computePhraseDifficultyProfile: () => profile,
     difficultyToTier,
     looksLikeAllowedAuthor: () => true,
-    maxPuzzleAuthorLength: 28,
+    maxPuzzleAuthorLength: 60,
     normalizeContent: (input: string) => input.toUpperCase().replace(/[^A-Z0-9]/g, ''),
     rankDifficultyTiersForProfile: (
       _profile: PhraseDifficultyProfile,

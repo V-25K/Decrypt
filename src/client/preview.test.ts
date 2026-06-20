@@ -82,6 +82,7 @@ const previewFixture = (): GamePreviewResponse => ({
     wins: 3,
     winRatePct: 43,
   },
+  communityVotes: null,
   creator: {
     username: 'very_long_creator_name_that_should_fit',
     avatarUrl: 'https://example.com/avatar.png',
@@ -183,6 +184,38 @@ describe('preview entrypoint', () => {
     expect(document.querySelector('.preview-shell')).toBeTruthy();
     expect(document.body.textContent ?? '').not.toContain('Challenge Completed');
     expect(mountGameMock).not.toHaveBeenCalled();
+  });
+
+  it('omits the votes overlay for non-community previews', async () => {
+    mockFetchSequence({ levelId: 'lvl_0001', completed: false }, previewFixture());
+
+    await import('./preview');
+
+    await waitFor(() => Boolean(document.querySelector('.preview-puzzle-mask')));
+    expect(document.querySelector('[data-testid="preview-votes"]')).toBeNull();
+  });
+
+  it('renders a vote overlay with thumb icons for community previews', async () => {
+    mockFetchSequence(
+      { levelId: 'lvl_0001', completed: false },
+      { ...previewFixture(), communityVotes: { likes: 12, dislikes: 3 } }
+    );
+
+    await import('./preview');
+
+    await waitFor(() => Boolean(document.querySelector('[data-testid="preview-votes"]')));
+    // Anchored as a direct child of the card so it can sit in the corner.
+    expect(document.querySelector('.preview-shell > .preview-votes')).toBeTruthy();
+    expect(document.querySelector<HTMLImageElement>('.preview-vote-like .preview-vote-icon')?.src).toContain(
+      '/ui_thumb_up.png'
+    );
+    expect(document.querySelector<HTMLImageElement>('.preview-vote-dislike .preview-vote-icon')?.src).toContain(
+      '/ui_thumb_down.png'
+    );
+    expect(document.querySelector('.preview-vote-likes')?.textContent).toBe('12');
+    expect(document.querySelector('.preview-vote-dislikes')?.textContent).toBe('3');
+    // No emoji glyphs in the rendered card.
+    expect(document.body.textContent ?? '').not.toContain('\u{1F44D}');
   });
 
   it('positions apostrophe punctuation at the top of the preview line', async () => {

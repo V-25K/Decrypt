@@ -32,6 +32,7 @@ vi.mock('@devvit/web/server', () => ({
   context: contextState,
   reddit: {
     getSnoovatarUrl: vi.fn(),
+    sendPrivateMessage: vi.fn().mockResolvedValue(undefined),
   },
   redis: redisMock,
 }));

@@ -1,4 +1,5 @@
 import {
+  maxPuzzleAuthorLength as sharedMaxPuzzleAuthorLength,
   maxPuzzleTotalLength as sharedMaxPuzzleTotalLength,
   minPlayablePuzzleTotalLength as sharedMinPlayablePuzzleTotalLength,
 } from '../../shared/puzzle-limits';
@@ -7,7 +8,7 @@ import { commonWordRank, topCommonWords } from './common-word-ranks';
 export const maxPuzzleWordLength = 12;
 export const maxPuzzleTotalLength = sharedMaxPuzzleTotalLength;
 export const minPlayablePuzzleTotalLength = sharedMinPlayablePuzzleTotalLength;
-export const maxPuzzleAuthorLength = 28;
+export const maxPuzzleAuthorLength = sharedMaxPuzzleAuthorLength;
 const maxAlphabetLetters = 26;
 const absoluteEntropyMax = Math.log2(maxAlphabetLetters);
 const commonDifficultySuffixes = ['ING', 'TION', 'NESS', 'LY', 'ED', 'ER', 'EST'];
@@ -595,12 +596,14 @@ const defaultHardnessBoundsByTier: HardnessBoundsByTier = {
     cryptoHardnessBounds: { min: 0.32, max: 0.58 },
   },
   hard: {
-    uniqueLetterBounds: { min: 13, max: 22 },
-    cryptoHardnessBounds: { min: 0.58, max: 0.82 },
+    // Nudged down a touch — hard puzzles were skewing too punishing in play.
+    uniqueLetterBounds: { min: 12, max: 21 },
+    cryptoHardnessBounds: { min: 0.52, max: 0.76 },
   },
   expert: {
-    uniqueLetterBounds: { min: 19, max: 26 },
-    cryptoHardnessBounds: { min: 0.78, max: 1.0 },
+    // Same easing applied to expert so the top tier stays tough but fair.
+    uniqueLetterBounds: { min: 18, max: 26 },
+    cryptoHardnessBounds: { min: 0.7, max: 0.94 },
   },
 };
 

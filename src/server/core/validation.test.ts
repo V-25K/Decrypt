@@ -101,7 +101,7 @@ describe('validation', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0005',
       dateKey: '2026-02-24',
-      text: `${'ALPHA BRAVO '.repeat(17)}END`,
+      text: `${'ALPHA BRAVO '.repeat(21)}END`,
       author: 'UNKNOWN',
       difficulty: 5,
       logicalPercent: 10,
@@ -115,7 +115,7 @@ describe('validation', () => {
   });
 
   it('counts punctuation toward total challenge length cap', () => {
-    const overLimitWithPunctuation = `${'A '.repeat(101)}!`;
+    const overLimitWithPunctuation = `${'A '.repeat(126)}!`;
     const generated = buildPuzzle({
       levelId: 'lvl_0006',
       dateKey: '2026-02-24',

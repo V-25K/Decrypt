@@ -109,7 +109,10 @@ body {
   align-items: center;
   align-items: safe center;
   overflow: hidden;
-  padding: 16px 10px 6px;
+  /* Extra bottom room shrinks the content box so the puzzle clips a row or two
+     sooner, reserving a clean band for the "..." indicator and the stats line
+     instead of crowding them. */
+  padding: 16px 10px 28px;
 }
 
 .preview-puzzle-mask.preview-puzzle-overflow::after {
@@ -184,7 +187,7 @@ body {
   max-width: min(100%, 760px);
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .preview-puzzle-overflow .preview-puzzle {
@@ -343,7 +346,7 @@ body {
   justify-content: center;
   column-gap: 11px;
   row-gap: 4px;
-  padding: 5px 16px 0;
+  padding: 9px 16px 0;
   color: var(--preview-text-muted);
   font-family: var(--preview-font-display);
   font-size: clamp(12px, 2.6vw, 15.5px);
@@ -382,6 +385,42 @@ body {
 
 .preview-stat-difficulty.preview-difficulty-expert {
   color: #ee837b;
+}
+
+.preview-shell > .preview-votes {
+  position: absolute;
+  right: clamp(10px, 2.6vw, 16px);
+  bottom: clamp(10px, 2.6vw, 16px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(6px, 1.4vw, 10px);
+  pointer-events: none;
+}
+
+.preview-vote {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.preview-vote-icon {
+  width: clamp(22px, 4.5vw, 32px);
+  height: clamp(22px, 4.5vw, 32px);
+  object-fit: contain;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.65));
+}
+
+.preview-vote-count {
+  font-family: var(--preview-font-display);
+  font-size: clamp(12px, 2.6vw, 16px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--preview-text);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.85);
 }
 
 .preview-footer {
@@ -727,7 +766,7 @@ body.preview-minimal .preview-skeleton-cta {
   }
 
   .preview-puzzle-mask {
-    padding: 12px 8px 4px;
+    padding: 12px 8px 20px;
   }
 
   .preview-tile {
@@ -749,7 +788,7 @@ body.preview-minimal .preview-skeleton-cta {
   }
 
   .preview-puzzle {
-    gap: 8px;
+    gap: 6px;
   }
 
   .preview-word {
@@ -759,7 +798,7 @@ body.preview-minimal .preview-skeleton-cta {
 
   .preview-stats {
     column-gap: 9px;
-    padding: 4px 10px 0;
+    padding: 8px 10px 0;
     font-size: 12px;
   }
 

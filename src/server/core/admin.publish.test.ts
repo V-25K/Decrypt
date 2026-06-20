@@ -91,7 +91,7 @@ vi.mock('./content', () => ({
     candidateTiers: string[] = ['warmup', 'medium', 'hard', 'expert']
   ) => candidateTiers.map((tier, index) => ({ tier, score: index, issues: [] })),
   looksLikeAllowedAuthor: (value: string) => /^[A-Z0-9 .'-]+$/.test(value) && /[A-Z]/.test(value),
-  maxPuzzleAuthorLength: 28,
+  maxPuzzleAuthorLength: 60,
   sanitizeAuthor: (value: string) =>
     value
       .toUpperCase()
@@ -328,7 +328,7 @@ describe('daily publish activation flows', () => {
 
     expect(result).toMatchObject({
       success: false,
-      error: "Invalid author. Use letters, numbers, spaces, . ' and - (max 28).",
+      error: "Invalid author. Use letters, numbers, spaces, . ' and - (max 60).",
     });
     expect(injectManualPuzzleMock).not.toHaveBeenCalled();
     expect(publishAndActivateDailyPostMock).not.toHaveBeenCalled();

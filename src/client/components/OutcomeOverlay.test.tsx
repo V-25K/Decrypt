@@ -24,6 +24,7 @@ const renderOverlay = async (
     share: vi.fn(async () => undefined),
     nextChallenge: vi.fn(),
     isDailyComplete: false,
+    isEndlessComplete: false,
     retry,
     openHome: vi.fn(),
     subredditName: 'decrypttest_dev',
@@ -39,6 +40,7 @@ const renderOverlay = async (
     puzzleAuthor: 'Tester',
     hasClaimableQuest: false,
     openQuest: vi.fn(),
+    openCreate: vi.fn(),
   };
   const mergedProps = {
     ...defaultProps,
@@ -103,6 +105,23 @@ describe('OutcomeOverlay', () => {
     expect(nextChallenge).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the create CTA and routes into the create flow', async () => {
+    const openCreate = vi.fn();
+    await renderOverlay({ openCreate });
+
+    const button = container.querySelector('[data-testid="overlay-create-button"]');
+    expect(button).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      if (button instanceof HTMLButtonElement) {
+        button.click();
+      }
+      await Promise.resolve();
+    });
+
+    expect(openCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('does not render result title or retry subtitle copy', async () => {
     await renderOverlay();
 
@@ -153,6 +172,16 @@ describe('OutcomeOverlay', () => {
     });
 
     expect(nextChallenge).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the play-again button after completing an endless cipher', async () => {
+    await renderOverlay({
+      showSuccessOverlay: true,
+      isDailyComplete: false,
+      isEndlessComplete: true,
+    });
+
+    expect(container.querySelector('[data-testid="overlay-play-again"]')).toBeNull();
   });
 
   it('keeps circular result actions grouped before the next CTA', async () => {

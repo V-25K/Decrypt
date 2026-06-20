@@ -106,4 +106,24 @@ describe('submitCommunitySubmission', () => {
       })
     ).rejects.toThrow('You already have 3 submissions under review.');
   });
+
+  it('enforces a 6-hour cooldown between submissions', async () => {
+    // Most recent submission was 1 minute ago — well inside the 6h window.
+    redisMock.zRange.mockResolvedValue([
+      { member: 'submission-1', score: Date.now() - 60_000 },
+    ]);
+    redisMock.hGetAll.mockResolvedValue({});
+
+    await expect(
+      submitCommunitySubmission({
+        title: 'Too soon',
+        text: 'THE QUICK BROWN FOX JUMPS',
+        category: 'QUOTE',
+        attribution: 'Tester',
+        targetDifficulty: 5,
+        creationMode: 'auto',
+        manualLayout: null,
+      })
+    ).rejects.toThrow('once every 6 hours');
+  });
 });

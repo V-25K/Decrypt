@@ -137,6 +137,15 @@ export const keyGlobalRatingLeaderboard = 'decrypt:leaderboard:global:rating';
 
 export const keyGlobalScoreLeaderboard = 'decrypt:leaderboard:global:score';
 
+/**
+ * Cached cutoff (epoch ms) for global-leaderboard point eligibility. Only wins on
+ * challenges created on/after this instant award global points, so post-migration
+ * players can't farm the pre-cutoff backlog past veterans. Anchored at the launch
+ * of Daily #globalScorePointsMinDailyNumber; see points-eligibility.ts.
+ */
+export const keyGlobalScorePointsCutoffMs =
+  'decrypt:leaderboard:global:points-cutoff-ms';
+
 export const keyUserGlobalLevelScores = (userId: string) =>
   `decrypt:user:${userId}:global:level_scores`;
 

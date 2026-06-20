@@ -29,6 +29,10 @@ export type AppViewState = {
   showChallengeBackdrop: boolean;
   showSuccessOverlay: boolean;
   isDailyComplete: boolean;
+  // A finished endless cipher must not offer a replay button — clearing it once
+  // is the whole point. Daily was already gated via isDailyComplete; this gates
+  // endless the same way so completed puzzles in either mode hide "Play again".
+  isEndlessComplete: boolean;
   showPaidDailyRetryCta: boolean;
 };
 
@@ -71,6 +75,7 @@ export const getAppViewState = ({
     showChallengeBackdrop: isChallengeScreen && !showOutcomeOverlay,
     showSuccessOverlay: isComplete,
     isDailyComplete: mode === 'daily' && isComplete,
+    isEndlessComplete: mode === 'endless' && isComplete,
     showPaidDailyRetryCta: mode === 'daily' && isGameOver && requiresPaidRetry,
   };
 };

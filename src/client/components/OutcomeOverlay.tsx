@@ -19,6 +19,7 @@ type OutcomeOverlayProps = {
   share: () => Promise<void>;
   nextChallenge: (event?: MouseEvent<HTMLButtonElement>) => void;
   isDailyComplete: boolean;
+  isEndlessComplete: boolean;
   retry: () => Promise<void>;
   openHome: () => void;
   subredditName: string | null;
@@ -34,6 +35,7 @@ type OutcomeOverlayProps = {
   puzzleAuthor: string;
   hasClaimableQuest: boolean;
   openQuest: (event?: MouseEvent<HTMLButtonElement>) => void;
+  openCreate: (event: MouseEvent<HTMLButtonElement>) => void;
   outcomeLevelId: string | null;
 };
 
@@ -50,6 +52,7 @@ export const OutcomeOverlay = memo(({
   share,
   nextChallenge,
   isDailyComplete,
+  isEndlessComplete,
   retry,
   openHome,
   subredditName,
@@ -65,6 +68,7 @@ export const OutcomeOverlay = memo(({
   puzzleAuthor,
   hasClaimableQuest,
   openQuest,
+  openCreate,
   outcomeLevelId,
 }: OutcomeOverlayProps) => {
   const displayedCompletionQuote = truncateOutcomeQuote(completionQuote);
@@ -197,7 +201,7 @@ export const OutcomeOverlay = memo(({
                 </button>
               )}
 
-              {showSuccessOverlay && !isDailyComplete && (
+              {showSuccessOverlay && !isDailyComplete && !isEndlessComplete && (
                 <button
                   type="button"
                   data-testid="overlay-play-again"
@@ -317,6 +321,42 @@ export const OutcomeOverlay = memo(({
             </div>
           </div>
         )}
+
+        {/* Create Button - Bottom Right (Book Tag Style): mirrors the Claim tag
+            but opens the create flow (Bug 5). Available on every result. */}
+        <div className="pointer-events-none absolute bottom-0 right-0 z-30 pb-4 sm:pb-5">
+          <div className="pointer-events-auto relative">
+            <button
+              type="button"
+              data-testid="overlay-create-button"
+              className="create-book-tag group relative flex items-center gap-2 overflow-visible py-2 pl-4 pr-3 sm:py-2.5 sm:pl-5 sm:pr-4"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openCreate(event);
+              }}
+              disabled={busy}
+              aria-label="Create your own challenge"
+              title="Create your own challenge"
+              style={{
+                background: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)',
+                clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 100%)',
+                borderTopLeftRadius: '12px',
+                borderBottomLeftRadius: '12px',
+                boxShadow:
+                  '0 4px 12px rgba(37, 99, 235, 0.4), 0 0 20px rgba(37, 99, 235, 0.3)',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              }}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/25 text-sm font-black leading-none text-white">
+                +
+              </span>
+              <span className="text-xs font-black uppercase tracking-wide text-white sm:text-sm">
+                Create
+              </span>
+            </button>
+          </div>
+        </div>
 
         <div className="mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col justify-center overflow-hidden bg-transparent px-3 pb-20 pt-16 sm:px-4 sm:pb-24 sm:pt-20">
           <div className="mx-auto flex w-full max-w-[500px] flex-col items-center text-center">

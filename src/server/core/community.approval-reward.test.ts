@@ -83,7 +83,10 @@ const {
 
 vi.mock('@devvit/web/server', () => ({
   context: { userId: 't2_reviewer', username: 'reviewer', subredditName: 'decrypttest_dev' },
-  reddit: { getSnoovatarUrl: vi.fn().mockResolvedValue(undefined) },
+  reddit: {
+    getSnoovatarUrl: vi.fn().mockResolvedValue(undefined),
+    sendPrivateMessage: vi.fn().mockResolvedValue(undefined),
+  },
   redis,
 }));
 vi.mock('./config', () => ({

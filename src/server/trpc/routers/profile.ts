@@ -59,13 +59,10 @@ const isAlreadySubscribedResult = (error: unknown): boolean => {
 
 const toJoinCommunityFailureReason = (error: unknown): string => {
   if (isSubscribePermissionFailure(error)) {
-    return 'Subscribe is unavailable for this player in playtest. After app approval, it works for all users.';
+    return "Subscribing isn't available right now.";
   }
   if (isRetryableSubscribeFailure(error)) {
     return 'Unable to join the community right now. Please try again in a moment.';
-  }
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
   }
   return 'Unable to join the community right now.';
 };
@@ -96,11 +93,12 @@ export const profileRouter = router({
     try {
       await subscribeCurrentCommunity();
     } catch (error) {
-      if (!isSubscribePermissionFailure(error) && !isRetryableSubscribeFailure(error)) {
-        console.error(
-          `profile.joinCommunity failed userId=${userId} subreddit=${ctx.subredditName} error=${describeActionError(error)}`
-        );
-      }
+      // Always log (including permission/retryable) so live failures on approved
+      // installs are diagnosable via `devvit logs` — these were previously
+      // swallowed, which is why a real subscribe failure left no trace (Bug 2).
+      console.error(
+        `profile.joinCommunity failed userId=${userId} subreddit=${ctx.subredditName} permission=${isSubscribePermissionFailure(error)} retryable=${isRetryableSubscribeFailure(error)} error=${describeActionError(error)}`
+      );
       return profileJoinCommunityResponseSchema.parse({
         success: false,
         reason: toJoinCommunityFailureReason(error),
@@ -168,12 +166,10 @@ export const profileRouter = router({
           userId,
         });
       } catch (error) {
+        console.error('[profile] setActiveFlair flair sync failed:', error);
         return profileSetActiveFlairResponseSchema.parse({
           success: false,
-          reason:
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : 'Unable to update community flair.',
+          reason: 'Unable to update community flair.',
           profile,
         });
       }

@@ -9,6 +9,7 @@ import {
   rerollAndPublish,
 } from '../core/admin';
 import { tierDisplayName } from '../core/tier-fitter';
+import { maxPuzzleAuthorLength } from '../core/content';
 import { hasAdminAccess } from '../core/admin-auth';
 import {
   challengeTypeDisplayOrder,
@@ -246,7 +247,7 @@ menu.post('/mod-inject', async (c) => {
               name: 'author',
               label: 'Author',
               required: true,
-              helpText: 'Displayed as the quote/challenge author (max 28 characters).',
+              helpText: `Displayed as the quote/challenge author (max ${maxPuzzleAuthorLength} characters).`,
             },
             {
               type: 'select',

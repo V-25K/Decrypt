@@ -18,6 +18,7 @@ const expandedChallengeModeIntentKey = 'decrypt-expanded-challenge-mode-intent';
 const expandedScreenIntentTtlMs = 5000;
 const outcomeStateStorageKey = 'decrypt-challenge-outcome-v1';
 const themePreferenceStorageKey = 'decrypt-theme-preference-v1';
+const keyboardPreferenceStorageKey = 'decrypt-keyboard-preference-v1';
 const correctGuessStateStorageKeyPrefix = 'decrypt-correct-guess-tiles-v1:';
 const storageMigrationMarkerPrefix = 'decrypt-storage-migrated-v1:';
 const expandedIntentScreens = [
@@ -96,6 +97,31 @@ export const persistThemePreference = (theme: ThemePreference): void => {
     localStorage.setItem(themePreferenceStorageKey, theme);
   } catch (_error) {
     // Ignore storage failures; the server-side preference still applies.
+  }
+};
+
+// How the player wants to type guesses:
+//   'auto'     — let the device decide (in-app keyboard on touch, physical on desktop)
+//   'onscreen' — always show the in-app keyboard
+//   'system'   — never show the in-app keyboard; use the device/system keyboard
+// This is a device-local choice (it depends on the hardware in hand), so unlike
+// the theme it is not synced to the server profile.
+export type KeyboardPreference = 'auto' | 'onscreen' | 'system';
+
+export const readKeyboardPreference = (): KeyboardPreference => {
+  try {
+    const stored = localStorage.getItem(keyboardPreferenceStorageKey);
+    return stored === 'onscreen' || stored === 'system' ? stored : 'auto';
+  } catch (_error) {
+    return 'auto';
+  }
+};
+
+export const persistKeyboardPreference = (preference: KeyboardPreference): void => {
+  try {
+    localStorage.setItem(keyboardPreferenceStorageKey, preference);
+  } catch (_error) {
+    // Ignore storage failures; the in-memory preference still applies this session.
   }
 };
 

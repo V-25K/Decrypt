@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from 'react';
+import { navigateTo } from '@devvit/web/client';
 import {
   challengeTypeDisplayOrder,
   challengeTypeMetadata,
@@ -9,6 +10,12 @@ import {
 import { tabButtonClass } from '../app/ui';
 import type { ChallengeMetrics, DeviceTier, HomeTab } from '../app/types';
 import { cn } from '../utils';
+
+// External legal docs, opened in the user's browser via navigateTo. Devvit app
+// review requires a visible in-app link to Terms + Privacy because the app uses
+// server-side HTTP Fetch.
+const TERMS_URL = 'https://github.com/V-25K/Decrypt/blob/main/TERMS_AND_CONDITIONS.md';
+const PRIVACY_URL = 'https://github.com/V-25K/Decrypt/blob/main/PRIVACY_POLICY.md';
 
 type HomeScreenProps = {
   deviceTier: DeviceTier;
@@ -77,7 +84,7 @@ export const HomeScreen = ({
   dailyCaughtUpMessage,
   onDailyCaughtUpEndless,
 }: HomeScreenProps) => (
-  <section className="flex min-h-0 flex-1 flex-col" data-testid="home-screen">
+  <section className="relative flex min-h-0 flex-1 flex-col" data-testid="home-screen">
     <main className="flex min-h-0 flex-1 flex-col px-3 py-3">
       <div className={cn(homePanelClass, 'home-panel-stack')}>
         <div className="flex items-center justify-center">
@@ -123,35 +130,6 @@ export const HomeScreen = ({
             className="home-stage-panel panel-clear rounded-xl px-4 py-4 text-center"
             data-testid="home-daily-panel"
           >
-            {dailyCaughtUpMessage && (
-              <section
-                className="app-surface-subtle app-border app-text mb-3 rounded-xl border px-3 py-3 text-center"
-                data-testid="home-daily-caught-up"
-              >
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/35 bg-black/25">
-                  <img
-                    src="/ui_key.png"
-                    alt=""
-                    loading="eager"
-                    className="ui-sprite h-8 w-8"
-                  />
-                </div>
-                <p className="mt-2 text-[13px] font-black uppercase leading-snug">
-                  All clear
-                </p>
-                <p className="app-text-muted mt-1 text-[11px] font-extrabold leading-snug">
-                  {dailyCaughtUpMessage}
-                </p>
-                <button
-                  type="button"
-                  className="btn-3d btn-primary mt-3 w-full rounded-xl px-3 py-2 text-[11px] font-black uppercase"
-                  onClick={onDailyCaughtUpEndless}
-                  data-testid="home-daily-caught-up-endless"
-                >
-                  Try Endless
-                </button>
-              </section>
-            )}
             <p className="app-text-muted mt-1 text-xs font-semibold uppercase">
               Daily Cipher #{formattedLevel}
             </p>
@@ -185,46 +163,6 @@ export const HomeScreen = ({
           >
             {endlessCatalogAvailable ? (
               <>
-	                {endlessCaughtUpMessage && (
-	                  <section
-	                    className="app-surface-subtle app-border app-text rounded-xl border px-3 py-3 text-center"
-	                    data-testid="home-endless-caught-up"
-	                  >
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/35 bg-black/25">
-                        <img
-                          src="/ui_key.png"
-                          alt=""
-                          loading="eager"
-                          className="ui-sprite h-8 w-8"
-                        />
-                      </div>
-                      <p className="mt-2 text-[13px] font-black uppercase leading-snug">
-                        All clear
-                      </p>
-                      <p className="app-text-muted mt-1 text-[11px] font-extrabold leading-snug">
-                        {endlessCaughtUpMessage}
-                      </p>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          className="btn-3d btn-primary rounded-xl px-3 py-2 text-[11px] font-black uppercase"
-                          onClick={() => {
-                            onEndlessCategoryFilterChange(null);
-                            onEndlessSortChange('random');
-                          }}
-                        >
-                          All Categories
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-3d btn-home rounded-xl px-3 py-2 text-[11px] font-black uppercase"
-                          onClick={onEndlessCaughtUpHome}
-                        >
-                          Daily
-                        </button>
-                      </div>
-	                  </section>
-	                )}
                 <div className="grid gap-2">
                   <label className="app-text flex flex-col gap-1 text-[10px] font-black uppercase">
                     <span className="app-text-soft">Category</span>
@@ -282,6 +220,83 @@ export const HomeScreen = ({
           </section>
         )}
       </div>
+      <footer className="mt-auto flex items-center justify-center gap-3 pt-3 text-[10px] font-bold uppercase tracking-wide">
+        <button
+          type="button"
+          className="app-text-muted underline-offset-2 hover:underline"
+          onClick={() => navigateTo(TERMS_URL)}
+          data-testid="home-terms-link"
+        >
+          Terms
+        </button>
+        <span className="app-text-soft" aria-hidden="true">
+          ·
+        </span>
+        <button
+          type="button"
+          className="app-text-muted underline-offset-2 hover:underline"
+          onClick={() => navigateTo(PRIVACY_URL)}
+          data-testid="home-privacy-link"
+        >
+          Privacy
+        </button>
+      </footer>
     </main>
+    {/* Caught-up notice floats OVER the home content (Bug #9) instead of sitting
+        in-flow and pushing the logo/stats/Play down. The bottom nav stays
+        reachable below this overlay, and the card's actions move the player on. */}
+    {((homeTab === 'daily' && dailyCaughtUpMessage) ||
+      (homeTab === 'endless' && endlessCatalogAvailable && endlessCaughtUpMessage)) && (
+      <div
+        className="absolute inset-0 z-30 flex items-center justify-center px-5"
+        data-testid={
+          homeTab === 'daily' ? 'home-daily-caught-up' : 'home-endless-caught-up'
+        }
+      >
+        <div
+          className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+          aria-hidden="true"
+        />
+        <section className="app-surface-strong app-border app-text relative z-[1] w-full max-w-[300px] rounded-2xl border px-4 py-5 text-center shadow-[0_22px_48px_rgba(0,0,0,0.5)]">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/35 bg-black/25">
+            <img src="/ui_key.png" alt="" loading="eager" className="ui-sprite h-8 w-8" />
+          </div>
+          <p className="mt-2 text-[13px] font-black uppercase leading-snug">All clear</p>
+          <p className="app-text-muted mt-1 text-[11px] font-extrabold leading-snug">
+            {homeTab === 'daily' ? dailyCaughtUpMessage : endlessCaughtUpMessage}
+          </p>
+          {homeTab === 'daily' ? (
+            <button
+              type="button"
+              className="btn-3d btn-primary mt-4 w-full rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+              onClick={onDailyCaughtUpEndless}
+              data-testid="home-daily-caught-up-endless"
+            >
+              Try Endless
+            </button>
+          ) : (
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn-3d btn-primary rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+                onClick={() => {
+                  onEndlessCategoryFilterChange(null);
+                  onEndlessSortChange('random');
+                }}
+              >
+                All Categories
+              </button>
+              <button
+                type="button"
+                className="btn-3d btn-home rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+                onClick={onEndlessCaughtUpHome}
+              >
+                Daily
+              </button>
+            </div>
+          )}
+        </section>
+      </div>
+    )}
   </section>
 );

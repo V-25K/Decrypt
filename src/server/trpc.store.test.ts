@@ -306,8 +306,7 @@ describe('profile.joinCommunity', () => {
       success: false,
       joined: false,
       rewardCoins: 0,
-      reason:
-        'Subscribe is unavailable for this player in playtest. After app approval, it works for all users.',
+      reason: "Subscribing isn't available right now.",
       profile: expect.objectContaining({
         communityJoinRecorded: false,
         communityJoinRewardClaimed: false,

@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import type { ThemePreference } from '../../shared/game';
+import type { KeyboardPreference } from '../app/game-storage';
 import type { DeviceTier } from '../app/types';
 import { UiSprite } from './UiSprite';
 import { cn } from '../utils';
@@ -12,14 +13,22 @@ type SettingsOverlayProps = {
   audioBusy: boolean;
   themePreference: ThemePreference;
   themeBusy: boolean;
+  keyboardPreference: KeyboardPreference;
   onToggleAudio: () => void;
   onSelectTheme: (theme: ThemePreference) => void;
+  onSelectKeyboard: (preference: KeyboardPreference) => void;
   onClose: () => void;
 };
 
 const themeOptions: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'default', label: 'Default' },
   { value: 'minimal', label: 'Minimal' },
+];
+
+const keyboardOptions: ReadonlyArray<{ value: KeyboardPreference; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'onscreen', label: 'On-screen' },
+  { value: 'system', label: 'System' },
 ];
 
 export const SettingsOverlay = ({
@@ -30,8 +39,10 @@ export const SettingsOverlay = ({
   audioBusy,
   themePreference,
   themeBusy,
+  keyboardPreference,
   onToggleAudio,
   onSelectTheme,
+  onSelectKeyboard,
   onClose,
 }: SettingsOverlayProps) => (
   <div
@@ -143,6 +154,43 @@ export const SettingsOverlay = ({
           >
             Minimal uses a plain background and follows your Reddit light or
             dark mode on its own.
+          </p>
+        </section>
+        <section className="app-surface-strong rounded-lg border app-border px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <UiSprite icon="settings" decorative className="h-4 w-4 shrink-0" />
+            <h3
+              className={`${
+                deviceTier === 'mobile' ? 'text-[10px]' : 'text-[11px]'
+              } app-text font-black uppercase`}
+            >
+              Keyboard
+            </h3>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {keyboardOptions.map((option) => (
+              <button
+                key={option.value}
+                data-testid={`keyboard-option-${option.value}`}
+                type="button"
+                className={cn(
+                  'btn-3d btn-compact rounded-lg border py-1.5 text-[10px] font-black uppercase',
+                  keyboardPreference === option.value ? 'btn-primary btn-pressed' : 'btn-neutral'
+                )}
+                onClick={() => onSelectKeyboard(option.value)}
+                aria-pressed={keyboardPreference === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p
+            className={`${
+              deviceTier === 'mobile' ? 'text-[9px]' : 'text-[10px]'
+            } app-text-muted mt-2 font-semibold normal-case`}
+          >
+            Choose the in-app on-screen keyboard or your device's system
+            keyboard. Auto picks the best one for your device.
           </p>
         </section>
       </div>

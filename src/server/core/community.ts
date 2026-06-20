@@ -70,6 +70,7 @@ import { buildPuzzle, buildPublicPuzzle, estimateDifficultyFromObstructions } fr
 import { formatDateKey } from './serde';
 import { getLevelEngagement, type LevelEngagement } from './engagement';
 import { logWarn } from './log';
+import { sendCreatorNotification, sendModNotification } from './mod-notify';
 import { runDummySolver } from './dummy-solver';
 import { validatePuzzle } from './validation';
 import {
@@ -188,6 +189,9 @@ const communityMaxLength = maxPuzzleTotalLength;
 const communityTitleMaxLength = 60;
 const communityMakerFlair = 'Puzzle Maker';
 const maxPendingCommunitySubmissionsPerUser = 3;
+// A creator may send a new challenge for approval at most once every 6 hours,
+// to pace creation and keep the moderation queue manageable.
+const communitySubmissionCooldownMs = 6 * 60 * 60 * 1000;
 const approvalLockTtlMs = 120_000;
 const defaultCommunityPreviewTitle = 'Can you decrypt this?';
 const defaultCommunityTitle = 'Community Cipher';
@@ -368,6 +372,35 @@ const countPendingSubmissionsForAuthor = async (userId: string): Promise<number>
     }
   }
   return pending;
+};
+
+// Timestamp of this author's most recent fresh submission (the by-author zset is
+// scored by submit time), used to enforce the creation cooldown. Null if they've
+// never submitted.
+const getLastSubmissionTimeForAuthor = async (
+  userId: string
+): Promise<number | null> => {
+  const entries = await redis.zRange(
+    keyCommunitySubmissionsByAuthor(userId),
+    0,
+    0,
+    { by: 'rank', reverse: true }
+  );
+  const score = entries[0]?.score;
+  return typeof score === 'number' ? score : null;
+};
+
+const formatCooldownRemaining = (remainingMs: number): string => {
+  const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${minutes}m`;
 };
 
 const inferSuggestedTier = (
@@ -1578,10 +1611,102 @@ export const previewCommunitySubmission = async (
   };
 };
 
+/**
+ * Notifies moderators (via modmail) that a submission is awaiting review. This
+ * replaces the per-session in-app toast that nagged mods every time they opened
+ * the app (Bug 6) with a single inbox message at the moment of submission.
+ */
+const notifyModsOfPendingSubmission = async (
+  submission: CommunitySubmission,
+  kind: 'new' | 'revision'
+): Promise<void> => {
+  const lines = [
+    kind === 'revision'
+      ? 'A revised community challenge is awaiting moderator review.'
+      : 'A new community challenge is awaiting moderator review.',
+    '',
+    `Title: ${submission.title}`,
+    `Author: u/${submission.authorName}`,
+    `Category: ${submission.category}`,
+    `Difficulty: ${submission.suggestedTier} (level ${submission.targetDifficulty})`,
+    '',
+    'Open Decrypt → Community → Review to approve, request changes, or reject.',
+  ];
+  await sendModNotification({
+    subject:
+      kind === 'revision'
+        ? '[Decrypt] Revised challenge awaiting review'
+        : '[Decrypt] New challenge awaiting review',
+    bodyMarkdown: lines.join('\n'),
+    logLabel: 'notifyModsOfPendingSubmission',
+  });
+};
+
+// DMs a community-challenge creator when a moderator acts on their submission.
+// Self-guarded inside sendCreatorNotification, so a delivery failure never breaks
+// the approval/rejection it accompanies.
+const notifyCreatorOfModerationOutcome = async (
+  submission: CommunitySubmission,
+  outcome: 'approved' | 'changes_requested' | 'rejected',
+  reason?: string
+): Promise<void> => {
+  const trimmedReason = reason?.trim();
+  if (outcome === 'approved') {
+    await sendCreatorNotification({
+      toUsername: submission.authorName,
+      subject: 'Your Decrypt challenge was approved',
+      bodyMarkdown: [
+        `Good news — your challenge "${submission.title}" was approved and is now live in Decrypt.`,
+        '',
+        'Thanks for creating! Players can find it in the game now.',
+      ].join('\n'),
+      logLabel: 'notifyCreatorApproved',
+    });
+    return;
+  }
+  if (outcome === 'changes_requested') {
+    await sendCreatorNotification({
+      toUsername: submission.authorName,
+      subject: 'Changes requested on your Decrypt challenge',
+      bodyMarkdown: [
+        `A moderator asked for some changes to your challenge "${submission.title}" before it can go live.`,
+        ...(trimmedReason ? ['', `What to change: ${trimmedReason}`] : []),
+        '',
+        'Open Decrypt → Create → My Ciphers to edit and resubmit it for review.',
+      ].join('\n'),
+      logLabel: 'notifyCreatorChangesRequested',
+    });
+    return;
+  }
+  await sendCreatorNotification({
+    toUsername: submission.authorName,
+    subject: "Your Decrypt challenge wasn't approved",
+    bodyMarkdown: [
+      `Your challenge "${submission.title}" wasn't approved this time.`,
+      ...(trimmedReason ? ['', `Reason: ${trimmedReason}`] : []),
+      '',
+      'You can always create and submit a new challenge from Decrypt → Create.',
+    ].join('\n'),
+    logLabel: 'notifyCreatorRejected',
+  });
+};
+
 export const submitCommunitySubmission = async (
   input: CommunitySubmissionInput
 ): Promise<CommunitySubmission> => {
   const userId = assertUserId();
+  const lastSubmittedAt = await getLastSubmissionTimeForAuthor(userId);
+  if (lastSubmittedAt !== null) {
+    const elapsed = Date.now() - lastSubmittedAt;
+    if (elapsed < communitySubmissionCooldownMs) {
+      const remaining = formatCooldownRemaining(
+        communitySubmissionCooldownMs - elapsed
+      );
+      throw new Error(
+        `You can create a new challenge once every 6 hours. Try again in ${remaining}.`
+      );
+    }
+  }
   const pendingCount = await countPendingSubmissionsForAuthor(userId);
   if (pendingCount >= maxPendingCommunitySubmissionsPerUser) {
     throw new Error(
@@ -1640,6 +1765,7 @@ export const submitCommunitySubmission = async (
     }),
     redis.hIncrBy(keyCommunityCreatorStats(userId), 'submitted', 1),
   ]);
+  await notifyModsOfPendingSubmission(submission, 'new');
   return submission;
 };
 
@@ -2186,6 +2312,7 @@ export const approveCommunitySubmission = async (
     if (!existingPostId) {
       await publishApprovedCommunityPost(next);
     }
+    await notifyCreatorOfModerationOutcome(next, 'approved');
     return next;
   } finally {
     const activeToken = await redis.get(lockKey);
@@ -2238,6 +2365,7 @@ export const rejectCommunitySubmission = async (params: {
     redis.hDel(keyCommunityPendingSignatures, [submission.normalizedSig]),
     redis.hIncrBy(keyCommunityCreatorStats(submission.authorId), 'rejected', 1),
   ]);
+  await notifyCreatorOfModerationOutcome(next, 'rejected', params.reason);
   return next;
 };
 
@@ -2267,6 +2395,7 @@ export const requestCommunitySubmissionChanges = async (params: {
       score: reviewedAt,
     }),
   ]);
+  await notifyCreatorOfModerationOutcome(next, 'changes_requested', params.reason);
   return next;
 };
 
@@ -2398,6 +2527,7 @@ export const submitRequestedCommunityEdit = async (params: {
       score: submittedAt,
     }),
   ]);
+  await notifyModsOfPendingSubmission(next, 'revision');
   return next;
 };
 
@@ -2832,6 +2962,20 @@ export const getCommunityVoteState = async (
     dislikes,
     myVote,
   };
+};
+
+// Lightweight like/dislike tally for a level, with no per-viewer state. Used by
+// the preview card (no authed viewer needed) and polled there for live counts.
+// Returns null when the level isn't a community challenge (nothing to show).
+export const getCommunityVoteCounts = async (
+  levelId: string
+): Promise<{ likes: number; dislikes: number } | null> => {
+  const puzzle = await getPuzzlePrivate(levelId);
+  if (!puzzle || puzzle.source !== 'COMMUNITY') {
+    return null;
+  }
+  const voteHash = await redis.hGetAll(keyCommunityVotes(levelId));
+  return tallyCommunityVotes(voteHash);
 };
 
 // Per-level acclaim progress for the creator's "My Ciphers" view (B5).

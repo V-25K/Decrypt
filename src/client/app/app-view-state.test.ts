@@ -58,6 +58,26 @@ describe('getAppViewState', () => {
       showChallengeBackdrop: false,
       showSuccessOverlay: true,
       isDailyComplete: true,
+      isEndlessComplete: false,
+      showPaidDailyRetryCta: false,
+    });
+  });
+
+  it('marks completed endless outcome state without a daily flag', () => {
+    expect(
+      getAppViewState({
+        activeScreen: 'challenge',
+        isChallengeScreen: true,
+        isComplete: true,
+        isGameOver: false,
+        isInlineMode: false,
+        mode: 'endless',
+        requiresPaidRetry: false,
+      })
+    ).toMatchObject({
+      showSuccessOverlay: true,
+      isDailyComplete: false,
+      isEndlessComplete: true,
       showPaidDailyRetryCta: false,
     });
   });

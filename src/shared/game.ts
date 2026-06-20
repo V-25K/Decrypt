@@ -499,6 +499,15 @@ export const gamePreviewResponseSchema = z.object({
     wins: z.number().int().nonnegative(),
     winRatePct: z.number().int().min(0).max(100),
   }),
+  // Like/dislike tally for community challenges, shown on the preview card so
+  // everyone (not just players who finish) sees how a challenge is received.
+  // Null for daily/non-community puzzles, which have no community votes.
+  communityVotes: z
+    .object({
+      likes: z.number().int().nonnegative(),
+      dislikes: z.number().int().nonnegative(),
+    })
+    .nullable(),
   creator: z.object({
     username: z.string().min(1).nullable(),
     avatarUrl: z.string().min(1).nullable(),
@@ -506,6 +515,17 @@ export const gamePreviewResponseSchema = z.object({
 });
 
 export type GamePreviewResponse = z.infer<typeof gamePreviewResponseSchema>;
+
+export const gamePreviewVotesResponseSchema = z
+  .object({
+    likes: z.number().int().nonnegative(),
+    dislikes: z.number().int().nonnegative(),
+  })
+  .nullable();
+
+export type GamePreviewVotesResponse = z.infer<
+  typeof gamePreviewVotesResponseSchema
+>;
 
 export const gameInlineStatusResponseSchema = z.object({
   levelId: z.string().min(1).nullable(),

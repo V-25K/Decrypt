@@ -45,7 +45,12 @@ const computeWinRatePct = (plays: number, wins: number): number => {
   if (plays <= 0) {
     return 0;
   }
-  return Math.round((wins / plays) * 100);
+  // Migrated/legacy daily levels can carry inconsistent counters (a win counter
+  // that survived a play-counter reset), leaving wins > plays. Cap the ratio at
+  // 100 so the public load schema (winRatePct.max(100)) can never reject the
+  // level load — that bug bricked the daily "Next" button. See getLevelEngagement.
+  const cappedWins = Math.min(Math.max(0, wins), plays);
+  return Math.min(100, Math.max(0, Math.round((cappedWins / plays) * 100)));
 };
 
 const normalizeOutcomeSummary = (

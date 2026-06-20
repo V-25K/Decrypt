@@ -55,6 +55,7 @@ import { useGameHeartbeat } from './use-game-heartbeat';
 import { useHeaderClock } from './use-header-clock';
 import { useSfxPriming } from './use-sfx-priming';
 import { useViewportWidth } from './use-viewport-width';
+import { usePrefersVirtualKeyboard } from './use-prefers-virtual-keyboard';
 import { useVisibilityMute } from './use-visibility-mute';
 import { useWebViewFocus } from './use-web-view-focus';
 import {
@@ -120,13 +121,16 @@ import {
   consumeExpandedScreenIntent,
   migrateSessionStorageForUser,
   persistCorrectGuessIndices,
+  persistKeyboardPreference,
   persistOutcomeState,
   persistThemePreference,
   readEntrypointScreen,
+  readKeyboardPreference,
   readOutcomeState,
   readThemePreference,
   setExpandedChallengeModeIntent,
   setExpandedScreenIntent,
+  type KeyboardPreference,
 } from './game-storage';
 import {
   buildPersistedCompleteOutcomeState,
@@ -217,6 +221,7 @@ import {
   hasAvailableLetters,
 } from './puzzle-view';
 import { readRestoredCorrectGuessFeedback } from './server-puzzle-view';
+import { friendlyErrorMessage } from './error-messages';
 import {
   isSuccessfulOrderStatus,
   pickPromotedOffer,
@@ -309,13 +314,8 @@ const scheduleNonCriticalWarmup = (
 const isEndlessCaughtUpMessage = (message: string): boolean =>
   message.toLowerCase().includes('caught up');
 
-const errorMessageFromUnknown = (
-  error: unknown,
-  fallback: string
-): string =>
-  error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : fallback;
+const errorMessageFromUnknown = (error: unknown, fallback: string): string =>
+  friendlyErrorMessage(error, fallback);
 
 const isNoLivesMessage = (message: string): boolean =>
   message.toLowerCase().includes('no lives left');
@@ -570,6 +570,9 @@ export const GameApp = () => {
     readThemePreference()
   );
   const [themePreferenceBusy, setThemePreferenceBusy] = useState(false);
+  const [keyboardPreference, setKeyboardPreference] = useState<KeyboardPreference>(
+    () => readKeyboardPreference()
+  );
   const [questStatus, setQuestStatus] = useState<QuestStatus | null>(null);
   const [questUiState, dispatchQuestUi] = useReducer(
     questUiReducer,
@@ -849,19 +852,14 @@ export const GameApp = () => {
       return;
     }
     communityNotificationToastShownRef.current = true;
+    // Moderators are now told about new submissions by modmail (Bug 6), so the
+    // app no longer nags them with a per-session "N await review" toast. Only the
+    // creator-facing "changes requested" notice stays (it's about their own work).
     if (communityNotifications.creatorChangesRequestedCount > 0) {
       showToast(
         communityNotifications.creatorChangesRequestedCount === 1
           ? '1 cipher needs changes. Open Create > My Ciphers.'
           : `${communityNotifications.creatorChangesRequestedCount} ciphers need changes. Open Create > My Ciphers.`
-      );
-      return;
-    }
-    if (communityNotifications.moderatorPendingReviewCount > 0) {
-      showToast(
-        communityNotifications.moderatorPendingReviewCount === 1
-          ? '1 community submission awaits review.'
-          : `${communityNotifications.moderatorPendingReviewCount} community submissions await review.`
       );
     }
   }, [communityNotificationCount, communityNotifications]);
@@ -964,10 +962,7 @@ export const GameApp = () => {
       setQuestStatus(status);
       setQuestError(null);
     } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : 'Unable to load quests.';
+      const message = friendlyErrorMessage(error, 'Unable to load quests.');
       setQuestError(
         message.toLowerCase().includes('logged in')
           ? 'Log in to view quests.'
@@ -1022,11 +1017,7 @@ export const GameApp = () => {
       setFeaturedOffer(pickPromotedOffer(products.products));
     } catch (error) {
       console.error('[client] store.getProducts failed:', error);
-      setShopError(
-        error instanceof Error && error.message.trim().length > 0
-          ? `Unable to load store: ${error.message}`
-          : 'Unable to load store bundles.'
-      );
+      setShopError(friendlyErrorMessage(error, 'Unable to load store bundles.'));
       setShopProducts([]);
       setFeaturedOffer(null);
     }
@@ -1398,10 +1389,7 @@ export const GameApp = () => {
               activeMode === 'endless' ? initialIntent?.endlessSort ?? 'random' : 'random',
           });
         } catch (error) {
-          const message =
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : 'Unable to load Endless.';
+          const message = friendlyErrorMessage(error, 'Unable to load Endless.');
           if (
             activeMode === 'endless' &&
             (isEndlessCaughtUpMessage(message) ||
@@ -1465,7 +1453,6 @@ export const GameApp = () => {
           setFailureRatingDelta(null);
           setChallengeStartTs(null);
           clearTileFeedback();
-          showToast("This is your challenge, so you can't play it — here's the solution.");
         } else if (outcomeDecision.branch === 'restore-persisted') {
           const restoredOutcome = outcomeDecision.persistedOutcome;
           patchChallengeSession(
@@ -1569,10 +1556,7 @@ export const GameApp = () => {
         if (!cancelled) {
           dispatchAppRuntime({
             type: 'setBootstrapError',
-            update:
-              error instanceof Error && error.message.trim().length > 0
-                ? `Unable to start Decrypt: ${error.message}`
-                : 'Unable to start Decrypt right now.',
+            update: friendlyErrorMessage(error, 'Unable to start Decrypt right now.'),
           });
         }
       } finally {
@@ -1690,6 +1674,11 @@ export const GameApp = () => {
   useViewportWidth((viewportWidth) =>
     dispatchLayoutTiming({ type: 'setViewportWidth', viewportWidth })
   );
+
+  // Touch-first devices (phones AND tablets) have no physical keyboard, so they
+  // get the in-app custom keyboard regardless of viewport width (Bug 1: tablets
+  // were treated as desktop and left with no usable keyboard).
+  const prefersVirtualKeyboard = usePrefersVirtualKeyboard();
 
   useEscapeToClose(isHelpOpen || isSettingsOpen, () => {
     setIsHelpOpen(false);
@@ -2474,10 +2463,7 @@ export const GameApp = () => {
       await loadLevel(nextMode, options);
       setActiveScreen('challenge');
     } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : 'Unable to load level.';
+      const message = friendlyErrorMessage(error, 'Unable to load level.');
       if (message.toLowerCase().includes('endless catalog unavailable')) {
         await refreshBootstrapState();
         showToast('Endless mode is not available yet.');
@@ -2641,6 +2627,11 @@ export const GameApp = () => {
     } finally {
       setThemePreferenceBusy(false);
     }
+  };
+
+  const handleKeyboardSelect = (preference: KeyboardPreference) => {
+    setKeyboardPreference(preference);
+    persistKeyboardPreference(preference);
   };
 
   const handleHomePlay = (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -2851,11 +2842,7 @@ export const GameApp = () => {
       await refreshCurrentView(levelId);
       patchChallengeSession({ isGameOver: false });
     } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : 'Unable to continue challenge.';
-      showToast(message);
+      showToast(friendlyErrorMessage(error, 'Unable to continue challenge.'));
     } finally {
       dispatchAppRuntime({ type: 'setBusy', update: false });
     }
@@ -2895,7 +2882,10 @@ export const GameApp = () => {
   useEffect(() => {
     if (
       activeScreen !== 'challenge' ||
-      viewportWidth >= 640 ||
+      // Keep the selected tile in view above the in-app keyboard. This now
+      // tracks whether that keyboard is shown (touch devices, incl. tablets)
+      // rather than viewport width alone (Bug 1).
+      (!prefersVirtualKeyboard && viewportWidth >= 640) ||
       selectedTile === null ||
       isHelpOpen ||
       isSettingsOpen ||
@@ -2925,6 +2915,7 @@ export const GameApp = () => {
   }, [
     activeScreen,
     viewportWidth,
+    prefersVirtualKeyboard,
     selectedTile,
     isHelpOpen,
     isSettingsOpen,
@@ -3087,11 +3078,24 @@ export const GameApp = () => {
     showChallengeBackdrop,
     showSuccessOverlay,
     isDailyComplete,
+    isEndlessComplete,
   } = appViewState;
   const minimalTheme = themePreference === 'minimal';
+  // Whether the in-app on-screen keyboard should be used for input. The player's
+  // explicit Settings choice wins; 'auto' falls back to device detection (in-app
+  // keyboard on touch devices, physical/system keyboard otherwise). When the
+  // in-app keyboard is off, the hidden inline input drives the device's own
+  // system keyboard instead (see inputMode below).
+  const deviceWantsVirtualKeyboard = prefersVirtualKeyboard || deviceTier === 'mobile';
+  const usesVirtualKeyboard =
+    keyboardPreference === 'onscreen'
+      ? true
+      : keyboardPreference === 'system'
+        ? false
+        : deviceWantsVirtualKeyboard;
   const showVirtualKeyboard =
     isChallengeScreen &&
-    deviceTier === 'mobile' &&
+    usesVirtualKeyboard &&
     !showOutcomeOverlay &&
     !isHelpOpen &&
     !isSettingsOpen &&
@@ -3669,6 +3673,7 @@ export const GameApp = () => {
               share={share}
               nextChallenge={handleOutcomeNextChallenge}
               isDailyComplete={isDailyComplete}
+              isEndlessComplete={isEndlessComplete}
               retry={retry}
 	              openHome={openHome}
 	              subredditName={subredditName}
@@ -3684,6 +3689,7 @@ export const GameApp = () => {
               puzzleAuthor={puzzle.author}
               hasClaimableQuest={hasClaimableQuest}
               openQuest={openQuest}
+              openCreate={openCommunity}
               outcomeLevelId={levelId || null}
             />
           )}
@@ -3940,7 +3946,7 @@ export const GameApp = () => {
         <input
           ref={inlineInputRef}
           data-testid="inline-input-proxy"
-          inputMode="none"
+          inputMode={usesVirtualKeyboard ? 'none' : 'text'}
           autoCapitalize="characters"
           autoCorrect="off"
           autoComplete="off"
@@ -3970,8 +3976,10 @@ export const GameApp = () => {
           audioBusy={audioPreferenceBusy}
           themePreference={themePreference}
           themeBusy={themePreferenceBusy}
+          keyboardPreference={keyboardPreference}
           onToggleAudio={handleAudioToggle}
           onSelectTheme={(theme) => void handleThemeSelect(theme)}
+          onSelectKeyboard={handleKeyboardSelect}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}

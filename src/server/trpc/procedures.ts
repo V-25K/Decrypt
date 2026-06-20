@@ -27,12 +27,10 @@ export const adminProcedure = authedProcedure.use(async ({ ctx, next }) => {
       username: ctx.username,
     });
   } catch (error) {
+    console.error('[trpc] admin access check failed:', error);
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      message:
-        error instanceof Error && error.message.trim().length > 0
-          ? `Unable to verify moderator access: ${error.message}`
-          : 'Unable to verify moderator access right now.',
+      message: 'Unable to verify moderator access right now.',
     });
   }
   if (!allowed) {

@@ -11,11 +11,13 @@ import { createContext } from './context';
 import {
   getDailyInlineStatus,
   getDailyPreview,
+  getDailyPreviewVotes,
 } from './core/game-service';
 import { describeRequestError } from './core/redaction';
 import {
   gameInlineStatusResponseSchema,
   gamePreviewResponseSchema,
+  gamePreviewVotesResponseSchema,
 } from '../shared/game';
 
 const mountApiRoutes = (app: Hono) => {
@@ -33,6 +35,9 @@ const mountApiRoutes = (app: Hono) => {
   });
   api.get('/preview-status', async (c) => {
     return c.json(gameInlineStatusResponseSchema.parse(await getDailyInlineStatus()));
+  });
+  api.get('/preview-votes', async (c) => {
+    return c.json(gamePreviewVotesResponseSchema.parse(await getDailyPreviewVotes()));
   });
   app.route('/api', api);
 };

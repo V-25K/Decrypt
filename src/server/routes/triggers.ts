@@ -4,6 +4,7 @@ import type {
   OnAppUpgradeRequest,
   TriggerResponse,
 } from '@devvit/web/shared';
+import { warmGlobalScorePointsCutoff } from '../core/points-eligibility';
 
 export const triggers = new Hono();
 
@@ -15,6 +16,9 @@ type TriggerRouteResult = {
 const handleAutomationBootstrapTrigger = async (
   input: OnAppInstallRequest | OnAppUpgradeRequest
 ): Promise<TriggerRouteResult> => {
+  // Resolve+cache the global-points cutoff once per deploy so the hot win path
+  // only ever reads a warm cache (Bug 4). Self-guarded; never throws.
+  await warmGlobalScorePointsCutoff();
   if (input.type !== 'AppInstall') {
     return {
       body: {

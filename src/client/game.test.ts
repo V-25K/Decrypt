@@ -1341,9 +1341,9 @@ describe('Game', { timeout: 15000 }, () => {
 
     await renderGame('<div id="root" data-initial-screen="shop"></div>');
     await waitFor(() => Boolean(document.querySelector('[data-testid="shop-screen"]')));
-    await waitFor(() => (document.body.textContent ?? '').includes('Unable to load store: Store offline'));
+    await waitFor(() => (document.body.textContent ?? '').includes('Store offline'));
 
-    expect(showToastMock).not.toHaveBeenCalledWith('Unable to load store: Store offline');
+    expect(showToastMock).not.toHaveBeenCalledWith('Store offline');
   });
 
   it('renders a retry state when bootstrap fails and recovers on retry', async () => {
@@ -1371,9 +1371,7 @@ describe('Game', { timeout: 15000 }, () => {
     await renderGame();
     await waitFor(() => (document.body.textContent ?? '').includes('Decrypt unavailable'));
 
-    expect(document.body.textContent ?? '').toContain(
-      'Unable to start Decrypt: Daily service unavailable'
-    );
+    expect(document.body.textContent ?? '').toContain('Daily service unavailable');
     expect(showToastMock).not.toHaveBeenCalledWith('Failed to initialize Decrypt.');
 
     document

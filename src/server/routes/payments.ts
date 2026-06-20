@@ -740,10 +740,11 @@ paymentsRoutes.post('/fulfill', async (c) => {
       throw error;
     }
   } catch (error) {
+    console.error('[payments] /fulfill failed:', error);
     return c.json<PaymentHandlerResponse>(
       {
         success: false,
-        reason: error instanceof Error ? error.message : 'Fulfillment failed.',
+        reason: 'Fulfillment failed.',
       },
       400
     );
@@ -871,10 +872,11 @@ paymentsRoutes.post('/refund', async (c) => {
       throw error;
     }
   } catch (error) {
+    console.error('[payments] /refund failed:', error);
     return c.json<PaymentHandlerResponse>(
       {
         success: false,
-        reason: error instanceof Error ? error.message : 'Refund failed.',
+        reason: 'Refund failed.',
       },
       400
     );

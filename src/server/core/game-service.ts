@@ -76,6 +76,7 @@ import {
 	  recordGlobalLoss,
 	  recordGlobalWin,
 	} from './leaderboard';
+import { isPuzzleEligibleForGlobalPoints } from './points-eligibility';
 import {
   getLevelEngagement,
   recordQualifiedLevelFailure,
@@ -102,6 +103,7 @@ import { hasAdminAccess } from './admin-auth';
 import {
   getCommunityLevelAuthorId,
   getCommunityNotificationSummary,
+  getCommunityVoteCounts,
   recordCommunityEndlessCompletion,
 } from './community';
 import { syncCommunityFlair } from './community-flair';
@@ -727,9 +729,10 @@ export const getDailyPreview = async (): Promise<GamePreviewResponse> => {
   }
 
   await assertPublishedPuzzleVisibility(levelId);
-  const [puzzlePublic, challengeMetrics] = await Promise.all([
+  const [puzzlePublic, challengeMetrics, communityVotes] = await Promise.all([
     getPuzzlePublic(levelId),
     getLevelEngagement(levelId),
+    getCommunityVoteCounts(levelId),
   ]);
 
   if (!puzzlePublic) {
@@ -745,11 +748,26 @@ export const getDailyPreview = async (): Promise<GamePreviewResponse> => {
     previewTitle: postData?.previewTitle ?? 'Can you decrypt this?',
     puzzle: puzzlePublic,
     challengeMetrics,
+    communityVotes,
     creator: {
       username: postData?.creatorUsername ?? null,
       avatarUrl: postData?.creatorAvatarUrl ?? null,
     },
   };
+};
+
+// Just the like/dislike tally for the current post's level, for the preview card
+// to poll so its counts stay live. Null for non-community puzzles.
+export const getDailyPreviewVotes = async (): Promise<{
+  likes: number;
+  dislikes: number;
+} | null> => {
+  const postData = getPostData();
+  const levelId = postData?.levelId ?? (await getDailyPointer());
+  if (!levelId) {
+    return null;
+  }
+  return getCommunityVoteCounts(levelId);
 };
 
 export const getDailyInlineStatus = async (): Promise<GameInlineStatusResponse> => {
@@ -1717,6 +1735,9 @@ export const completeSessionForLevel = async (params: {
 	      globalScoreAfter = nextProfile.globalScore;
 	    };
 	    if (globalEligible) {
+	      // Pre-migration backlog challenges still move rating but award no global
+	      // points, so newcomers can't out-grind veterans (Bug 4). Fails open.
+	      const awardGlobalPoints = await isPuzzleEligibleForGlobalPoints(puzzle);
 	      if (hasStep('record_global_win')) {
 	        await hydrateJournaledGlobalWin();
 	      }
@@ -1731,6 +1752,7 @@ export const completeSessionForLevel = async (params: {
 	          mistakes: trackedSession.mistakesMade,
 	          usedPowerups: trackedSession.usedPowerups,
 	          isRecoveryRun,
+	          awardPoints: awardGlobalPoints,
 	        });
 	        nextProfile = ratingOutcome.profile;
 	        ratingDelta = ratingOutcome.ratingDelta;

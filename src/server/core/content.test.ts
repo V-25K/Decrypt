@@ -37,8 +37,8 @@ describe('content phase1 rules', () => {
     expect(quotePassesTierLength('A'.repeat(105), 'hard')).toBe(true);
     expect(quotePassesTierLength('A'.repeat(40), 'hard')).toBe(false);
     expect(quotePassesTierLength('A'.repeat(60), 'expert')).toBe(true);
-    expect(quotePassesTierLength('A'.repeat(160), 'expert')).toBe(true);
-    expect(quotePassesTierLength('A'.repeat(161), 'expert')).toBe(false);
+    expect(quotePassesTierLength('A'.repeat(250), 'expert')).toBe(true);
+    expect(quotePassesTierLength('A'.repeat(251), 'expert')).toBe(false);
   });
 
   it('detects unique-word minimum and repeated-letter requirement', () => {

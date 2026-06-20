@@ -13,6 +13,7 @@ import {
   type ChallengeType,
 } from '../../shared/game';
 import {
+  maxPuzzleAuthorLength,
   maxPuzzleTotalLength,
   minPlayablePuzzleTotalLength,
 } from '../../shared/puzzle-limits';
@@ -26,6 +27,7 @@ import { trpc } from '../trpc';
 import type { DeviceTier, RouterOutputs } from '../app/types';
 import { cn } from '../utils';
 import { tabButtonClass } from '../app/ui';
+import { friendlyErrorMessage } from '../app/error-messages';
 import { groupPuzzleTilesIntoWordRuns } from '../app/puzzle-tile-groups';
 import { UiSprite } from '../components/UiSprite';
 
@@ -287,10 +289,12 @@ const SubmissionCard = ({
   submission,
   action,
   acclaim,
+  showAuthor = false,
 }: {
   submission: CommunitySubmission;
   action?: ReactNode;
   acclaim?: CreatorAcclaim | undefined;
+  showAuthor?: boolean;
 }) => (
   <article
     className={cn(
@@ -305,6 +309,14 @@ const SubmissionCard = ({
         <div className="app-text text-xs font-black uppercase">
           {categoryLabel(submission.category)} · {statusLabel(submission.status)}
         </div>
+        {showAuthor && (
+          <div
+            className="app-text-muted mt-1 truncate text-[11px] font-bold"
+            data-testid="submission-author"
+          >
+            by u/{submission.authorName}
+          </div>
+        )}
 	        <h3 className="app-text mt-2 truncate text-sm font-black">
 	          {submission.title}
 	        </h3>
@@ -1038,7 +1050,7 @@ export const CommunityScreen = ({
         new Map(progress.levels.map((entry) => [entry.levelId, entry]))
       );
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not load your submissions.');
+      showToast(friendlyErrorMessage(error, 'Could not load your submissions.'));
     } finally {
       setMineLoading(false);
     }
@@ -1155,7 +1167,7 @@ export const CommunityScreen = ({
         showToast(result.reasons[0] ?? 'Preview needs changes.');
       }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Preview failed.');
+      showToast(friendlyErrorMessage(error, 'Preview failed.'));
     } finally {
       setBusy(false);
     }
@@ -1174,9 +1186,7 @@ export const CommunityScreen = ({
       }
       showToast(result.message);
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : 'Could not fix the board.'
-      );
+      showToast(friendlyErrorMessage(error, 'Could not fix the board.'));
     } finally {
       setAutoFixBusy(false);
     }
@@ -1224,7 +1234,7 @@ export const CommunityScreen = ({
       setTab('mine');
       await loadMine();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Submission failed.');
+      showToast(friendlyErrorMessage(error, 'Submission failed.'));
     } finally {
       setBusy(false);
     }
@@ -1238,7 +1248,7 @@ export const CommunityScreen = ({
 	      await loadMine();
       onSubmitted();
 	    } catch (error) {
-	      showToast(error instanceof Error ? error.message : 'Withdraw failed.');
+	      showToast(friendlyErrorMessage(error, 'Withdraw failed.'));
 	    } finally {
       setBusy(false);
     }
@@ -1271,7 +1281,7 @@ export const CommunityScreen = ({
       await loadReview();
       onSubmitted();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Approval failed.');
+      showToast(friendlyErrorMessage(error, 'Approval failed.'));
     } finally {
       setBusy(false);
 	    }
@@ -1337,7 +1347,7 @@ export const CommunityScreen = ({
           : moderationPrompt.action === 'request_changes'
             ? 'Request changes failed.'
             : 'Removal failed.';
-      showToast(error instanceof Error ? error.message : fallback);
+      showToast(friendlyErrorMessage(error, fallback));
     } finally {
       setBusy(false);
     }
@@ -1730,17 +1740,17 @@ export const CommunityScreen = ({
                 <input
                   className="app-surface app-border app-text mt-1 w-full rounded-lg border px-3 py-2 text-sm font-semibold outline-none"
                   value={attribution}
-                  maxLength={28}
+                  maxLength={maxPuzzleAuthorLength}
                   onChange={(event) => setAttribution(event.currentTarget.value)}
                   disabled={busy}
                   data-testid="community-attribution"
                   placeholder="e.g. Shakespeare - Hamlet"
                 />
                 <span className="app-text-muted mt-1 block text-[11px] font-semibold">
-                  Shown below the solved quote, max 28 characters.
+                  Shown below the solved quote, max {maxPuzzleAuthorLength} characters.
                 </span>
-                <span className={characterCounterClass(attribution.length, 28)}>
-                  {attribution.length}/28
+                <span className={characterCounterClass(attribution.length, maxPuzzleAuthorLength)}>
+                  {attribution.length}/{maxPuzzleAuthorLength}
                 </span>
               </label>
               {isEditingRequestedChanges && creationMode !== 'manual' ? (
@@ -1973,6 +1983,7 @@ export const CommunityScreen = ({
                 <SubmissionCard
                   key={submission.submissionId}
                   submission={submission}
+                  showAuthor
                   action={
                     <div className="flex flex-col gap-2">
                       {submission.status === 'pending' && (

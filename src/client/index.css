@@ -171,24 +171,34 @@ body,
   content: '';
   position: absolute;
   inset: 0;
+  /* Warm scrim tuned to the autumn-library backdrop: darker at the top where the
+     logo/toggle/stats sit (readability), clearer through the scenic middle, with
+     a gentle warm glow and a soft bottom anchor. */
   background:
-    linear-gradient(180deg, rgba(8, 12, 16, 0.26), rgba(10, 18, 11, 0.44)),
-    radial-gradient(circle at 50% 32%, rgba(255, 169, 77, 0.09), transparent 42%),
-    radial-gradient(circle at 50% 58%, rgba(150, 255, 173, 0.1), rgba(7, 12, 8, 0.16));
+    linear-gradient(
+      180deg,
+      rgba(12, 8, 4, 0.54) 0%,
+      rgba(14, 9, 5, 0.24) 30%,
+      rgba(14, 9, 5, 0.2) 64%,
+      rgba(18, 11, 6, 0.46) 100%
+    ),
+    radial-gradient(circle at 50% 22%, rgba(255, 176, 92, 0.1), transparent 48%);
   pointer-events: none;
   z-index: 0;
 }
 
 .home-live,
 .hub-live {
-  --app-text: #fffdf1;
-  --app-text-muted: rgba(255, 248, 220, 0.93);
-  --app-text-soft: rgba(235, 255, 223, 0.82);
-  --app-outline: rgba(255, 243, 199, 0.84);
-  --app-outline-soft: rgba(214, 242, 183, 0.42);
-  --app-surface: rgba(27, 37, 16, 0.58);
-  --app-surface-strong: rgba(48, 65, 24, 0.76);
-  --app-surface-subtle: rgba(133, 167, 71, 0.34);
+  --app-text: #fff7ec;
+  --app-text-muted: rgba(255, 243, 224, 0.94);
+  --app-text-soft: rgba(255, 234, 207, 0.84);
+  --app-outline: rgba(255, 231, 196, 0.86);
+  --app-outline-soft: rgba(216, 178, 128, 0.46);
+  /* Warm, smoky-brown surfaces to sit with the autumn-library backdrop
+     instead of the old olive-green tints (which fought the warm palette). */
+  --app-surface: rgba(33, 23, 14, 0.62);
+  --app-surface-strong: rgba(46, 31, 18, 0.82);
+  --app-surface-subtle: rgba(120, 84, 46, 0.40);
 }
 
 .home-live .home-panel-stack {
@@ -328,7 +338,7 @@ body,
 }
 
 .home-live .home-stat-card {
-  background: rgba(138, 177, 73, 0.24);
+  background: rgba(120, 84, 46, 0.28);
   box-shadow:
     inset 0 0 0 1px rgba(241, 243, 200, 0.14),
     0 8px 16px rgba(0, 0, 0, 0.12);
@@ -337,46 +347,46 @@ body,
 .home-live .home-level-grid .btn-neutral,
 .home-live .home-mode-btn.btn-neutral,
 .home-live .bottom-nav-shell .btn-neutral {
-  --btn-bg: linear-gradient(180deg, rgba(133, 170, 73, 0.96), rgba(94, 129, 48, 0.96));
-  --btn-fg: #fdfbec;
-  --btn-border: rgba(241, 247, 209, 0.68);
-  --btn-shadow-hard: rgba(46, 70, 22, 0.96);
-  --btn-shadow-soft: rgba(21, 31, 11, 0.32);
-  --btn-hover-glow: rgba(188, 255, 121, 0.4);
+  --btn-bg: linear-gradient(180deg, rgba(120, 88, 52, 0.96), rgba(86, 60, 34, 0.96));
+  --btn-fg: #fdf3e2;
+  --btn-border: rgba(247, 226, 190, 0.62);
+  --btn-shadow-hard: rgba(54, 36, 18, 0.96);
+  --btn-shadow-soft: rgba(28, 18, 9, 0.32);
+  --btn-hover-glow: rgba(255, 198, 121, 0.4);
   --btn-hover-shade: rgba(255, 255, 255, 0.06);
-  --btn-active-shade: rgba(24, 38, 10, 0.18);
+  --btn-active-shade: rgba(38, 24, 10, 0.18);
 }
 
 .hub-live .btn-neutral {
-  --btn-bg: linear-gradient(180deg, rgba(133, 170, 73, 0.96), rgba(94, 129, 48, 0.96));
-  --btn-fg: #fdfbec;
-  --btn-border: rgba(241, 247, 209, 0.68);
-  --btn-shadow-hard: rgba(46, 70, 22, 0.96);
-  --btn-shadow-soft: rgba(21, 31, 11, 0.32);
-  --btn-hover-glow: rgba(188, 255, 121, 0.4);
+  --btn-bg: linear-gradient(180deg, rgba(120, 88, 52, 0.96), rgba(86, 60, 34, 0.96));
+  --btn-fg: #fdf3e2;
+  --btn-border: rgba(247, 226, 190, 0.62);
+  --btn-shadow-hard: rgba(54, 36, 18, 0.96);
+  --btn-shadow-soft: rgba(28, 18, 9, 0.32);
+  --btn-hover-glow: rgba(255, 198, 121, 0.4);
   --btn-hover-shade: rgba(255, 255, 255, 0.06);
-  --btn-active-shade: rgba(24, 38, 10, 0.18);
+  --btn-active-shade: rgba(38, 24, 10, 0.18);
 }
 
 .home-live .home-mode-btn.btn-secondary,
 .home-live .bottom-nav-shell .btn-secondary {
-  --btn-bg: linear-gradient(180deg, #d7e36d, #a2b243);
-  --btn-fg: #18200f;
-  --btn-border: rgba(31, 40, 16, 0.82);
-  --btn-shadow-hard: rgba(98, 110, 35, 0.94);
-  --btn-shadow-soft: rgba(22, 28, 14, 0.3);
-  --btn-hover-glow: rgba(233, 255, 162, 0.38);
-  --btn-active-shade: rgba(62, 71, 22, 0.12);
+  --btn-bg: linear-gradient(180deg, #f3c66a, #d99a3c);
+  --btn-fg: #2a1c08;
+  --btn-border: rgba(58, 38, 12, 0.8);
+  --btn-shadow-hard: rgba(150, 96, 28, 0.94);
+  --btn-shadow-soft: rgba(40, 26, 10, 0.3);
+  --btn-hover-glow: rgba(255, 214, 138, 0.4);
+  --btn-active-shade: rgba(96, 60, 18, 0.12);
 }
 
 .hub-live .btn-secondary {
-  --btn-bg: linear-gradient(180deg, #d7e36d, #a2b243);
-  --btn-fg: #18200f;
-  --btn-border: rgba(31, 40, 16, 0.82);
-  --btn-shadow-hard: rgba(98, 110, 35, 0.94);
-  --btn-shadow-soft: rgba(22, 28, 14, 0.3);
-  --btn-hover-glow: rgba(233, 255, 162, 0.38);
-  --btn-active-shade: rgba(62, 71, 22, 0.12);
+  --btn-bg: linear-gradient(180deg, #f3c66a, #d99a3c);
+  --btn-fg: #2a1c08;
+  --btn-border: rgba(58, 38, 12, 0.8);
+  --btn-shadow-hard: rgba(150, 96, 28, 0.94);
+  --btn-shadow-soft: rgba(40, 26, 10, 0.3);
+  --btn-hover-glow: rgba(255, 214, 138, 0.4);
+  --btn-active-shade: rgba(96, 60, 18, 0.12);
 }
 
 .home-live .bottom-nav-shell {
@@ -1374,6 +1384,51 @@ body,
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
   border-top-right-radius: 12px;
   border-bottom-right-radius: 12px;
+  pointer-events: none;
+}
+
+/* Create Book Tag Button — mirror of the quest tag, anchored to the right edge */
+.create-book-tag {
+  position: relative;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.create-book-tag:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.create-book-tag:hover:not(:disabled) {
+  transform: translateX(-4px);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.5), 0 0 24px rgba(37, 99, 235, 0.4) !important;
+}
+
+.create-book-tag:not(:disabled):active {
+  transform: translateX(-2px) !important;
+}
+
+.create-book-tag::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-right: none;
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+  pointer-events: none;
+}
+
+.create-book-tag::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(270deg, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
   pointer-events: none;
 }
 

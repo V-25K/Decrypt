@@ -13,6 +13,7 @@ import {
 import type {
   GameInlineStatusResponse,
   GamePreviewResponse,
+  GamePreviewVotesResponse,
   PuzzlePublic,
   PuzzlePublicTile,
 } from '../shared/game';
@@ -362,6 +363,81 @@ const renderStatsLine = (preview: GamePreviewResponse): HTMLElement => {
   return stats;
 };
 
+// Read-only like/dislike display for the preview card. Stacked vertically and
+// anchored to the bottom-right corner of the card (see preview.css), using the
+// game's own thumb icons (not emoji). Returns the container so the poll can
+// update the count text in place as votes change.
+const renderVotesOverlay = (votes: {
+  likes: number;
+  dislikes: number;
+}): HTMLElement => {
+  const wrapper = createElement('div', 'preview-votes');
+  wrapper.setAttribute('data-testid', 'preview-votes');
+  wrapper.setAttribute('aria-hidden', 'true');
+
+  const buildVote = (
+    variant: 'like' | 'dislike',
+    iconSrc: string,
+    count: number
+  ): HTMLElement => {
+    const vote = createElement('div', `preview-vote preview-vote-${variant}`);
+    const icon = createElement('img', 'preview-vote-icon');
+    icon.src = iconSrc;
+    icon.alt = '';
+    icon.loading = 'eager';
+    const countSpan = createElement(
+      'span',
+      `preview-vote-count preview-vote-${variant}s`,
+      `${count}`
+    );
+    vote.append(icon, countSpan);
+    return vote;
+  };
+
+  wrapper.append(
+    buildVote('like', '/ui_thumb_up.png', votes.likes),
+    buildVote('dislike', '/ui_thumb_down.png', votes.dislikes)
+  );
+  return wrapper;
+};
+
+const loadPreviewVotes = async (): Promise<GamePreviewVotesResponse> => {
+  const response = await fetch('/api/preview-votes');
+  if (!response.ok) {
+    throw new Error(`Preview votes request failed: ${response.status}`);
+  }
+  return await response.json();
+};
+
+const previewVotesPollMs = 15_000;
+
+// Keep the preview's like/dislike counts live: poll the lightweight votes
+// endpoint and write the latest numbers into the count spans. Self-stops if the
+// card is detached or the level stops being a community challenge.
+const watchPreviewVotes = (root: HTMLElement): void => {
+  const timer = window.setInterval(() => {
+    void (async () => {
+      try {
+        const votes = await loadPreviewVotes();
+        if (!votes || !root.isConnected) {
+          window.clearInterval(timer);
+          return;
+        }
+        const likes = root.querySelector('.preview-vote-likes');
+        const dislikes = root.querySelector('.preview-vote-dislikes');
+        if (likes) {
+          likes.textContent = `${votes.likes}`;
+        }
+        if (dislikes) {
+          dislikes.textContent = `${votes.dislikes}`;
+        }
+      } catch {
+        // Ignore transient failures; the next tick will retry.
+      }
+    })();
+  }, previewVotesPollMs);
+};
+
 const renderFooter = (creator?: PreviewCreator, ctaLabel = 'Play'): HTMLElement => {
   const footer = createElement('div', 'preview-footer');
   footer.append(createElement('span', 'preview-cta', ctaLabel));
@@ -475,9 +551,15 @@ const renderPreview = (root: HTMLElement, preview: GamePreviewResponse): void =>
   const puzzleMask = renderPuzzle(preview.puzzle);
 
   button.append(title, puzzleMask, renderStatsLine(preview), renderFooter(preview.creator));
+  if (preview.communityVotes) {
+    button.append(renderVotesOverlay(preview.communityVotes));
+  }
   wireExpandedMode(button);
   root.replaceChildren(button);
   watchPuzzleOverflow(puzzleMask);
+  if (preview.communityVotes) {
+    watchPreviewVotes(button);
+  }
 };
 
 const loadPreview = async (): Promise<GamePreviewResponse> => {

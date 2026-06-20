@@ -539,6 +539,42 @@ const getAutoDailySequenceNumber = async (levelId: string): Promise<number | nul
   return index >= 0 ? index + 1 : null;
 };
 
+/**
+ * Returns the createdAt (epoch ms) of the Nth official daily by the same
+ * creation-order ranking used for "Daily Cipher #N", or null if fewer than
+ * `sequence` official dailies exist. Used to anchor the global-points cutoff
+ * (Bug 4: leaderboard fairness). Catalog scan — call rarely and cache the result.
+ */
+export const getOfficialDailyCreatedAtForSequence = async (
+  sequence: number
+): Promise<number | null> => {
+  if (!Number.isFinite(sequence) || sequence <= 0) {
+    return null;
+  }
+  const levelIds = await getAllLevelIds();
+  const autoDailyPuzzles: Array<{ levelId: string; createdAt: number }> = [];
+  for (const candidateLevelId of levelIds) {
+    const puzzle = await getPuzzlePrivate(candidateLevelId);
+    if (!puzzle || !isOfficialDailyPuzzleSource(puzzle.source)) {
+      continue;
+    }
+    autoDailyPuzzles.push({
+      levelId: candidateLevelId,
+      createdAt: puzzle.createdAt,
+    });
+  }
+  if (autoDailyPuzzles.length < sequence) {
+    return null;
+  }
+  autoDailyPuzzles.sort((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+    return left.levelId.localeCompare(right.levelId);
+  });
+  return autoDailyPuzzles[sequence - 1]?.createdAt ?? null;
+};
+
 const formatDailyTitle = async (levelId: string): Promise<string> => {
   try {
     const dailySequenceNumber = await getAutoDailySequenceNumber(levelId);

@@ -527,12 +527,19 @@ export const recordGlobalWin = async (params: {
   mistakes: number;
   usedPowerups: number;
   isRecoveryRun: boolean;
+  /**
+   * When false, the win still updates rating but awards zero global points
+   * (the challenge is below the leaderboard points cutoff). Defaults to true.
+   * See points-eligibility.ts (Bug 4: leaderboard fairness).
+   */
+  awardPoints?: boolean;
 }): Promise<{
   profile: UserProfile;
   ratingDelta: number;
   ratingAfter: number;
   globalScoreDelta: number;
 }> => {
+  const awardPoints = params.awardPoints !== false;
   const levelScore = Number.isFinite(params.solveScore)
     ? Math.max(0, Math.round(params.solveScore))
     : 0;
@@ -546,7 +553,7 @@ export const recordGlobalWin = async (params: {
     existingScore !== null && Number.isFinite(existingScore)
       ? Math.max(0, Math.round(existingScore))
       : 0;
-  const globalScoreDelta = Math.max(0, levelScore - safeExisting);
+  const globalScoreDelta = awardPoints ? Math.max(0, levelScore - safeExisting) : 0;
   if (globalScoreDelta > 0) {
     await Promise.all([
       redis.hSet(scoreKey, {
@@ -911,12 +918,22 @@ export const getLevelTop = async (
     `leaderboard:level:${levelId}:limit:${limit}`,
     publicLeaderboardCacheTtlSeconds,
     async () => {
-      const fetchWindow = Math.max(limit * 2, 10);
-      const resolved: Array<{
+      // The winners zset is scored by completion timestamp, not by challenge
+      // score, so we cannot read the score-ranked top-N off a single window.
+      // The old code fetched only the first window and stopped once it had
+      // `limit` rows — which silently dropped the true top scorers (and the
+      // player who *just* finished, since they're the newest entry) on any
+      // level with more than a window's worth of winners. Instead, scan the
+      // whole winners set (cheap Redis receipt reads, deduped, with a safety
+      // cap), rank globally by score, then resolve the expensive per-user
+      // Reddit metadata only for the final top-N. This keeps the result-page
+      // crowd an accurate, always-current top-N of the challenge.
+      const winnerScanWindow = 200;
+      const maxWinnerScan = 2000;
+      const seen = new Set<string>();
+      const scored: Array<{
         userId: string;
-        username: string | null;
         score: number;
-        snoovatarUrl: string | null;
         solveSeconds: number;
         mistakes: number;
         usedPowerups: number;
@@ -924,11 +941,11 @@ export const getLevelTop = async (
       }> = [];
       let start = 0;
 
-      while (resolved.length < limit) {
+      while (start < maxWinnerScan) {
         const winners = await redis.zRange(
           keyLevelWinners(levelId),
           start,
-          start + fetchWindow - 1,
+          start + winnerScanWindow - 1,
           {
             by: 'rank',
           }
@@ -939,19 +956,16 @@ export const getLevelTop = async (
 
         const batch = await Promise.all(
           winners.map(async (entry) => {
+            if (seen.has(entry.member)) {
+              return null;
+            }
             const receipt = await getShareCompletionReceipt(entry.member, levelId);
             if (!receipt) {
               return null;
             }
-
-            const userMeta = await resolveLeaderboardUserMeta(entry.member);
-            const levelScore = scoreFromReceipt(receipt);
-
             return {
               userId: entry.member,
-              username: userMeta.username,
-              score: levelScore,
-              snoovatarUrl: userMeta.snoovatarUrl,
+              score: scoreFromReceipt(receipt),
               solveSeconds: receipt.solveSeconds,
               mistakes: receipt.mistakes,
               usedPowerups: receipt.usedPowerups,
@@ -960,27 +974,20 @@ export const getLevelTop = async (
           })
         );
 
-        resolved.push(
-          ...batch.filter(
-            (
-              entry
-            ): entry is {
-              userId: string;
-              username: string | null;
-              score: number;
-              snoovatarUrl: string | null;
-              solveSeconds: number;
-              mistakes: number;
-              usedPowerups: number;
-              completedAtTs: number;
-            } => entry !== null
-          )
-        );
+        for (const entry of batch) {
+          if (entry && !seen.has(entry.userId)) {
+            seen.add(entry.userId);
+            scored.push(entry);
+          }
+        }
 
-        start += fetchWindow;
+        if (winners.length < winnerScanWindow) {
+          break;
+        }
+        start += winnerScanWindow;
       }
 
-      return resolved
+      const ranked = scored
         .sort((left, right) => {
           if (right.score !== left.score) {
             return right.score - left.score;
@@ -996,8 +1003,22 @@ export const getLevelTop = async (
           }
           return left.completedAtTs - right.completedAtTs;
         })
-        .slice(0, limit)
-        .map(({ completedAtTs: _completedAtTs, ...entry }) => entry);
+        .slice(0, limit);
+
+      return await Promise.all(
+        ranked.map(async (entry) => {
+          const userMeta = await resolveLeaderboardUserMeta(entry.userId);
+          return {
+            userId: entry.userId,
+            username: userMeta.username,
+            score: entry.score,
+            snoovatarUrl: userMeta.snoovatarUrl,
+            solveSeconds: entry.solveSeconds,
+            mistakes: entry.mistakes,
+            usedPowerups: entry.usedPowerups,
+          };
+        })
+      );
     }
   );
 

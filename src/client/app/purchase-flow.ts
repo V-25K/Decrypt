@@ -1,5 +1,6 @@
 import { OrderResultStatus } from '@devvit/web/client';
 import { promotedOfferPrioritySkus } from '../../shared/store';
+import { friendlyErrorMessage } from './error-messages';
 
 type ProductWithSku = {
   sku: string;
@@ -26,5 +27,7 @@ export const toPurchaseErrorMessage = (
   if (typeof errorMessage === 'string' && /order not placed/i.test(errorMessage)) {
     return 'Unable to place your order right now. Please try again.';
   }
-  return errorMessage ?? 'Purchase canceled.';
+  // Keep curated copy ("No thanks", "Purchase canceled") but scrub any raw
+  // transport/runtime error text down to a friendly fallback.
+  return friendlyErrorMessage(errorMessage, 'Purchase canceled.');
 };
