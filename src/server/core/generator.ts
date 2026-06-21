@@ -46,6 +46,7 @@ import {
   keyPuzzlePublishLock,
 } from './keys';
 import { formatDateKey } from './serde';
+import { logInfo, logError } from './log';
 import { mulberry32, randInt, shuffleWithRng } from './rng';
 import type { DifficultyTier } from './content';
 import type { ChallengeType, PuzzlePrivate, PuzzlePublic } from '../../shared/game';
@@ -1294,12 +1295,16 @@ export const publishDailyPost = async (params: {
   levelId: string;
   dateKey: string;
   runAs?: PublishRunAs;
+  // Only honored when posting on behalf of the user (runAs: 'USER', i.e. after
+  // the app is approved and community posts become user-authored). Attaches
+  // reportable attribution per Devvit's user-generated-content rules.
+  userGeneratedContent?: { text: string; imageUrls?: string[] };
   forceNewPost?: boolean;
   title?: string;
   postData?: DailyPostData;
   textFallbackText?: string;
 }): Promise<string> => {
-  console.log('[publishDailyPost] Starting', {
+  logInfo('generator.publish-daily', 'starting', {
     levelId: params.levelId,
     dateKey: params.dateKey,
     runAs: params.runAs ?? 'APP',
@@ -1309,14 +1314,12 @@ export const publishDailyPost = async (params: {
   if (!params.forceNewPost) {
     const committedBeforeLock = await loadCommittedPublishedPostId(params.levelId);
     if (committedBeforeLock) {
-      console.log('[publishDailyPost] Post already published, returning existing', {
+      logInfo('generator.publish-daily', 'already published; returning existing', {
         levelId: params.levelId,
         postId: committedBeforeLock.postId,
       });
       return committedBeforeLock.postId;
     }
-  } else {
-    console.log('[publishDailyPost] forceNewPost=true, skipping duplicate check');
   }
 
   const lockToken = createLockToken();
@@ -1348,25 +1351,11 @@ export const publishDailyPost = async (params: {
       params.postData ??
       (await buildDailyPostData(params.levelId, params.dateKey));
 
-    console.log('[publishDailyPost] About to call reddit.submitCustomPost', {
+    logInfo('generator.publish-daily', 'submitting custom post', {
       levelId: params.levelId,
       dateKey: params.dateKey,
       subredditName,
       runAs,
-      title,
-      entry: challengePostEntry,
-      postData,
-    });
-
-    console.log('[publishDailyPost] submitting custom post', {
-      levelId: params.levelId,
-      dateKey: params.dateKey,
-      subredditName,
-      runAs,
-      contextDetails: {
-        subredditId: context.subredditId,
-        username: context.username,
-      },
     });
 
     // Declare post in outer scope so it's accessible after the inner try-catch.
@@ -1376,25 +1365,24 @@ export const publishDailyPost = async (params: {
         subredditName,
         title,
         entry: challengePostEntry,
-        ...(runAs === 'USER' ? { runAs } : {}),
+        // When posting on behalf of the user (post-approval), attach reportable
+        // user-content attribution alongside runAs per Devvit's safety rules.
+        ...(runAs === 'USER'
+          ? {
+              runAs,
+              ...(params.userGeneratedContent
+                ? { userGeneratedContent: params.userGeneratedContent }
+                : {}),
+            }
+          : {}),
         postData,
         textFallback: {
           text: params.textFallbackText ?? `${title}. Open the interactive post to play.`,
         },
       });
 
-      console.log('[publishDailyPost] Reddit API response received', {
-        postId: post?.id,
-        postUrl: post?.url,
-        hasPost: !!post,
-        postDataSent: postData,
-        postKeys: post ? Object.keys(post) : [],
-      });
-
       if (!post?.id) {
-        console.error('[publishDailyPost] submitCustomPost returned without a post id', {
-          fullResponse: JSON.stringify(post, null, 2),
-        });
+        logError('generator.publish-daily', 'submitCustomPost returned without a post id');
         throw new Error('submitCustomPost returned without a post id.');
       }
 
@@ -1411,9 +1399,8 @@ export const publishDailyPost = async (params: {
           snapshot: verifiedSnapshot,
         });
       } catch (verifyError) {
-        console.error('[publishDailyPost] Post verification failed', {
+        logError('generator.publish-daily', 'post verification failed', verifyError, {
           postId: post.id,
-          error: verifyError instanceof Error ? verifyError.message : String(verifyError),
         });
         if (verifyError instanceof PuzzlePublishedPostUnavailableError) {
           throw verifyError;
@@ -1421,10 +1408,7 @@ export const publishDailyPost = async (params: {
         // Don't throw here - the post might still be valid, just not immediately queryable
       }
     } catch (error) {
-      console.error('[publishDailyPost] Reddit API error during post submission', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        errorType: error?.constructor?.name,
+      logError('generator.publish-daily', 'submit failed', error, {
         levelId: params.levelId,
         dateKey: params.dateKey,
         subredditName,
@@ -1434,13 +1418,11 @@ export const publishDailyPost = async (params: {
     }
 
     if (!post?.id) {
-      console.error('[publishDailyPost] submitCustomPost returned without a post id', {
-        fullResponse: JSON.stringify(post, null, 2),
-      });
+      logError('generator.publish-daily', 'submitCustomPost returned without a post id');
       throw new Error('submitCustomPost returned without a post id.');
     }
 
-    console.log('[publishDailyPost] custom post created successfully', {
+    logInfo('generator.publish-daily', 'created', {
       levelId: params.levelId,
       dateKey: params.dateKey,
       postId: post.id,
@@ -1485,9 +1467,8 @@ export const ensurePostVisibility = async (params: {
       snapshot,
     });
   } catch (error) {
-    console.error('[ensurePostVisibility] Failed to check post visibility', {
+    logError('generator.publish-visibility', 'failed to check post visibility', error, {
       postId,
-      error: error instanceof Error ? error.message : String(error),
     });
     if (error instanceof PuzzlePublishedPostUnavailableError) {
       throw error;
@@ -1499,19 +1480,16 @@ export const publishAndActivateDailyPost = async (params: {
   levelId: string;
   dateKey: string;
   runAs?: PublishRunAs;
+  userGeneratedContent?: { text: string; imageUrls?: string[] };
   forceNewPost?: boolean;
 }): Promise<string> => {
-  console.log('[publishAndActivateDailyPost] Starting', {
+  logInfo('generator.publish-activate', 'starting', {
     levelId: params.levelId,
     dateKey: params.dateKey,
     runAs: params.runAs,
     forceNewPost: params.forceNewPost ?? false,
   });
   const postId = await publishDailyPost(params);
-  console.log('[publishAndActivateDailyPost] Post created, now activating', {
-    levelId: params.levelId,
-    postId,
-  });
 
   // Ensure the post is visible before activating
   await ensurePostVisibility({
@@ -1520,7 +1498,10 @@ export const publishAndActivateDailyPost = async (params: {
   });
 
   await activateDailyPuzzle(params.levelId);
-  console.log('[publishAndActivateDailyPost] Activation complete', { levelId: params.levelId });
+  logInfo('generator.publish-activate', 'activation complete', {
+    levelId: params.levelId,
+    postId,
+  });
   return postId;
 };
 

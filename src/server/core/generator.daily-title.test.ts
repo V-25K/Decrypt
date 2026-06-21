@@ -248,4 +248,43 @@ describe('publishDailyPost daily title numbering', () => {
       })
     );
   });
+
+  it('attaches userGeneratedContent only when posting as the user', async () => {
+    const postData = {
+      levelId: 'lvl_0009',
+      dateKey: '2026-03-07',
+      mode: 'daily' as const,
+      previewTitle: 'Community Cipher',
+    };
+
+    await publishDailyPost({
+      levelId: 'lvl_0009',
+      dateKey: '2026-03-07',
+      title: 'Community Cipher',
+      runAs: 'USER',
+      userGeneratedContent: { text: 'HELLO WORLD' },
+      postData,
+    });
+    expect(submitCustomPostMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runAs: 'USER',
+        userGeneratedContent: { text: 'HELLO WORLD' },
+      })
+    );
+
+    submitCustomPostMock.mockClear();
+
+    // Posting as the app account must NOT carry runAs or user attribution.
+    await publishDailyPost({
+      levelId: 'lvl_0009',
+      dateKey: '2026-03-07',
+      title: 'Daily Cipher',
+      runAs: 'APP',
+      userGeneratedContent: { text: 'HELLO WORLD' },
+      postData,
+    });
+    const appArgs = submitCustomPostMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(appArgs.runAs).toBeUndefined();
+    expect(appArgs.userGeneratedContent).toBeUndefined();
+  });
 });
