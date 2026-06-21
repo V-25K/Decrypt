@@ -57,6 +57,7 @@ tools/mcp-audit-driver.mjs
 scripts/*
 !scripts/check-lines.ts
 !scripts/check-preview-bundle.mjs
+!scripts/manual-line-registry.ts
 
 # Local one-off debugging scripts (keep production/admin debug endpoints versioned)
 scripts/debug-local/

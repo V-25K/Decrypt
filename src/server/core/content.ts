@@ -2,8 +2,8 @@ import {
   maxPuzzleAuthorLength as sharedMaxPuzzleAuthorLength,
   maxPuzzleTotalLength as sharedMaxPuzzleTotalLength,
   minPlayablePuzzleTotalLength as sharedMinPlayablePuzzleTotalLength,
-} from '../../shared/puzzle-limits';
-import { commonWordRank, topCommonWords } from './common-word-ranks';
+} from '../../shared/puzzle-limits.ts';
+import { commonWordRank, topCommonWords } from './common-word-ranks.ts';
 
 export const maxPuzzleWordLength = 12;
 export const maxPuzzleTotalLength = sharedMaxPuzzleTotalLength;

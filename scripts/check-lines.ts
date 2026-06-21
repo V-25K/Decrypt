@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   checkLineAgainstCorpusEntries,
-  defaultManualLineRegistryPath,
-  loadManualLineRegistryEntries,
   type LocalLineCheckResult,
 } from '../src/server/core/line-checker.ts';
+import {
+  defaultManualLineRegistryPath,
+  loadManualLineRegistryEntries,
+} from './manual-line-registry.ts';
 
 type ParsedArgs = {
   corpusFilePath: string;
