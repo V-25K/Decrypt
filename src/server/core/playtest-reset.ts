@@ -15,10 +15,13 @@ import {
   keyChallengeEvaluation,
   keyChallengeEvaluationIndex,
   keyChallengeEvaluationPublishIndex,
+  keyCommunityAcclaimAwarded,
   keyCommunityApprovalLock,
   keyCommunityCreatorStats,
+  keyCommunityLevelLikedBy,
   keyCommunityPendingSignatures,
   keyCommunityPuzzlePlays,
+  keyCommunityVotes,
   keyCommunityRemovedLevels,
   keyCommunitySubmission,
   keyCommunitySubmissionsApproved,
@@ -277,7 +280,10 @@ export const clearSubredditGameData = async (): Promise<SubredditGameDataClearRe
       keyLevelQualifiedFailures(levelId),
       keyLevelQualifiedOutcomes(levelId),
       keyLevelDifficultyRating(levelId),
-      keyCommunityPuzzlePlays(levelId)
+      keyCommunityPuzzlePlays(levelId),
+      keyCommunityVotes(levelId),
+      keyCommunityLevelLikedBy(levelId),
+      keyCommunityAcclaimAwarded(levelId)
     );
   }
   deletedKeys += await deleteKeys(puzzleKeys);
