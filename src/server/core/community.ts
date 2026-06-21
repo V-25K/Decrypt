@@ -57,6 +57,7 @@ import { buildDifficultyBreakdown, difficultyModelVersion } from './difficulty-m
 import { buildChallengeEvaluation, getChallengeEvaluation } from './challenge-evaluation';
 import { getDecryptSettings } from './config';
 import {
+  deletePuzzleData,
   getPuzzleMapping,
   getPuzzlePrivate,
   getPuzzlePublishedPostId,
@@ -89,7 +90,18 @@ import {
   keyCommunitySubmissionsRejected,
   keyCommunitySubmissionsRemoved,
   keyCommunityVotes,
+  keyChallengeEvaluationPublishIndex,
+  keyLevelDifficultyRating,
+  keyLevelPlayCount,
+  keyLevelPlayers,
+  keyLevelQualifiedFailures,
+  keyLevelQualifiedOutcomes,
   keyLevelQualifiedPlayers,
+  keyLevelQualifiedWins,
+  keyLevelWinCount,
+  keyLevelWinners,
+  keyPostLevel,
+  keyPuzzlePublishLock,
   keyUserEndlessPlayed,
 } from './keys';
 import {
@@ -2199,6 +2211,9 @@ const publishApprovedCommunityPost = async (
     levelId: submission.levelId,
     dateKey: puzzle.dateKey,
     runAs: 'APP',
+    // Threaded for when community posts become user-authored (runAs: 'USER')
+    // after app approval; ignored while posting as the app account.
+    userGeneratedContent: { text: submission.text },
     forceNewPost: true,
 	    title: `${submission.title} by u/${submission.authorName}`,
 	    postData: {
@@ -2564,6 +2579,103 @@ export const removeCommunityPuzzle = async (params: {
 	    redis.hIncrBy(keyCommunityCreatorStats(submission.authorId), 'removed', 1),
 	  ]);
   return next;
+};
+
+/**
+ * Hard-delete every stored trace of a community challenge, addressed by level
+ * id. Invoked by the onPostDelete trigger so that when a community post is
+ * removed from Reddit we honor the deletion per Devvit's safety rules (remove
+ * the creator's text, identity, and engagement from our datastore; retain only
+ * id-level metadata).
+ *
+ * App-context safe: takes no user and never throws. A level that is not a
+ * community submission (auto-daily / mod-injected app content) is a no-op — we
+ * only drop the post->level pointer for the deleted post.
+ */
+export const purgeCommunityChallengeByLevel = async (params: {
+  levelId: string;
+  postId?: string;
+}): Promise<{ purged: boolean }> => {
+  const { levelId, postId } = params;
+  try {
+    const submissionId = await redis.hGet(keyCommunitySubmissionsByLevel, levelId);
+    if (!submissionId) {
+      if (postId) {
+        await redis.del(keyPostLevel(postId));
+      }
+      return { purged: false };
+    }
+
+    // Read identity/signature/date before deleting the records they live in.
+    const submission = await getCommunitySubmission(submissionId);
+    const puzzle = await getPuzzlePrivate(levelId);
+    const dateKey = puzzle?.dateKey;
+    const signature = submission?.normalizedSig;
+    const authorId = submission?.authorId;
+
+    // 1. Puzzle content: public/private text, mapping, indexes, used-signature.
+    await deletePuzzleData({
+      levelId,
+      ...(dateKey ? { dateKey } : {}),
+      ...(signature ? { signature } : {}),
+    });
+
+    // 2. The creator's text + identity record, per-level engagement, and any
+    // (released/TTL'd) locks — parity with clearSubredditGameData.
+    await Promise.all([
+      redis.del(keyCommunitySubmission(submissionId)),
+      redis.del(keyCommunityPuzzlePlays(levelId)),
+      redis.del(keyCommunityVotes(levelId)),
+      redis.del(keyCommunityLevelLikedBy(levelId)),
+      redis.del(keyCommunityAcclaimAwarded(levelId)),
+      redis.del(keyCommunityApprovalLock(submissionId)),
+      redis.del(keyPuzzlePublishLock(levelId)),
+    ]);
+
+    // 3. Level-scoped player stats (these reference player user ids).
+    await Promise.all([
+      redis.del(keyLevelPlayers(levelId)),
+      redis.del(keyLevelWinners(levelId)),
+      redis.del(keyLevelPlayCount(levelId)),
+      redis.del(keyLevelWinCount(levelId)),
+      redis.del(keyLevelQualifiedPlayers(levelId)),
+      redis.del(keyLevelQualifiedWins(levelId)),
+      redis.del(keyLevelQualifiedFailures(levelId)),
+      redis.del(keyLevelQualifiedOutcomes(levelId)),
+      redis.del(keyLevelDifficultyRating(levelId)),
+    ]);
+
+    // 4. Remove from discovery indexes so it can never be served again.
+    await Promise.all([
+      redis.hDel(keyCommunitySubmissionsByLevel, [levelId]),
+      redis.zRem(keyCommunitySubmissionsApproved, [submissionId]),
+      redis.zRem(keyCommunitySubmissionsPending, [submissionId]),
+      redis.zRem(keyChallengeEvaluationPublishIndex, [levelId]),
+      authorId
+        ? redis.zRem(keyCommunitySubmissionsByAuthor(authorId), [submissionId])
+        : Promise.resolve(),
+      signature
+        ? redis.hDel(keyCommunityPendingSignatures, [signature])
+        : Promise.resolve(),
+    ]);
+
+    // 5. Audit trail — ids only (retainable metadata per the policy).
+    await Promise.all([
+      redis.zAdd(keyCommunitySubmissionsRemoved, {
+        member: submissionId,
+        score: Date.now(),
+      }),
+      redis.hSet(keyCommunityRemovedLevels, { [levelId]: submissionId }),
+    ]);
+
+    if (postId) {
+      await redis.del(keyPostLevel(postId));
+    }
+    return { purged: true };
+  } catch (error) {
+    logWarn('community', 'purgeCommunityChallengeByLevel failed', { levelId, error });
+    return { purged: false };
+  }
 };
 
 export const getApprovedCommunityCount = async (): Promise<number> =>
