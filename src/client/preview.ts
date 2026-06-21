@@ -284,6 +284,29 @@ const renderWord = (token: PreviewRenderToken): HTMLElement => {
   return word;
 };
 
+// Build one rendered line, keeping each word and the punctuation touching it in
+// a single non-wrapping chunk. Spaces are the only wrap points, so punctuation
+// (a real solving clue) never drops to the next line away from its word.
+const renderLine = (line: PreviewRenderToken[]): HTMLElement => {
+  const lineElement = createElement('div', 'preview-line');
+  let chunk: HTMLElement | null = null;
+
+  for (const token of line) {
+    if (token.type === 'separator' && token.tile.displayChar === ' ') {
+      chunk = null;
+      lineElement.append(renderSeparator(token));
+      continue;
+    }
+    if (!chunk) {
+      chunk = createElement('span', 'preview-chunk');
+      lineElement.append(chunk);
+    }
+    chunk.append(token.type === 'word' ? renderWord(token) : renderSeparator(token));
+  }
+
+  return lineElement;
+};
+
 const renderPuzzle = (puzzle: PuzzlePublic): HTMLElement => {
   const mask = createElement('div', 'preview-puzzle-mask');
   const puzzleElement = createElement('div', 'preview-puzzle');
@@ -295,41 +318,16 @@ const renderPuzzle = (puzzle: PuzzlePublic): HTMLElement => {
     if (!line) {
       continue;
     }
-    const lineElement = createElement('div', 'preview-line');
-    for (const token of line) {
-      lineElement.append(token.type === 'word' ? renderWord(token) : renderSeparator(token));
-    }
-    puzzleElement.append(lineElement);
+    puzzleElement.append(renderLine(line));
   }
 
   mask.append(puzzleElement);
-  // A real element, not a mask pseudo: ::after is taken by the overflow "..."
-  // indicator. Hidden entirely under prefers-reduced-motion (preview.css).
+  // A real element, not a pseudo: hidden entirely under prefers-reduced-motion
+  // (preview.css).
   const shimmer = createElement('span', 'preview-shimmer');
   shimmer.setAttribute('aria-hidden', 'true');
   mask.append(shimmer);
   return mask;
-};
-
-const updatePuzzleOverflowState = (mask: HTMLElement): void => {
-  mask.classList.remove('preview-puzzle-overflow');
-  const content = mask.firstElementChild;
-  if (!(content instanceof HTMLElement)) {
-    return;
-  }
-  const maskBox = mask.getBoundingClientRect();
-  const contentBox = content.getBoundingClientRect();
-  const overflows = contentBox.bottom > maskBox.bottom + 2;
-  mask.classList.toggle('preview-puzzle-overflow', overflows);
-};
-
-const watchPuzzleOverflow = (mask: HTMLElement): void => {
-  window.requestAnimationFrame(() => updatePuzzleOverflowState(mask));
-  window.addEventListener('resize', () => {
-    window.requestAnimationFrame(() => updatePuzzleOverflowState(mask));
-  }, {
-    passive: true,
-  });
 };
 
 const renderTitleRow = (titleText = fallbackPreviewTitle): HTMLElement => {
@@ -556,7 +554,6 @@ const renderPreview = (root: HTMLElement, preview: GamePreviewResponse): void =>
   }
   wireExpandedMode(button);
   root.replaceChildren(button);
-  watchPuzzleOverflow(puzzleMask);
   if (preview.communityVotes) {
     watchPreviewVotes(button);
   }

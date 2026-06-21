@@ -653,11 +653,13 @@ manualPuzzleRoutes.post('/mod-inject-submit', async (c) => {
         .filter((entry) => entry.feasible)
         .map((entry) => entry.tier);
       if (feasibleTiers.length === 0) {
-        const firstReason = report.tiers.find((entry) => entry.reason)?.reason;
+        // Every difficulty failed the fairness/solvability check. Show one clear
+        // reason rather than a single tier's wording ("Easy doesn't work…"),
+        // which read as if only Easy were unavailable.
         return c.json<UiResponse>(
           {
             showToast:
-              firstReason ?? "This line can't become a puzzle yet. Try another quote.",
+              "No difficulty works for this quote — it can't be made fair to solve by logic without guessing. Try a quote with more common, everyday words.",
           },
           200
         );

@@ -137,6 +137,43 @@ export const chunkPuzzleTokensByWordLimit = <TTile extends TokenTile>(
   return cleaned;
 };
 
+export type PuzzleLineSegment<TTile extends TokenTile> =
+  | { kind: 'space'; key: string; token: PuzzleRenderToken<TTile> }
+  | { kind: 'group'; key: string; tokens: PuzzleRenderToken<TTile>[] };
+
+/**
+ * Groups a line's tokens so each run of non-space tokens — a word plus any
+ * punctuation touching it — renders as one non-wrapping unit, with spaces as the
+ * only wrap points. This keeps punctuation from dropping to the next line away
+ * from the word it belongs to (punctuation is a real solving clue), while words
+ * still wrap normally at spaces.
+ */
+export const groupLineTokensBySpaces = <TTile extends TokenTile>(
+  line: PuzzleRenderToken<TTile>[]
+): PuzzleLineSegment<TTile>[] => {
+  const segments: PuzzleLineSegment<TTile>[] = [];
+  let current: PuzzleRenderToken<TTile>[] = [];
+
+  const flush = () => {
+    const first = current[0];
+    if (first) {
+      segments.push({ kind: 'group', key: `group-${first.key}`, tokens: current });
+      current = [];
+    }
+  };
+
+  for (const token of line) {
+    if (token.type === 'separator' && token.tile.displayChar === ' ') {
+      flush();
+      segments.push({ kind: 'space', key: token.key, token });
+    } else {
+      current.push(token);
+    }
+  }
+  flush();
+  return segments;
+};
+
 export const getPuzzleNavigableTileRows = <TTile extends NavigableTokenTile>(
   puzzleTokenLines: PuzzleRenderToken<TTile>[][],
   maxColumns: number

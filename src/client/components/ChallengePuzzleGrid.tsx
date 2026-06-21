@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { cn } from '../utils';
 import { maxWordTileColumns, wordContinuationGlyph } from '../app/constants';
-import { getPuzzleNavigableTileRows, type PuzzleRenderToken } from '../utils';
+import { getPuzzleNavigableTileRows, groupLineTokensBySpaces, type PuzzleRenderToken } from '../utils';
 import type { PuzzlePublicTile } from '../app/types';
 import { UiSprite } from './UiSprite';
 import type { ImmutableGameState } from '../app/ImmutableGameState';
@@ -136,6 +136,174 @@ export const ChallengePuzzleGrid = memo(({
     [handleTileSelection, navigableTileIndices, navigableTileRows]
   );
 
+  const renderLineToken = (
+    token: PuzzleRenderToken<PuzzlePublicTile>
+  ): ReactNode => {
+    if (token.type === 'separator') {
+      return (
+        <div key={token.key} className={isInlineMode ? 'mr-[2px]' : 'mr-[4px]'}>
+          {renderPunctuationTile(token.key, token.tile.displayChar)}
+        </div>
+      );
+    }
+
+    const wordRows = splitWordTiles(token.tiles);
+    const isBridgeWord = wordRows.length > 1;
+    const highlightBridgeWord =
+      isBridgeWord &&
+      selectedTile !== null &&
+      token.tiles.some((tile) => tile.index === selectedTile);
+
+    return (
+      <div
+        key={token.key}
+        className={`${
+          isBridgeWord
+            ? `${
+                isInlineMode ? 'mr-0.5' : 'mr-1'
+              } inline-flex flex-col gap-0`
+            : `${
+                isInlineMode ? 'mr-0.5 gap-[1px]' : 'mr-1 gap-[2px]'
+              } inline-flex items-end whitespace-nowrap`
+        } ${
+          highlightBridgeWord ? 'app-surface-subtle rounded-md px-1 py-0.5' : ''
+        }`}
+      >
+        {wordRows.map((rowTiles, rowIndex) => (
+          <div
+            key={`${token.key}-row-${rowIndex}`}
+            className={`inline-flex items-end ${
+              isInlineMode ? 'gap-[1px]' : 'gap-[2px]'
+            }`}
+          >
+            {rowTiles.map((tile) => {
+              if (!tile.isLetter) {
+                return renderPunctuationTile(tile.index, tile.displayChar);
+              }
+
+              const disabled =
+                tile.isLocked || busy || isComplete || isGameOver;
+              const pendingLetter =
+                !tile.isLocked && tile.displayChar === '_'
+                  ? pendingGuessByTile.get(tile.index)
+                  : null;
+              const displayChar = pendingLetter ?? tile.displayChar;
+
+              const lockDotCount = tile.isLocked
+                ? Math.min(
+                    2,
+                    tile.lockTotalKeys ?? tile.lockRemainingKeys ?? 0
+                  )
+                : 0;
+              const lockDots =
+                lockDotCount > 0
+                  ? Array.from({ length: lockDotCount }, (_value, index) => (
+                      <span key={`lock-dot-${tile.index}-${index}`} className="lock-dot">
+                        •
+                      </span>
+                    ))
+                  : null;
+
+              const isCorrectGuess =
+                correctGuessTileIndices.has(tile.index) ||
+                tile.isSessionRevealed === true;
+              const isWrongGuess = wrongGuessTileIndices.has(tile.index);
+              const tileState = getLetterTileState(
+                selectedTile === tile.index,
+                tile.isLocked,
+                isCorrectGuess,
+                isWrongGuess
+              );
+
+              return (
+                <button
+                  key={tile.index}
+                  ref={(node) => {
+                    if (node) {
+                      tileButtonRefs.current.set(tile.index, node);
+                    } else {
+                      tileButtonRefs.current.delete(tile.index);
+                    }
+                  }}
+                  disabled={disabled}
+                  onClick={() => handleTileSelection(tile.index)}
+                  onKeyDown={(event) => handleTileKeyDown(event, tile.index)}
+                  aria-label={`Cipher tile ${tile.index + 1}`}
+                  data-tile-state={tileState}
+                  className={getLetterTileClass(
+                    selectedTile === tile.index,
+                    disabled,
+                    tile.isGold,
+                    tile.isLocked,
+                    isCorrectGuess,
+                    isWrongGuess
+                  )}
+                >
+                  {tile.isLocked && (
+                    <span className="lock-stack-full">
+                      {lockDots ? (
+                        <span className="lock-dot-col">{lockDots}</span>
+                      ) : null}
+                      <UiSprite icon="lock" decorative className="lock-sprite" />
+                    </span>
+                  )}
+
+                  <span
+                    className={cn(
+                      `flex h-[16px] items-center justify-center font-black leading-none ${puzzleMarkClass}`,
+                      pendingLetter ? 'opacity-60' : ''
+                    )}
+                  >
+                    {tile.isLocked
+                      ? ' '
+                      : displayChar === '_'
+                        ? ' '
+                        : displayChar}
+                  </span>
+
+                  <span
+                    className={cn(
+                      'app-surface-subtle block h-[2px] rounded-full',
+                      tile.isLocked ? 'opacity-0' : 'opacity-100',
+                      isInlineMode ? 'mt-0.5' : 'mt-1',
+                      puzzleTileUnderlineWidthClass
+                    )}
+                  />
+
+                  <span
+                    className={`app-text-soft flex min-h-[10px] items-center justify-center leading-none ${
+                      isInlineMode ? 'mt-0.5' : 'mt-1'
+                    } ${puzzleCipherClass}`}
+                  >
+                    {tile.isLocked ? (
+                      ' '
+                    ) : tile.isBlind ? (
+                      <UiSprite icon="question" decorative className="cipher-blind-mark" />
+                    ) : (
+                      tile.cipherNumber ?? ' '
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+
+            {isBridgeWord && rowIndex < wordRows.length - 1 && (
+              <div
+                className={`app-text-soft flex min-w-[12px] items-center justify-center ${
+                  isInlineMode ? 'mb-[7px]' : 'mb-[10px]'
+                }`}
+              >
+                <span className={`${separatorGlyphClass} leading-none`}>
+                  {wordContinuationGlyph}
+                </span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <main className="flex flex-1 min-h-0 px-2 py-2">
       <div className="min-w-0 flex-1">
@@ -161,179 +329,24 @@ export const ChallengePuzzleGrid = memo(({
               >
                 {puzzleTokenLines.map((lineTokens, lineIndex) => (
                   <div key={`line-${lineIndex}`} className="flex flex-wrap items-end justify-center">
-                    {lineTokens.map((token) => {
-                      if (token.type === 'separator') {
-                        return token.tile.displayChar === ' ' ? (
-                          <span
-                            key={token.key}
-                            className={`inline-flex h-[1px] ${
-                              isInlineMode ? 'w-[18px]' : 'w-[20px]'
-                            }`}
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <div key={token.key} className={isInlineMode ? 'mr-[2px]' : 'mr-[4px]'}>
-                            {renderPunctuationTile(token.key, token.tile.displayChar)}
-                          </div>
-                        );
-                      }
-
-                      const wordRows = splitWordTiles(token.tiles);
-                      const isBridgeWord = wordRows.length > 1;
-                      const highlightBridgeWord =
-                        isBridgeWord &&
-                        selectedTile !== null &&
-                        token.tiles.some((tile) => tile.index === selectedTile);
-
-                      return (
-                        <div
-                          key={token.key}
-                          className={`${
-                            isBridgeWord
-                              ? `${
-                                  isInlineMode ? 'mr-0.5' : 'mr-1'
-                                } inline-flex flex-col gap-0`
-                              : `${
-                                  isInlineMode ? 'mr-0.5 gap-[1px]' : 'mr-1 gap-[2px]'
-                                } inline-flex items-end whitespace-nowrap`
-                          } ${
-                            highlightBridgeWord ? 'app-surface-subtle rounded-md px-1 py-0.5' : ''
+                    {groupLineTokensBySpaces(lineTokens).map((segment) =>
+                      segment.kind === 'space' ? (
+                        <span
+                          key={segment.key}
+                          className={`inline-flex h-[1px] ${
+                            isInlineMode ? 'w-[18px]' : 'w-[20px]'
                           }`}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <div
+                          key={segment.key}
+                          className="inline-flex items-end whitespace-nowrap"
                         >
-                          {wordRows.map((rowTiles, rowIndex) => (
-                            <div
-                              key={`${token.key}-row-${rowIndex}`}
-                              className={`inline-flex items-end ${
-                                isInlineMode ? 'gap-[1px]' : 'gap-[2px]'
-                              }`}
-                            >
-                              {rowTiles.map((tile) => {
-                                if (!tile.isLetter) {
-                                  return renderPunctuationTile(tile.index, tile.displayChar);
-                                }
-
-                                const disabled =
-                                  tile.isLocked || busy || isComplete || isGameOver;
-                                const pendingLetter =
-                                  !tile.isLocked && tile.displayChar === '_'
-                                    ? pendingGuessByTile.get(tile.index)
-                                    : null;
-                                const displayChar = pendingLetter ?? tile.displayChar;
-
-                                const lockDotCount = tile.isLocked
-                                  ? Math.min(
-                                      2,
-                                      tile.lockTotalKeys ?? tile.lockRemainingKeys ?? 0
-                                    )
-                                  : 0;
-                                const lockDots =
-                                  lockDotCount > 0
-                                    ? Array.from({ length: lockDotCount }, (_value, index) => (
-                                        <span key={`lock-dot-${tile.index}-${index}`} className="lock-dot">
-                                          •
-                                        </span>
-                                      ))
-                                    : null;
-
-                                const isCorrectGuess =
-                                  correctGuessTileIndices.has(tile.index) ||
-                                  tile.isSessionRevealed === true;
-                                const isWrongGuess = wrongGuessTileIndices.has(tile.index);
-                                const tileState = getLetterTileState(
-                                  selectedTile === tile.index,
-                                  tile.isLocked,
-                                  isCorrectGuess,
-                                  isWrongGuess
-                                );
-
-                                return (
-                                  <button
-                                    key={tile.index}
-                                    ref={(node) => {
-                                      if (node) {
-                                        tileButtonRefs.current.set(tile.index, node);
-                                      } else {
-                                        tileButtonRefs.current.delete(tile.index);
-                                      }
-                                    }}
-                                    disabled={disabled}
-                                    onClick={() => handleTileSelection(tile.index)}
-                                    onKeyDown={(event) => handleTileKeyDown(event, tile.index)}
-                                    aria-label={`Cipher tile ${tile.index + 1}`}
-                                    data-tile-state={tileState}
-                                    className={getLetterTileClass(
-                                      selectedTile === tile.index,
-                                      disabled,
-                                      tile.isGold,
-                                      tile.isLocked,
-                                      isCorrectGuess,
-                                      isWrongGuess
-                                    )}
-                                  >
-                                    {tile.isLocked && (
-                                      <span className="lock-stack-full">
-                                        {lockDots ? (
-                                          <span className="lock-dot-col">{lockDots}</span>
-                                        ) : null}
-                                        <UiSprite icon="lock" decorative className="lock-sprite" />
-                                      </span>
-                                    )}
-
-                                    <span
-                                      className={cn(
-                                        `flex h-[16px] items-center justify-center font-black leading-none ${puzzleMarkClass}`,
-                                        pendingLetter ? 'opacity-60' : ''
-                                      )}
-                                    >
-                                      {tile.isLocked
-                                        ? '\u00A0'
-                                        : displayChar === '_'
-                                          ? '\u00A0'
-                                          : displayChar}
-                                    </span>
-
-                                    <span
-                                      className={cn(
-                                        'app-surface-subtle block h-[2px] rounded-full',
-                                        tile.isLocked ? 'opacity-0' : 'opacity-100',
-                                        isInlineMode ? 'mt-0.5' : 'mt-1',
-                                        puzzleTileUnderlineWidthClass
-                                      )}
-                                    />
-
-                                    <span
-                                      className={`app-text-soft flex min-h-[10px] items-center justify-center leading-none ${
-                                        isInlineMode ? 'mt-0.5' : 'mt-1'
-                                      } ${puzzleCipherClass}`}
-                                    >
-                                      {tile.isLocked ? (
-                                        '\u00A0'
-                                      ) : tile.isBlind ? (
-                                        <UiSprite icon="question" decorative className="cipher-blind-mark" />
-                                      ) : (
-                                        tile.cipherNumber ?? '\u00A0'
-                                      )}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-
-                              {isBridgeWord && rowIndex < wordRows.length - 1 && (
-                                <div
-                                  className={`app-text-soft flex min-w-[12px] items-center justify-center ${
-                                    isInlineMode ? 'mb-[7px]' : 'mb-[10px]'
-                                  }`}
-                                >
-                                  <span className={`${separatorGlyphClass} leading-none`}>
-                                    {wordContinuationGlyph}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                          {segment.tokens.map((token) => renderLineToken(token))}
                         </div>
-                      );
-                    })}
+                      )
+                    )}
                   </div>
                 ))}
               </div>

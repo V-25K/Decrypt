@@ -281,7 +281,7 @@ describe('mod-inject-submit', () => {
     expect(difficultyField.defaultValue).toEqual(['hard']);
   });
 
-  it('shows the fit reason when no tier works for the quote', async () => {
+  it('shows one clear message when no tier works for the quote', async () => {
     hasAdminAccessMock.mockResolvedValue(true);
     fitLineToTiersMock.mockResolvedValue(
       fitReport({
@@ -307,7 +307,7 @@ describe('mod-inject-submit', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       showToast:
-        'Easy doesn’t work for this line — its words are too unusual to solve without guessing.',
+        "No difficulty works for this quote — it can't be made fair to solve by logic without guessing. Try a quote with more common, everyday words.",
     });
   });
 

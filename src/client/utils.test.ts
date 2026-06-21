@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { chunkPuzzleTokensByWordLimit, tokenizePuzzleTiles } from './utils';
+import {
+  chunkPuzzleTokensByWordLimit,
+  groupLineTokensBySpaces,
+  tokenizePuzzleTiles,
+} from './utils';
 
 describe('tokenizePuzzleTiles', () => {
   it('keeps words as unbreakable tokens and emits punctuation/space separators', () => {
@@ -65,5 +69,52 @@ describe('tokenizePuzzleTiles', () => {
     expect(wordCounts).toEqual([8, 2]);
     expect(lines[0]?.[0]?.type).toBe('word');
     expect(lines[1]?.[0]?.type).toBe('word');
+  });
+});
+
+describe('groupLineTokensBySpaces', () => {
+  it('keeps a word and its trailing punctuation in one non-space group', () => {
+    const tiles = 'HELLO, WORLD!'.split('').map((char) => ({
+      isLetter: /^[A-Z]$/.test(char),
+      displayChar: char,
+    }));
+    const tokens = tokenizePuzzleTiles(tiles);
+
+    const segments = groupLineTokensBySpaces(tokens);
+
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      'group',
+      'space',
+      'group',
+    ]);
+
+    const groups = segments.filter((segment) => segment.kind === 'group');
+    // "HELLO" + "," stay together; "WORLD" + "!" stay together.
+    expect(groups[0]?.tokens.map((token) => token.type)).toEqual([
+      'word',
+      'separator',
+    ]);
+    expect(groups[1]?.tokens.map((token) => token.type)).toEqual([
+      'word',
+      'separator',
+    ]);
+  });
+
+  it('emits each space as its own wrap point between groups', () => {
+    const tiles = 'A B C'.split('').map((char) => ({
+      isLetter: /^[A-Z]$/.test(char),
+      displayChar: char,
+    }));
+    const tokens = tokenizePuzzleTiles(tiles);
+
+    const segments = groupLineTokensBySpaces(tokens);
+
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      'group',
+      'space',
+      'group',
+      'space',
+      'group',
+    ]);
   });
 });
