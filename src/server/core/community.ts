@@ -2160,12 +2160,11 @@ const replaceApprovedCommunityPuzzleInPlace = async (params: {
 }): Promise<void> => {
   const textChanged = sanitizePhrase(params.existingPuzzle.targetText) !== params.submission.text;
   if (textChanged) {
-    const engagement = await getLevelEngagement(params.existingPuzzle.levelId);
-    if (engagement.plays > 0) {
-      throw new Error(
-        'This puzzle has already been played. Remove it and submit the corrected version as a new challenge.'
-      );
-    }
+    // A revised line rebuilds the board in place on the same post and level —
+    // even after the challenge has plays — from the submission's already
+    // fitted/validated board. This matches how an admin line edit behaves
+    // (admin.ts), so a mod's "fix this" request updates the live post instead
+    // of dead-ending the creator with "remove and resubmit".
     const replacement = await buildReplacementCommunityPuzzle({
       submission: params.submission,
       existingPuzzle: params.existingPuzzle,
@@ -2483,18 +2482,10 @@ export const submitRequestedCommunityEdit = async (params: {
   if (exactDuplicateReason) {
     throw new Error(exactDuplicateReason);
   }
-  if (submission.levelId) {
-    const existingPuzzle = await getPuzzlePrivate(submission.levelId);
-    const textChanged = existingPuzzle
-      ? sanitizePhrase(existingPuzzle.targetText) !== validated.sanitizedText
-      : normalizedSig !== submission.normalizedSig;
-    const engagement = await getLevelEngagement(submission.levelId);
-    if (textChanged && engagement.plays > 0) {
-      throw new Error(
-        'This puzzle has already been played. Remove it and submit the corrected version as a new challenge.'
-      );
-    }
-  }
+  // A revised line is allowed even after the challenge has plays: on approval
+  // the existing post/level is rebuilt in place with the corrected board (see
+  // replaceApprovedCommunityPuzzleInPlace), so the creator's fix lands on the
+  // same live post rather than being blocked as "already played".
   // Auto submissions with a stored fitted board: a text edit moves tile
   // positions, so re-derive the layout for the revised text at the same
   // tier. Legacy auto submissions (no layout) keep the rebuild-on-approve

@@ -130,7 +130,11 @@ export const maxPrefilledCountForDifficulty = (difficulty: number): number => {
   if (tier === 'medium') {
     return 2;
   }
-  return 1;
+  // Hard/Expert: 2, not 1. A single starting letter on a long, heavily
+  // obstructed board left players with almost no foothold ("sometimes too
+  // hard"); a second reveal is still a tiny fraction of a 45+ letter line, so
+  // the board stays firmly in-tier — it just stops being punishing.
+  return 2;
 };
 
 const padlockChainBudgetCost = (chain: Pick<PadlockChain, 'keyIndices'>): number =>
@@ -390,7 +394,7 @@ const choosePrefilledIndices = (params: {
       ? [2, maxTierPrefills]
       : tier === 'medium'
         ? [1, maxTierPrefills]
-        : [Math.min(1, maxTierPrefills), maxTierPrefills];
+        : [Math.min(2, maxTierPrefills), maxTierPrefills];
   const minReveals = revealRange[0];
   const maxReveals = revealRange[1];
   if (minReveals === undefined || maxReveals === undefined) {

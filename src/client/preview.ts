@@ -362,7 +362,7 @@ const renderStatsLine = (preview: GamePreviewResponse): HTMLElement => {
 };
 
 // Read-only like/dislike display for the preview card. Stacked vertically and
-// anchored to the bottom-right corner of the card (see preview.css), using the
+// placed at the far-right of the bottom credit bar (see preview.css), using the
 // game's own thumb icons (not emoji). Returns the container so the poll can
 // update the count text in place as votes change.
 const renderVotesOverlay = (votes: {
@@ -436,31 +436,56 @@ const watchPreviewVotes = (root: HTMLElement): void => {
   }, previewVotesPollMs);
 };
 
-const renderFooter = (creator?: PreviewCreator, ctaLabel = 'Play'): HTMLElement => {
+const renderCreator = (creator?: PreviewCreator): HTMLElement | null => {
+  if (!creator?.username) {
+    return null;
+  }
+  const username = creator.username;
+  const creatorElement = createElement('span', 'preview-creator');
+  if (creator.avatarUrl) {
+    const avatar = createElement('span', 'preview-creator-avatar');
+    const image = createElement('img', 'preview-creator-image');
+    image.src = creator.avatarUrl;
+    image.alt = username;
+    avatar.append(image);
+    creatorElement.append(avatar);
+  } else {
+    creatorElement.classList.add('preview-creator-no-avatar');
+  }
+  const creatorText = createElement('span', 'preview-creator-text');
+  creatorText.append(
+    createElement('span', 'preview-creator-label', 'by'),
+    createElement('span', 'preview-creator-name', username)
+  );
+  creatorElement.append(creatorText);
+  return creatorElement;
+};
+
+const renderFooter = (ctaLabel = 'Play'): HTMLElement => {
   const footer = createElement('div', 'preview-footer');
   footer.append(createElement('span', 'preview-cta', ctaLabel));
-  if (creator?.username) {
-    const username = creator.username;
-    const creatorElement = createElement('span', 'preview-creator');
-    if (creator.avatarUrl) {
-      const avatar = createElement('span', 'preview-creator-avatar');
-      const image = createElement('img', 'preview-creator-image');
-      image.src = creator.avatarUrl;
-      image.alt = username;
-      avatar.append(image);
-      creatorElement.append(avatar);
-    } else {
-      creatorElement.classList.add('preview-creator-no-avatar');
-    }
-    const creatorText = createElement('span', 'preview-creator-text');
-    creatorText.append(
-      createElement('span', 'preview-creator-label', 'by'),
-      createElement('span', 'preview-creator-name', username)
-    );
-    creatorElement.append(creatorText);
-    footer.append(creatorElement);
-  }
   return footer;
+};
+
+// Bottom credit bar: the creator (avatar + name) pinned to the far-left screen
+// edge and the like/dislike votes pinned to the far-right, sharing one bottom
+// baseline (layout in preview.css). A spacer keeps a lone votes block anchored
+// right when there is no creator.
+const renderCreditBar = (
+  creator?: PreviewCreator,
+  votes?: { likes: number; dislikes: number }
+): HTMLElement | null => {
+  const creatorElement = renderCreator(creator);
+  const votesElement = votes ? renderVotesOverlay(votes) : null;
+  if (!creatorElement && !votesElement) {
+    return null;
+  }
+  const bar = createElement('div', 'preview-creditbar');
+  bar.append(creatorElement ?? createElement('span', 'preview-credit-spacer'));
+  if (votesElement) {
+    bar.append(votesElement);
+  }
+  return bar;
 };
 
 // Branded loading skeleton. MUST mirror the static shell in preview.html
@@ -526,7 +551,7 @@ const renderRemoved = (root: HTMLElement, levelId: string | null): void => {
       'This challenge left the game, but there is another one ready.'
     )
   );
-  button.append(content, renderFooter(undefined, 'Next challenge'));
+  button.append(content, renderFooter('Next challenge'));
   button.addEventListener('click', (event) => {
     void openNextChallenge(event, levelId);
   });
@@ -548,9 +573,10 @@ const renderPreview = (root: HTMLElement, preview: GamePreviewResponse): void =>
   const title = renderTitleRow(preview.previewTitle || fallbackPreviewTitle);
   const puzzleMask = renderPuzzle(preview.puzzle);
 
-  button.append(title, puzzleMask, renderStatsLine(preview), renderFooter(preview.creator));
-  if (preview.communityVotes) {
-    button.append(renderVotesOverlay(preview.communityVotes));
+  button.append(title, puzzleMask, renderStatsLine(preview), renderFooter());
+  const creditBar = renderCreditBar(preview.creator, preview.communityVotes ?? undefined);
+  if (creditBar) {
+    button.append(creditBar);
   }
   wireExpandedMode(button);
   root.replaceChildren(button);

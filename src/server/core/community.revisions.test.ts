@@ -5,6 +5,9 @@ const {
   redisMock,
   getLevelEngagementMock,
   getPuzzlePrivateMock,
+  replacePuzzleDataInPlaceMock,
+  buildManualPuzzleWithSolverFallbackMock,
+  getUserProfileMock,
 } = vi.hoisted(() => ({
   contextState: {
     userId: 't2_mod',
@@ -26,6 +29,9 @@ const {
   },
   getLevelEngagementMock: vi.fn(),
   getPuzzlePrivateMock: vi.fn(),
+  replacePuzzleDataInPlaceMock: vi.fn(),
+  buildManualPuzzleWithSolverFallbackMock: vi.fn(),
+  getUserProfileMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -54,24 +60,33 @@ vi.mock('./puzzle-store', () => ({
   getRecentUsedSignatureEntries: vi.fn().mockResolvedValue([]),
   getUsedSignatureOwner: vi.fn().mockResolvedValue(null),
   peekNextLevelId: vi.fn().mockResolvedValue('lvl_0001'),
-  replacePuzzleDataInPlace: vi.fn(),
+  replacePuzzleDataInPlace: replacePuzzleDataInPlaceMock,
 }));
 
 vi.mock('./generator', () => ({
   buildAndSaveManualPuzzle: vi.fn(),
-  buildManualPuzzleWithSolverFallback: vi.fn(),
+  buildManualPuzzleWithSolverFallback: buildManualPuzzleWithSolverFallbackMock,
   publishDailyPost: vi.fn(),
 }));
 
 vi.mock('./state', () => ({
   getCompletedLevels: vi.fn(),
   getFailedLevels: vi.fn(),
-  getUserProfile: vi.fn(),
+  getUserProfile: getUserProfileMock,
   saveUserProfile: vi.fn(),
 }));
 
 vi.mock('./engagement', () => ({
   getLevelEngagement: getLevelEngagementMock,
+}));
+
+// Approval runs the text-validation pipeline; stub it to always pass so these
+// tests exercise the in-place replacement behavior rather than calibration.
+vi.mock('./validation-pipeline', () => ({
+  createValidationPipeline: () => ({
+    phase1: () => ({ valid: true, reasons: [] }),
+    phase1Structural: () => ({ valid: true, reasons: [] }),
+  }),
 }));
 
 import {
@@ -116,11 +131,15 @@ describe('community revision workflow', () => {
     redisMock.zRem.mockReset();
     getLevelEngagementMock.mockReset();
     getPuzzlePrivateMock.mockReset();
+    replacePuzzleDataInPlaceMock.mockReset();
+    buildManualPuzzleWithSolverFallbackMock.mockReset();
+    getUserProfileMock.mockReset();
     contextState.userId = 't2_mod';
     contextState.username = 'mod_user';
     redisMock.set.mockResolvedValue(true);
     redisMock.get.mockResolvedValue(null);
     redisMock.hGet.mockResolvedValue(null);
+    getUserProfileMock.mockResolvedValue({ unlockedFlairs: [] });
   });
 
   it('moves an approved submission into changes_requested with a mod note', async () => {
@@ -143,7 +162,7 @@ describe('community revision workflow', () => {
     );
   });
 
-  it('blocks letter-changing creator edits after the puzzle has plays', async () => {
+  it('lets a creator revise the line in place after the puzzle has plays', async () => {
     contextState.userId = 't2_creator';
     contextState.username = 'creator';
     redisMock.hGetAll.mockResolvedValue({
@@ -151,23 +170,27 @@ describe('community revision workflow', () => {
       status: 'changes_requested',
       rejectionReason: 'Fix the typo.',
     });
+    // Lots of plays must NOT dead-end the edit anymore.
     getLevelEngagementMock.mockResolvedValue({
-      plays: 1,
-      wins: 0,
-      winRatePct: 0,
+      plays: 124,
+      wins: 30,
+      winRatePct: 24,
     });
 
-    await expect(
-      submitRequestedCommunityEdit({
-        submissionId: 'sub_001',
-        title: 'Puzzle',
-        text: 'THE QUICK BROWN FOX LEAPS',
-        attribution: 'Tester',
-      })
-    ).rejects.toThrow('already been played');
+    const result = await submitRequestedCommunityEdit({
+      submissionId: 'sub_001',
+      title: 'Puzzle',
+      text: 'THE QUICK BROWN FOX LEAPS',
+      attribution: 'Tester',
+    });
+
+    // The revised line goes back for moderator review; on approval it is
+    // applied in place to the existing post (see the reapproval test below).
+    expect(result.status).toBe('pending');
+    expect(result.text).toBe('THE QUICK BROWN FOX LEAPS');
   });
 
-  it('treats punctuation changes as puzzle-changing when plays exist', async () => {
+  it('lets a creator fix punctuation in place after the puzzle has plays', async () => {
     contextState.userId = 't2_creator';
     contextState.username = 'creator';
     redisMock.hGetAll.mockResolvedValue({
@@ -175,43 +198,20 @@ describe('community revision workflow', () => {
       status: 'changes_requested',
       rejectionReason: 'Fix punctuation.',
     });
-    getPuzzlePrivateMock.mockResolvedValue({
-      levelId: 'lvl_0042',
-      dateKey: '2026-05-30',
-      targetText: 'THE QUICK BROWN FOX JUMPS',
-      author: 'Tester',
-      challengeType: 'QUOTE',
-      source: 'COMMUNITY',
-      cipherType: 'random',
-      shiftAmount: null,
-      mapping: {},
-      reverseMapping: {},
-      tiles: [],
-      words: [],
-      prefilledIndices: [],
-      revealedIndices: [],
-      revealed_indices: [],
-      blindIndices: [],
-      goldIndex: null,
-      padlockChains: [],
-      difficulty: 5,
-      isLogical: true,
-      createdAt: 1000,
-    });
     getLevelEngagementMock.mockResolvedValue({
-      plays: 1,
-      wins: 0,
-      winRatePct: 0,
+      plays: 80,
+      wins: 40,
+      winRatePct: 50,
     });
 
-    await expect(
-      submitRequestedCommunityEdit({
-        submissionId: 'sub_001',
-        title: 'Puzzle',
-        text: 'THE QUICK BROWN FOX, JUMPS',
-        attribution: 'Tester',
-      })
-    ).rejects.toThrow('already been played');
+    const result = await submitRequestedCommunityEdit({
+      submissionId: 'sub_001',
+      title: 'Puzzle',
+      text: 'THE QUICK BROWN FOX, JUMPS',
+      attribution: 'Tester',
+    });
+
+    expect(result.status).toBe('pending');
   });
 
   it('accepts an auto revision and ignores any provided manual layout', async () => {
@@ -252,7 +252,7 @@ describe('community revision workflow', () => {
     expect(result.manualLayout).toBeNull();
   });
 
-  it('blocks in-place reapproval if plays arrive after a text-changing revision', async () => {
+  it('reapproves a played, text-changed revision by replacing the board in place', async () => {
     redisMock.hGetAll.mockResolvedValue({
       ...approvedSubmissionHash,
       text: 'THE QUICK BROWN FOX LEAPS',
@@ -282,18 +282,54 @@ describe('community revision workflow', () => {
       blindIndices: [],
       goldIndex: null,
       padlockChains: [],
-      difficulty: 5,
+      difficulty: 8,
       isLogical: true,
       createdAt: 1000,
     });
+    // 1,200 plays: the old code threw "already been played"; now the corrected
+    // line is rebuilt onto the same level/post.
     getLevelEngagementMock.mockResolvedValue({
-      plays: 1,
-      wins: 0,
-      winRatePct: 0,
+      plays: 1200,
+      wins: 600,
+      winRatePct: 50,
+    });
+    buildManualPuzzleWithSolverFallbackMock.mockReturnValue({
+      puzzlePrivate: {
+        levelId: 'lvl_0042',
+        dateKey: '2026-05-30',
+        targetText: 'THE QUICK BROWN FOX LEAPS',
+        author: 'Tester',
+        challengeType: 'QUOTE',
+        source: 'COMMUNITY',
+        cipherType: 'random',
+        shiftAmount: null,
+        mapping: {},
+        reverseMapping: {},
+        tiles: [],
+        words: [],
+        prefilledIndices: [],
+        revealedIndices: [],
+        revealed_indices: [],
+        blindIndices: [],
+        goldIndex: null,
+        padlockChains: [],
+        difficulty: 8,
+        isLogical: true,
+        createdAt: 1000,
+      },
     });
 
-    await expect(approveCommunitySubmission('sub_001')).rejects.toThrow(
-      'already been played'
-    );
+    const result = await approveCommunitySubmission('sub_001');
+
+    expect(result.status).toBe('approved');
+    expect(result.levelId).toBe('lvl_0042');
+    // The same level was overwritten in place with the corrected line.
+    expect(replacePuzzleDataInPlaceMock).toHaveBeenCalledTimes(1);
+    const replaced = replacePuzzleDataInPlaceMock.mock.calls[0]?.[0] as {
+      levelId: string;
+      puzzlePrivate: { targetText: string };
+    };
+    expect(replaced.levelId).toBe('lvl_0042');
+    expect(replaced.puzzlePrivate.targetText).toBe('THE QUICK BROWN FOX LEAPS');
   });
 });

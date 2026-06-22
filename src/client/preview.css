@@ -367,12 +367,9 @@ body {
   color: #ee837b;
 }
 
-.preview-shell > .preview-votes {
-  position: absolute;
-  right: clamp(10px, 2.6vw, 16px);
-  bottom: clamp(10px, 2.6vw, 16px);
-  z-index: 2;
+.preview-votes {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   gap: clamp(6px, 1.4vw, 10px);
@@ -460,11 +457,31 @@ body {
     0 2px 4px rgba(197, 83, 23, 0.28);
 }
 
-/* Creator credit: snoo avatar + name, pinned to the bottom-left corner. No
-   container — just the avatar, a soft ring for legibility on busy photos,
-   and text. */
+/* The bottom credit bar spans the full width and pushes its two ends to the
+   screen edges: creator hard-left, votes hard-right, sharing one bottom
+   baseline. It sits below the centered CTA and stays full-bleed even on
+   desktop (it is intentionally excluded from the centered-column clamp). */
+.preview-creditbar {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 clamp(12px, 3.2vw, 20px) clamp(10px, 2.6vw, 16px);
+}
+
+.preview-credit-spacer {
+  flex: 0 0 0;
+}
+
+/* Creator credit: snoo avatar + name, at the far-left of the credit bar. No
+   container — just the avatar, a soft drop-shadow for legibility on busy
+   photos, and text. */
 .preview-creator {
-  align-self: flex-start;
+  flex: 0 1 auto;
   display: inline-flex;
   min-width: 0;
   max-width: min(78vw, 340px);
@@ -736,11 +753,12 @@ body.preview-minimal .preview-skeleton-cta {
 }
 
 /* Desktop / wide viewports: the inline preview webview renders much wider (and
-   shorter) than the portrait mobile one, which left the title, puzzle, stats,
-   and the corner-pinned creator + votes scattered across a broad frame. Constrain
-   the content to a centered poster column so the card reads as one composed unit.
-   The photographic background stays full-bleed; only the content is centered, and
-   narrow mobile widths keep their full-width layout untouched. */
+   shorter) than the portrait mobile one, which left the title, puzzle, and
+   stats scattered across a broad frame. Constrain that content to a centered
+   poster column so the card reads as one composed unit. The credit bar is
+   deliberately left out so the creator and votes stay pinned to the true screen
+   edges. The photographic background stays full-bleed; narrow mobile widths
+   keep their full-width layout untouched. */
 @media (min-width: 560px) {
   .preview-top-row,
   .preview-puzzle-mask,
@@ -749,12 +767,6 @@ body.preview-minimal .preview-skeleton-cta {
     width: 100%;
     max-width: 640px;
     margin-inline: auto;
-  }
-
-  /* Pull the bottom-right votes in from the shell corner to the poster column's
-     right edge so they group with the rest of the content. */
-  .preview-shell > .preview-votes {
-    right: max(16px, calc(50% - 320px + 16px));
   }
 }
 

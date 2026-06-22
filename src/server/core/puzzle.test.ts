@@ -21,11 +21,11 @@ describe('puzzle', () => {
   it('defines strict prefilled-letter caps by difficulty tier', () => {
     expect(maxPrefilledCountForDifficulty(2)).toBe(4);
     expect(maxPrefilledCountForDifficulty(5)).toBe(2);
-    expect(maxPrefilledCountForDifficulty(8)).toBe(1);
-    expect(maxPrefilledCountForDifficulty(10)).toBe(1);
+    expect(maxPrefilledCountForDifficulty(8)).toBe(2);
+    expect(maxPrefilledCountForDifficulty(10)).toBe(2);
   });
 
-  it('keeps expert starter clues to at most one prefilled tile', () => {
+  it('keeps expert starter clues to at most two prefilled tiles', () => {
     const generated = buildPuzzle({
       levelId: 'lvl_0099',
       dateKey: '2026-02-26',
@@ -36,7 +36,9 @@ describe('puzzle', () => {
       skipSolvabilityCheck: true,
     });
 
-    expect(generated.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(1);
+    // Expert now seeds up to two starter letters (was one): a single foothold
+    // on a long, obstructed board played as "sometimes too hard".
+    expect(generated.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(2);
   });
 
   it('does not fully prefill a multi-letter starter word', () => {
@@ -91,7 +93,7 @@ describe('puzzle', () => {
 
     expect(warmup.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(4);
     expect(medium.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(2);
-    expect(hard.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(1);
+    expect(hard.puzzlePrivate.prefilledIndices.length).toBeLessThanOrEqual(2);
   });
 
   it('keeps expert prefills tight on short phrases', () => {

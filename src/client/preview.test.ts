@@ -204,8 +204,8 @@ describe('preview entrypoint', () => {
     await import('./preview');
 
     await waitFor(() => Boolean(document.querySelector('[data-testid="preview-votes"]')));
-    // Anchored as a direct child of the card so it can sit in the corner.
-    expect(document.querySelector('.preview-shell > .preview-votes')).toBeTruthy();
+    // Lives at the far-right of the bottom credit bar.
+    expect(document.querySelector('.preview-creditbar > .preview-votes')).toBeTruthy();
     expect(document.querySelector<HTMLImageElement>('.preview-vote-like .preview-vote-icon')?.src).toContain(
       '/ui_thumb_up.png'
     );

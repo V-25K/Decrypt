@@ -91,7 +91,10 @@ export const tierFitSeedKey = (tier: DifficultyTier): string =>
 
 // Reveals are the universal difficulty knob: a complex line stays fair at an
 // easy tier when enough high-information letters start revealed. These caps
-// scale with the line instead of the fixed legacy 4/2/1/1 wall.
+// scale with the line instead of the fixed legacy 4/2/1/1 wall. Hard/Expert
+// floor at 2 (was 1) and carry a touch more headroom so the fitter can hand a
+// brutal line a second foothold instead of stripping an obstruction — players
+// reported the old single-reveal boards played as "sometimes too hard".
 export const maxRevealsForFit = (
   tier: DifficultyTier,
   uniqueLetterCount: number
@@ -103,9 +106,9 @@ export const maxRevealsForFit = (
     return Math.max(2, Math.ceil(uniqueLetterCount * 0.33));
   }
   if (tier === 'hard') {
-    return Math.max(1, Math.ceil(uniqueLetterCount * 0.2));
+    return Math.max(2, Math.ceil(uniqueLetterCount * 0.22));
   }
-  return Math.max(1, Math.ceil(uniqueLetterCount * 0.12));
+  return Math.max(2, Math.ceil(uniqueLetterCount * 0.16));
 };
 
 export const tierDisplayName = (tier: DifficultyTier): string => {
