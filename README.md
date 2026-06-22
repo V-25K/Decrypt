@@ -28,6 +28,13 @@ and share your own challenges for the community to solve.
 - Verified with `npm run type-check`, `npm run lint`, `npm run build`, full `npm run test`, focused Difficulty 2.0 smoke tests, and bounded Devvit playtest/log checks on `decrypttest_dev`.
 
 ## Versions
+
+- 1.1.0
+  - Fixed Keyboard not appearing bug.
+  - Adjusted difficulty for hard and expert challenges.
+  - Updated Preview page UI by adding likes, and better line visualization.
+  - Fixed challenge updation flow for player's created challenge. 
+
 - 1.0.0
   - First stable release: daily cryptogram gameplay with hearts, power-ups
     (hammer, wand, rocket, shield), padlock chains, and blind tiles.

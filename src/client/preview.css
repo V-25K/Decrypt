@@ -373,6 +373,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: clamp(6px, 1.4vw, 10px);
+  margin-right: clamp(18px, 5vw, 26px);
   pointer-events: none;
 }
 
