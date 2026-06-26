@@ -1022,15 +1022,35 @@ export const getLevelTop = async (
     }
   );
 
-export const getAllTimeTopLevels = async (
-  limit: number
-): Promise<{
+type AllTimeLevelEntry = {
   userId: string;
   username: string | null;
   score: number;
   snoovatarUrl: string | null;
   levelsCompleted: number;
-}[]> =>
+};
+
+const resolveAllTimeLevelEntry = async (entry: {
+  member: string;
+  score: number;
+}): Promise<AllTimeLevelEntry | null> => {
+  const levelsCompleted = await readEndlessClears(entry.member);
+  if (levelsCompleted <= 0) {
+    return null;
+  }
+  const userMeta = await resolveLeaderboardUserMeta(entry.member);
+  return {
+    userId: entry.member,
+    username: userMeta.username,
+    score: entry.score,
+    snoovatarUrl: userMeta.snoovatarUrl,
+    levelsCompleted,
+  };
+};
+
+export const getAllTimeTopLevels = async (
+  limit: number
+): Promise<AllTimeLevelEntry[]> =>
   await withSharedCache(
     `leaderboard:all-time-levels:limit:${limit}`,
     publicLeaderboardCacheTtlSeconds,
@@ -1045,45 +1065,61 @@ export const getAllTimeTopLevels = async (
           reverse: true,
         }
       );
-      const resolved = await Promise.all(
-        entries.map(async (entry) => {
-          const levelsCompleted = await readEndlessClears(entry.member);
-          if (levelsCompleted <= 0) {
-            return null;
-          }
-          const userMeta = await resolveLeaderboardUserMeta(entry.member);
-          return {
-            userId: entry.member,
-            username: userMeta.username,
-            score: entry.score,
-            snoovatarUrl: userMeta.snoovatarUrl,
-            levelsCompleted,
-          };
-        })
-      );
+      const resolved = await Promise.all(entries.map(resolveAllTimeLevelEntry));
       const filtered = resolved.filter(
-        (
-          entry
-        ): entry is {
-          userId: string;
-          username: string | null;
-          score: number;
-          snoovatarUrl: string | null;
-          levelsCompleted: number;
-        } => entry !== null
+        (entry): entry is AllTimeLevelEntry => entry !== null
       );
       return filtered.slice(0, limit);
     }
   );
 
-export const getAllTimeTopLogic = async (
+/**
+ * Window read for paginated all-time-levels: resolves only the requested
+ * rank window [offset, offset+limit) instead of fetching from the top and
+ * slicing, so deep pages stay O(pageSize) rather than O(offset).
+ */
+export const getAllTimeLevelsWindow = async (
+  offset: number,
   limit: number
-): Promise<{
+): Promise<AllTimeLevelEntry[]> => {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(0, Math.floor(limit));
+  if (safeLimit === 0) {
+    return [];
+  }
+  const entries = await redis.zRange(
+    keyAllTimeLevelsLeaderboard,
+    safeOffset,
+    safeOffset + safeLimit - 1,
+    { by: 'rank', reverse: true }
+  );
+  const resolved = await Promise.all(entries.map(resolveAllTimeLevelEntry));
+  return resolved.filter((entry): entry is AllTimeLevelEntry => entry !== null);
+};
+
+type AllTimeLogicEntry = {
   userId: string;
   username: string | null;
   score: number;
   snoovatarUrl: string | null;
-}[]> =>
+};
+
+const resolveAllTimeLogicEntry = async (entry: {
+  member: string;
+  score: number;
+}): Promise<AllTimeLogicEntry> => {
+  const userMeta = await resolveLeaderboardUserMeta(entry.member);
+  return {
+    userId: entry.member,
+    username: userMeta.username,
+    score: entry.score,
+    snoovatarUrl: userMeta.snoovatarUrl,
+  };
+};
+
+export const getAllTimeTopLogic = async (
+  limit: number
+): Promise<AllTimeLogicEntry[]> =>
   await withSharedCache(
     `leaderboard:all-time-logic:limit:${limit}`,
     publicLeaderboardCacheTtlSeconds,
@@ -1092,23 +1128,30 @@ export const getAllTimeTopLogic = async (
         by: 'rank',
         reverse: true,
       });
-      return await Promise.all(
-        entries.map(async (entry) => {
-          const userMeta = await resolveLeaderboardUserMeta(entry.member);
-          return {
-            userId: entry.member,
-            username: userMeta.username,
-            score: entry.score,
-            snoovatarUrl: userMeta.snoovatarUrl,
-          };
-        })
-      );
+      return await Promise.all(entries.map(resolveAllTimeLogicEntry));
     }
   );
 
-export const getGlobalTop = async (
+/** Window read for paginated all-time-logic. See getAllTimeLevelsWindow. */
+export const getAllTimeLogicWindow = async (
+  offset: number,
   limit: number
-): Promise<{
+): Promise<AllTimeLogicEntry[]> => {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(0, Math.floor(limit));
+  if (safeLimit === 0) {
+    return [];
+  }
+  const entries = await redis.zRange(
+    keyAllTimeLogicLeaderboard,
+    safeOffset,
+    safeOffset + safeLimit - 1,
+    { by: 'rank', reverse: true }
+  );
+  return await Promise.all(entries.map(resolveAllTimeLogicEntry));
+};
+
+type GlobalLeaderboardEntry = {
   userId: string;
   username: string | null;
   score: number;
@@ -1116,7 +1159,33 @@ export const getGlobalTop = async (
   snoovatarUrl: string | null;
   globalScore: number;
   challengesCompleted: number;
-}[]> =>
+};
+
+const resolveGlobalEntry = async (entry: {
+  member: string;
+  score: number;
+}): Promise<GlobalLeaderboardEntry> => {
+  const [globalScore, challengesCompleted, userMeta] = await Promise.all([
+    readProfileNumber(entry.member, 'globalScore', 0),
+    readProfileNumber(entry.member, 'totalLevelsCompleted', 0),
+    resolveLeaderboardUserMeta(entry.member),
+  ]);
+  return {
+    userId: entry.member,
+    username: userMeta.username,
+    // The zset score packs the rating (integer part) with a
+    // total-points tiebreak fraction; floor recovers the exact rating.
+    score: Math.floor(entry.score),
+    rating: Math.floor(entry.score),
+    snoovatarUrl: userMeta.snoovatarUrl,
+    globalScore,
+    challengesCompleted,
+  };
+};
+
+export const getGlobalTop = async (
+  limit: number
+): Promise<GlobalLeaderboardEntry[]> =>
   await withSharedCache(
     `leaderboard:global:rating:limit:${limit}`,
     publicLeaderboardCacheTtlSeconds,
@@ -1131,29 +1200,33 @@ export const getGlobalTop = async (
           reverse: true,
         }
       );
-      const resolved = await Promise.all(
-        entries.map(async (entry) => {
-          const [globalScore, challengesCompleted, userMeta] = await Promise.all([
-            readProfileNumber(entry.member, 'globalScore', 0),
-            readProfileNumber(entry.member, 'totalLevelsCompleted', 0),
-            resolveLeaderboardUserMeta(entry.member),
-          ]);
-          return {
-            userId: entry.member,
-            username: userMeta.username,
-            // The zset score packs the rating (integer part) with a
-            // total-points tiebreak fraction; floor recovers the exact rating.
-            score: Math.floor(entry.score),
-            rating: Math.floor(entry.score),
-            snoovatarUrl: userMeta.snoovatarUrl,
-            globalScore,
-            challengesCompleted,
-          };
-        })
-      );
+      const resolved = await Promise.all(entries.map(resolveGlobalEntry));
       return resolved.slice(0, limit);
     }
   );
+
+/**
+ * Window read for paginated global leaderboard: resolves only the requested
+ * rank window [offset, offset+limit). The global zset has one entry per member
+ * (no post-filtering), so the window is exact. See getAllTimeLevelsWindow.
+ */
+export const getGlobalWindow = async (
+  offset: number,
+  limit: number
+): Promise<GlobalLeaderboardEntry[]> => {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(0, Math.floor(limit));
+  if (safeLimit === 0) {
+    return [];
+  }
+  const entries = await redis.zRange(
+    keyGlobalRatingLeaderboard,
+    safeOffset,
+    safeOffset + safeLimit - 1,
+    { by: 'rank', reverse: true }
+  );
+  return await Promise.all(entries.map(resolveGlobalEntry));
+};
 
 export const getUserRankSummary = async (params: {
   userId: string;

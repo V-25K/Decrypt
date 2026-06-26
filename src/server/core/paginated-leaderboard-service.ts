@@ -3,9 +3,9 @@ import { type LeaderboardEntry } from '../../shared/game.ts';
 import {
   getDailyTop,
   getLevelTop,
-  getAllTimeTopLevels,
-  getAllTimeTopLogic,
-  getGlobalTop,
+  getAllTimeLevelsWindow,
+  getAllTimeLogicWindow,
+  getGlobalWindow,
 } from './leaderboard';
 import {
   keyDailyLeaderboard,
@@ -198,27 +198,20 @@ export class PaginatedLeaderboardService {
    * Get all-time levels leaderboard entries for a specific page
    */
   private async getAllTimeLevelsEntriesForPage(offset: number, pageSize: number) {
-    const totalNeeded = offset + pageSize;
-    const allEntries = await getAllTimeTopLevels(totalNeeded);
-    
-    return allEntries.slice(offset, offset + pageSize);
+    // Window read: resolve only this page's rank range instead of fetching from
+    // the top and slicing, so deep pages stay O(pageSize) rather than O(offset).
+    return await getAllTimeLevelsWindow(offset, pageSize);
   }
 
   /**
    * Get all-time logic leaderboard entries for a specific page
    */
   private async getAllTimeLogicEntriesForPage(offset: number, pageSize: number) {
-    const totalNeeded = offset + pageSize;
-    const allEntries = await getAllTimeTopLogic(totalNeeded);
-    
-    return allEntries.slice(offset, offset + pageSize);
+    return await getAllTimeLogicWindow(offset, pageSize);
   }
 
   private async getGlobalEntriesForPage(offset: number, pageSize: number) {
-    const totalNeeded = offset + pageSize;
-    const allEntries = await getGlobalTop(totalNeeded);
-
-    return allEntries.slice(offset, offset + pageSize);
+    return await getGlobalWindow(offset, pageSize);
   }
 
   /**

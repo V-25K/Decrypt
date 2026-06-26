@@ -15,9 +15,9 @@ vi.mock('@devvit/web/server', () => ({
 vi.mock('./leaderboard', () => ({
   getDailyTop: vi.fn(),
   getLevelTop: vi.fn(),
-	  getAllTimeTopLevels: vi.fn(),
-	  getAllTimeTopLogic: vi.fn(),
-	  getGlobalTop: vi.fn(),
+	  getAllTimeLevelsWindow: vi.fn(),
+	  getAllTimeLogicWindow: vi.fn(),
+	  getGlobalWindow: vi.fn(),
 	}));
 
 vi.mock('./keys', () => ({
@@ -32,7 +32,7 @@ vi.mock('./serde', () => ({
 }));
 
 import { redis } from '@devvit/web/server';
-import { getDailyTop, getAllTimeTopLevels } from './leaderboard';
+import { getDailyTop, getAllTimeLevelsWindow } from './leaderboard';
 import { keyDailyLeaderboard } from './keys';
 
 describe('PaginatedLeaderboardService', () => {
@@ -115,7 +115,7 @@ describe('PaginatedLeaderboardService', () => {
       ];
 
       vi.mocked(redis.zCard).mockResolvedValue(200);
-      vi.mocked(getAllTimeTopLevels).mockResolvedValue(mockEntries);
+      vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(mockEntries);
 
       const result = await service.getAllTimeLevelsLeaderboardPage({
         page: 1,
@@ -135,7 +135,7 @@ describe('PaginatedLeaderboardService', () => {
       });
 
       expect(redis.zCard).toHaveBeenCalledWith('decrypt:leaderboard:alltime:levels');
-      expect(getAllTimeTopLevels).toHaveBeenCalledWith(1);
+      expect(getAllTimeLevelsWindow).toHaveBeenCalledWith(0, 1);
     });
   });
 

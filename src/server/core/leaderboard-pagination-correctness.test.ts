@@ -39,9 +39,9 @@ vi.mock('@devvit/web/server', () => ({
 vi.mock('./leaderboard', () => ({
   getDailyTop: vi.fn(),
   getLevelTop: vi.fn(),
-	  getAllTimeTopLevels: vi.fn(),
-	  getAllTimeTopLogic: vi.fn(),
-	  getGlobalTop: vi.fn(),
+	  getAllTimeLevelsWindow: vi.fn(),
+	  getAllTimeLogicWindow: vi.fn(),
+	  getGlobalWindow: vi.fn(),
 	}));
 
 vi.mock('./keys', () => ({
@@ -56,7 +56,7 @@ vi.mock('./serde', () => ({
 }));
 
 import { redis } from '@devvit/web/server';
-import { getDailyTop, getLevelTop, getAllTimeTopLevels, getAllTimeTopLogic } from './leaderboard';
+import { getDailyTop, getLevelTop, getAllTimeLevelsWindow, getAllTimeLogicWindow } from './leaderboard';
 
 describe('Property 3: Leaderboard Pagination Correctness', () => {
   let service: PaginatedLeaderboardService;
@@ -162,18 +162,20 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
               })
             }));
             
-            // Return the entries that the leaderboard function would return (up to totalNeeded)
+            // Daily still fetches from the top and slices; the windowed boards
+            // return only this page's rank range.
             const mockEntries = allMockEntries.slice(0, Math.min(totalNeeded, totalEntries));
+            const pageEntries = allMockEntries.slice(offset, offset + effectivePageSize);
 
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
-            
+
             // Mock appropriate leaderboard function
             if (leaderboardType === 'daily') {
               vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
             } else if (leaderboardType === 'allTimeLevels') {
-              vi.mocked(getAllTimeTopLevels).mockResolvedValue(mockEntries);
+              vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(pageEntries);
             } else {
-              vi.mocked(getAllTimeTopLogic).mockResolvedValue(mockEntries);
+              vi.mocked(getAllTimeLogicWindow).mockResolvedValue(pageEntries);
             }
 
             let result: LeaderboardPage;
@@ -234,8 +236,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
           try {
             const effectivePageSize = Math.min(pageSize, 50);
             const offset = (requestedPage - 1) * effectivePageSize;
-            
-            const totalNeeded = offset + effectivePageSize;
+
             const allMockEntries = Array.from({ length: totalEntries }, (_, i) => ({
               userId: `user${i}`,
               username: `User${i}`,
@@ -244,11 +245,11 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
               levelsCompleted: 10 + i
             }));
             
-            // Return the entries that getAllTimeTopLevels would return (up to totalNeeded)
-            const mockEntries = allMockEntries.slice(0, Math.min(totalNeeded, totalEntries));
+            // Windowed all-time-levels returns only this page's rank range.
+            const pageEntries = allMockEntries.slice(offset, offset + effectivePageSize);
 
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
-            vi.mocked(getAllTimeTopLevels).mockResolvedValue(mockEntries);
+            vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(pageEntries);
 
             const result = await service.getAllTimeLevelsLeaderboardPage({ 
               page: requestedPage, 
@@ -338,9 +339,9 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
                 return generateMockEntries(requestedPage).slice(0, limit);
               });
             } else {
-              vi.mocked(getAllTimeTopLevels).mockImplementation(async (limit) => {
-                // Determine which page this request is for based on limit
-                const requestedPage = Math.ceil(limit / effectivePageSize);
+              vi.mocked(getAllTimeLevelsWindow).mockImplementation(async (offset, limit) => {
+                // Window read: derive the page from the offset and return it.
+                const requestedPage = Math.floor(offset / effectivePageSize) + 1;
                 return generateMockEntries(requestedPage).slice(0, limit);
               });
             }
@@ -426,8 +427,8 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
             vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
             vi.mocked(getLevelTop).mockResolvedValue(mockEntries);
-            vi.mocked(getAllTimeTopLevels).mockResolvedValue(mockEntries);
-            vi.mocked(getAllTimeTopLogic).mockResolvedValue(mockEntries);
+            vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(mockEntries);
+            vi.mocked(getAllTimeLogicWindow).mockResolvedValue(mockEntries);
 
             let result: LeaderboardPage;
 
