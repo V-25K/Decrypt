@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createServer, getServerPort } from '@devvit/web/server';
 import { createApp } from './app';
+import { logError } from './core/log';
 
 const devvitLogStreamAuthFailureMessage =
   'failed to authenticate plugin request; upstream request missing or timed out';
@@ -38,7 +39,7 @@ process.on('unhandledRejection', (reason) => {
   if (shouldIgnoreDevvitLogStreamAuthFailure(reason)) {
     return;
   }
-  console.error('Fatal Unhandled Promise rejected:', reason);
+  logError('process.unhandledRejection', 'fatal unhandled rejection', reason);
 });
 
 const app = createApp();

@@ -211,6 +211,13 @@ export const keyOneTimeSkuClaimLock = (userId: string, sku: string) =>
 export const keyModeratorAccessCache = (subredditName: string, username: string) =>
   `decrypt:cache:mod:${subredditName}:${username}`;
 
+// Cached {username, snoovatarUrl} for a user, so leaderboard reads don't hit the
+// Reddit API (getUserById + getSnoovatarUrl) per row on every page view. Per-user
+// string key with its own TTL — Redis TTL is key-level, so one key per user lets
+// each entry expire independently. Only successful resolves are cached.
+export const keyUserMeta = (userId: string) =>
+  `decrypt:cache:user_meta:${userId}`;
+
 export const keyUserCoinHeartPurchases = (userId: string, dateKey: string) =>
   `decrypt:user:${userId}:coin-heart-purchases:${dateKey}`;
 

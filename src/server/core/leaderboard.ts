@@ -15,6 +15,7 @@ import {
   keyUserGlobalLevelScores,
   keyUserProfile,
   keyUserRatingOutcomes,
+  keyUserMeta,
 } from './keys';
 import type { PuzzlePrivate, UserProfile } from '../../shared/game';
 import { calculateRating } from '../../shared/rating';
@@ -119,28 +120,69 @@ const withSharedCache = async <T>(
   read: () => Promise<T>
 ): Promise<T> => await read();
 
+// Usernames and snoovatars change rarely, so a multi-hour TTL collapses the
+// per-row Reddit API cost of leaderboard reads to ~zero on a warm cache while
+// staying fresh enough for display.
+const userMetaCacheTtlSeconds = 6 * 60 * 60;
+
+const readUserMetaCache = async (
+  userId: string
+): Promise<LeaderboardUserMeta | null> => {
+  try {
+    const raw = await redis.get(keyUserMeta(userId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<LeaderboardUserMeta>;
+    if (typeof parsed.username === 'string') {
+      return {
+        username: parsed.username,
+        snoovatarUrl:
+          typeof parsed.snoovatarUrl === 'string' ? parsed.snoovatarUrl : null,
+      };
+    }
+  } catch (_error) {
+    // Treat any cache read/parse failure as a miss and resolve live.
+  }
+  return null;
+};
+
 const resolveLeaderboardUserMeta = async (
   userId: string
 ): Promise<LeaderboardUserMeta> => {
-      try {
-        const user = await reddit.getUserById(normalizeUserId(userId));
-        if (!user) {
-          return {
-            username: null,
-            snoovatarUrl: null,
-          };
-        }
-        const snoovatarUrl = await reddit.getSnoovatarUrl(user.username);
-        return {
-          username: user.username,
-          snoovatarUrl: snoovatarUrl ?? null,
-        };
-      } catch (_error) {
-        return {
-          username: null,
-          snoovatarUrl: null,
-        };
-      }
+  const cached = await readUserMetaCache(userId);
+  if (cached) {
+    return cached;
+  }
+  try {
+    const user = await reddit.getUserById(normalizeUserId(userId));
+    if (!user) {
+      return {
+        username: null,
+        snoovatarUrl: null,
+      };
+    }
+    const snoovatarUrl = await reddit.getSnoovatarUrl(user.username);
+    const meta: LeaderboardUserMeta = {
+      username: user.username,
+      snoovatarUrl: snoovatarUrl ?? null,
+    };
+    // Only cache successful resolves so a transient Reddit failure isn't pinned
+    // for the full TTL. Cache writes are best-effort.
+    try {
+      await redis.set(keyUserMeta(userId), JSON.stringify(meta), {
+        expiration: new Date(Date.now() + userMetaCacheTtlSeconds * 1000),
+      });
+    } catch (_error) {
+      // Ignore cache write failures.
+    }
+    return meta;
+  } catch (_error) {
+    return {
+      username: null,
+      snoovatarUrl: null,
+    };
+  }
 };
 
 export const computeScore = (params: {
