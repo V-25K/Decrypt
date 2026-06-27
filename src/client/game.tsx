@@ -2,7 +2,7 @@ import './index.css';
 
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { GameApp } from './app/GameApp';
+import { GameRoot } from './app/GameRoot';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { primeSfxOnBoot } from './sfx';
 
@@ -13,7 +13,7 @@ const renderGameApp = (root: Root) => {
   root.render(
     <StrictMode>
       <ErrorBoundary>
-        <GameApp />
+        <GameRoot />
       </ErrorBoundary>
     </StrictMode>
   );

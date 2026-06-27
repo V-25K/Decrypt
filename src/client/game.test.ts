@@ -37,6 +37,7 @@ let mountedGameModule: typeof import('./game') | null = null;
 vi.mock('./trpc', () => ({
   trpc: {
     game: {
+      viewer: { query: vi.fn().mockResolvedValue({ isLoggedIn: true }) },
       bootstrap: { query: bootstrapQuery },
       loadLevel: { query: loadLevelQuery },
       startSession: { mutate: startSessionMutation },

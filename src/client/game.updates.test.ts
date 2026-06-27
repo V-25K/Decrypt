@@ -61,6 +61,7 @@ const ensureLocalStorageMock = () => {
 vi.mock('./trpc', () => ({
   trpc: {
     game: {
+      viewer: { query: vi.fn().mockResolvedValue({ isLoggedIn: true }) },
       bootstrap: { query: bootstrapQuery },
 	      loadLevel: { query: loadLevelQuery },
 	      startSession: { mutate: startSessionMutation },

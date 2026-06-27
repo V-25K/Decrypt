@@ -145,6 +145,22 @@ describe('gameRouter.getCompletedOutcome', () => {
   });
 });
 
+describe('gameRouter.viewer', () => {
+  it('reports a logged-in viewer when the context has a userId', async () => {
+    await expect(caller.viewer()).resolves.toEqual({ isLoggedIn: true });
+  });
+
+  it('reports a logged-out viewer when the context has no userId', async () => {
+    const loggedOut = gameRouter.createCaller({
+      userId: null,
+      username: null,
+      subredditName: 'decrypttest_dev',
+      postId: 't3_post',
+    });
+    await expect(loggedOut.viewer()).resolves.toEqual({ isLoggedIn: false });
+  });
+});
+
 describe('gameRouter.getFailedOutcome', () => {
   it('returns null when the current user has not failed the level', async () => {
     hasFailedLevelMock.mockResolvedValue(false);

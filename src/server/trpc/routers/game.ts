@@ -49,6 +49,12 @@ export const gameRouter = router({
   preview: publicProcedure.query(async () => {
     return gamePreviewResponseSchema.parse(await getDailyPreview());
   }),
+  // Public login probe so the client can render a read-only "log in to play"
+  // experience for logged-out visitors without first hitting an authed endpoint
+  // (which would throw). Reads only the request context — no Redis, no Reddit.
+  viewer: publicProcedure
+    .output(z.object({ isLoggedIn: z.boolean() }))
+    .query(({ ctx }) => ({ isLoggedIn: ctx.userId != null })),
   loadLevel: authedProcedure.input(gameLoadLevelInputSchema).query(async ({ input }) => {
     return gameLoadLevelResponseSchema.parse(
       await loadLevelForUser({
