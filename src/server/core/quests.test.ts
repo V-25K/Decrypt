@@ -196,6 +196,7 @@ describe('updateQuestProgressOnCompletion', () => {
       mode: 'daily',
       isCurrentDaily: true,
       isRecoveryRun: true,
+      continued: false,
     });
 
     expect(saveDailyQuestProgressMock).toHaveBeenCalledWith(
@@ -217,7 +218,13 @@ describe('updateQuestProgressOnCompletion', () => {
     );
   });
 
-  it('skips daily quest progress entirely for older daily clears', async () => {
+  it('credits style flags but not First Clear for a non-official daily clear (community post / archive)', async () => {
+    // A player-created community challenge loads as mode 'daily' with
+    // isCurrentDaily=false (puzzle source COMMUNITY, never the daily pointer);
+    // older daily-archive replays look the same. Both must still credit the
+    // "any challenge" style quests while leaving First Clear (dailyPlayCount)
+    // anchored to the official daily.
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture());
     getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
 
     await updateQuestProgressOnCompletion({
@@ -231,10 +238,20 @@ describe('updateQuestProgressOnCompletion', () => {
       mode: 'daily',
       isCurrentDaily: false,
       isRecoveryRun: false,
+      continued: false,
     });
 
-    expect(getDailyQuestProgressMock).not.toHaveBeenCalled();
-    expect(saveDailyQuestProgressMock).not.toHaveBeenCalled();
+    expect(getDailyQuestProgressMock).toHaveBeenCalledWith('u1', '2026-04-04');
+    expect(saveDailyQuestProgressMock).toHaveBeenCalledWith(
+      'u1',
+      '2026-04-04',
+      expect.objectContaining({
+        dailyPlayCount: 0,
+        dailyFastWin: true,
+        dailyNoPowerup: true,
+        dailyNoMistake: true,
+      })
+    );
     expect(saveLifetimeQuestProgressMock).toHaveBeenCalledWith(
       'u1',
       expect.objectContaining({
@@ -242,6 +259,73 @@ describe('updateQuestProgressOnCompletion', () => {
         lifetimeLogicalSolved: 1,
         lifetimeFlawless: 1,
       })
+    );
+  });
+
+  it('sets the style daily flags for a community (endless) clear without crediting First Clear', async () => {
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture());
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+
+    await updateQuestProgressOnCompletion({
+      userId: 'u1',
+      dateKey: '2026-04-04',
+      solvedWords: 4,
+      solveSeconds: 90,
+      mistakes: 0,
+      usedPowerups: 0,
+      isLogical: false,
+      mode: 'endless',
+      isCurrentDaily: false,
+      isRecoveryRun: false,
+      continued: false,
+    });
+
+    expect(getDailyQuestProgressMock).toHaveBeenCalledWith('u1', '2026-04-04');
+    expect(saveDailyQuestProgressMock).toHaveBeenCalledWith(
+      'u1',
+      '2026-04-04',
+      expect.objectContaining({
+        dailyPlayCount: 0,
+        dailyFastWin: true,
+        dailyNoPowerup: true,
+        dailyNoMistake: true,
+      })
+    );
+    expect(saveLifetimeQuestProgressMock).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({
+        lifetimeWordsmith: 4,
+        lifetimeEndlessClears: 1,
+      })
+    );
+  });
+
+  it('does not credit Clean Sheet or lifetime flawless when the run was continued', async () => {
+    getDailyQuestProgressMock.mockResolvedValue(progressFixture());
+    getLifetimeQuestProgressMock.mockResolvedValue(progressFixture());
+
+    await updateQuestProgressOnCompletion({
+      userId: 'u1',
+      dateKey: '2026-04-04',
+      solvedWords: 3,
+      solveSeconds: 90,
+      mistakes: 0,
+      usedPowerups: 0,
+      isLogical: false,
+      mode: 'endless',
+      isCurrentDaily: false,
+      isRecoveryRun: false,
+      continued: true,
+    });
+
+    expect(saveDailyQuestProgressMock).toHaveBeenCalledWith(
+      'u1',
+      '2026-04-04',
+      expect.objectContaining({ dailyNoMistake: false })
+    );
+    expect(saveLifetimeQuestProgressMock).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ lifetimeFlawless: 0 })
     );
   });
 });

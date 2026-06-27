@@ -264,7 +264,10 @@ export const ChallengePuzzleGrid = memo(({
                   <span
                     className={cn(
                       'app-surface-subtle block h-[2px] rounded-full',
-                      tile.isLocked ? 'opacity-0' : 'opacity-100',
+                      // Locked tiles keep a muted underline so players can still
+                      // count the letters in a hidden word (the lock icon marks
+                      // it as locked); active tiles show it at full strength.
+                      tile.isLocked ? 'opacity-50' : 'opacity-100',
                       isInlineMode ? 'mt-0.5' : 'mt-1',
                       puzzleTileUnderlineWidthClass
                     )}

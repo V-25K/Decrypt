@@ -3,6 +3,11 @@ import { powerupPricingEngine } from './powerup-pricing-engine';
 import { retryCostCalculator } from './retry-cost-calculator';
 import { scorePenaltyEngine } from './score-penalty-engine';
 
+// Flat coin cost to "Continue" a failed run (keep the current board, take one
+// more shot after all mistakes are used). Single source of truth shared by the
+// server charge (continueSessionForLevel) and the client prompt label.
+export const continueCoinCost = 50;
+
 export type PowerupPricingContext = {
   difficulty: number;
   remainingLetters: number;

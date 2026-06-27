@@ -416,6 +416,21 @@ describe('preview entrypoint', () => {
 	    expect(document.querySelector('.preview-puzzle-mask')).toBeNull();
 	  });
 
+  it('mounts the real game result path for an own (creator-authored) challenge', async () => {
+    mockFetchSequence({
+      levelId: 'lvl_0001',
+      completed: false,
+      isOwn: true,
+    });
+
+    await import('./preview');
+
+    await waitFor(() => mountGameMock.mock.calls.length > 0);
+    expect(mountGameMock).toHaveBeenCalledWith(document.getElementById('root'));
+    expect(document.getElementById('root')?.getAttribute('data-initial-screen')).toBe('challenge');
+    expect(document.querySelector('.preview-puzzle-mask')).toBeNull();
+  });
+
   it('renders a removed challenge card with a next challenge CTA', async () => {
     mockFetchSequence({
       levelId: 'lvl_removed',

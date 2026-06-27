@@ -532,6 +532,9 @@ export const gameInlineStatusResponseSchema = z.object({
   completed: z.boolean(),
   failed: z.boolean().optional().default(false),
   removed: z.boolean().optional().default(false),
+  // The viewer authored this community challenge: the inline preview opens
+  // straight to the result/solution (they can't play their own).
+  isOwn: z.boolean().optional().default(false),
 });
 
 export type GameInlineStatusResponse = z.infer<typeof gameInlineStatusResponseSchema>;

@@ -57,7 +57,7 @@ export const questCatalog: QuestDefinition[] = [
   {
     id: 'daily_fast_under_180',
     title: 'Quick Clear',
-    description: 'Finish one daily challenge under 3 minutes.',
+    description: 'Finish a challenge under 3 minutes.',
     category: 'daily',
     progressField: 'dailyFastWin',
     target: 1,
@@ -67,7 +67,7 @@ export const questCatalog: QuestDefinition[] = [
   {
     id: 'daily_no_mistake',
     title: 'Clean Sheet',
-    description: 'Complete one daily challenge with zero mistakes.',
+    description: 'Complete a challenge with zero mistakes.',
     category: 'daily',
     progressField: 'dailyNoMistake',
     target: 1,
@@ -77,7 +77,7 @@ export const questCatalog: QuestDefinition[] = [
   {
     id: 'daily_no_powerups',
     title: 'Bare Hands',
-    description: 'Complete one daily challenge with no powerups.',
+    description: 'Complete a challenge with no powerups.',
     category: 'daily',
     progressField: 'dailyNoPowerup',
     target: 1,

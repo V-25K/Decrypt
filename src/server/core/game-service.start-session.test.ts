@@ -27,6 +27,7 @@ const {
   hasContinuedLevelMock,
   saveUserProfileMock,
   markLevelContinuedMock,
+  updateQuestProgressOnCoinSpendMock,
   createSessionStateMock,
   saveSessionStateMock,
   heartsRemainingMock,
@@ -98,6 +99,7 @@ const {
     hasContinuedLevelMock: vi.fn(),
     saveUserProfileMock: vi.fn(),
     markLevelContinuedMock: vi.fn(),
+    updateQuestProgressOnCoinSpendMock: vi.fn(),
     createSessionStateMock: vi.fn(),
     saveSessionStateMock: vi.fn(),
     heartsRemainingMock: vi.fn(),
@@ -192,6 +194,16 @@ vi.mock('./gameplay', () => ({
 vi.mock('./hearts', () => ({
   canStartChallenge: canStartChallengeMock,
   consumeHeartOnFailure: vi.fn((profile) => profile),
+}));
+
+vi.mock('./quests', () => ({
+  autoClaimMissedDailyRewards: vi.fn(async () => ({
+    autoClaimedQuestIds: [],
+    rewardCoins: 0,
+  })),
+  updateQuestProgressOnCompletion: vi.fn(),
+  updateQuestProgressOnCoinSpend: updateQuestProgressOnCoinSpendMock,
+  updateQuestProgressOnShare: vi.fn(),
 }));
 
 import {
@@ -313,6 +325,7 @@ afterEach(() => {
   getFailedLevelsMock.mockReset();
   getDailyRetryCountMock.mockReset();
   getDailyPointerMock.mockReset();
+  updateQuestProgressOnCoinSpendMock.mockClear();
   getAllLevelIdsMock.mockReset();
   hasFailedLevelMock.mockReset();
   getPuzzlePrivateMock.mockReset();
@@ -446,7 +459,7 @@ describe('startSessionForLevel', () => {
   });
 
   it('continues a failed active session while preserving revealed progress', async () => {
-    const profile = profileFixture({ hearts: 2 });
+    const profile = profileFixture({ hearts: 2, coins: 200 });
     const failedSession = sessionFixture({
       activeLevelId: 'lvl_0001',
       mode: 'daily',
@@ -488,7 +501,14 @@ describe('startSessionForLevel', () => {
         revealedIndices: [0, 2],
       })
     );
-	  expect(saveUserProfileMock).toHaveBeenCalledWith('t2_test', profile);
+	  expect(saveUserProfileMock).toHaveBeenCalledWith(
+	    't2_test',
+	    expect.objectContaining({ coins: 150 })
+	  );
+	  expect(updateQuestProgressOnCoinSpendMock).toHaveBeenCalledWith({
+	    userId: 't2_test',
+	    amount: 50,
+	  });
 	  expect(markLevelContinuedMock).toHaveBeenCalledWith('t2_test', 'lvl_0001');
 	});
 
@@ -496,7 +516,7 @@ describe('startSessionForLevel', () => {
 	    getSessionStateMock.mockResolvedValue(
 	      sessionFixture({ mistakesMade: 3, wrongGuesses: 3 })
 	    );
-	    getUserProfileMock.mockResolvedValue(profileFixture({ hearts: 2 }));
+	    getUserProfileMock.mockResolvedValue(profileFixture({ hearts: 2, coins: 200 }));
 	    canStartChallengeMock.mockReturnValue(true);
 	    heartsRemainingMock.mockImplementation((session: SessionState) =>
 	      Math.max(0, 3 - session.mistakesMade)
@@ -510,6 +530,24 @@ describe('startSessionForLevel', () => {
 	    expect(result.ok).toBe(true);
 	    expect(saveSessionStateMock).toHaveBeenCalled();
 	  });
+
+  it('rejects continue when the player lacks coins', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ mistakesMade: 3, wrongGuesses: 3 })
+    );
+    getUserProfileMock.mockResolvedValue(profileFixture({ hearts: 2, coins: 40 }));
+    canStartChallengeMock.mockReturnValue(true);
+    heartsRemainingMock.mockImplementation((session: SessionState) =>
+      Math.max(0, 3 - session.mistakesMade)
+    );
+
+    await expect(
+      continueSessionForLevel({ levelId: 'lvl_0001', mode: 'daily' })
+    ).rejects.toThrow('Not enough coins to continue.');
+
+    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(updateQuestProgressOnCoinSpendMock).not.toHaveBeenCalled();
+  });
 
   it('allows replaying already completed endless levels', async () => {
     const createdSession = sessionFixture({

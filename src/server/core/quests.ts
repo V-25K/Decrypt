@@ -46,40 +46,49 @@ export const updateQuestProgressOnCompletion = async (params: {
   mode: 'daily' | 'endless';
   isCurrentDaily: boolean;
   isRecoveryRun: boolean;
+  // True when the player ran out of mistakes and paid to keep the board going.
+  // A continue resets mistakesMade to 0, so a continued clear must never count
+  // as flawless / Clean Sheet (it always followed a maxed-out mistake count).
+  continued: boolean;
 }): Promise<void> => {
   const lifetime = await getLifetimeQuestProgress(params.userId);
-  const daily =
-    params.mode === 'daily' && params.isCurrentDaily
-      ? await getDailyQuestProgress(params.userId, params.dateKey)
-      : null;
+  const isOfficialDailyClear = params.mode === 'daily' && params.isCurrentDaily;
+  // "First Clear" stays anchored to the official daily, but the style quests
+  // (Quick Clear / Clean Sheet / Bare Hands) complete on ANY genuine clear:
+  // the official daily, an endless-catalog level, an older daily from the
+  // archive, or a player-created community challenge. Community posts load in
+  // mode 'daily' with isCurrentDaily=false (their puzzle source is COMMUNITY,
+  // never the daily pointer), so the style flags can't be gated on mode /
+  // isCurrentDaily — we always read today's daily progress and credit them.
+  // Replays are rejected upstream by the completion repeat-guards, so every
+  // clear that reaches here is a fresh clear.
+  const daily = await getDailyQuestProgress(params.userId, params.dateKey);
 
-  if (daily) {
+  if (isOfficialDailyClear) {
     daily.dailyPlayCount += 1;
-    if (!params.isRecoveryRun && params.solveSeconds <= 180) {
-      daily.dailyFastWin = true;
-    }
-    if (!params.isRecoveryRun && params.usedPowerups === 0) {
-      daily.dailyNoPowerup = true;
-    }
-    if (!params.isRecoveryRun && params.mistakes === 0) {
-      daily.dailyNoMistake = true;
-    }
+  }
+  if (!params.isRecoveryRun && params.solveSeconds <= 180) {
+    daily.dailyFastWin = true;
+  }
+  if (!params.isRecoveryRun && params.usedPowerups === 0) {
+    daily.dailyNoPowerup = true;
+  }
+  if (!params.isRecoveryRun && !params.continued && params.mistakes === 0) {
+    daily.dailyNoMistake = true;
   }
 
   lifetime.lifetimeWordsmith += params.solvedWords;
   if (params.isLogical) {
     lifetime.lifetimeLogicalSolved += 1;
   }
-  if (params.mistakes === 0) {
+  if (params.mistakes === 0 && !params.continued) {
     lifetime.lifetimeFlawless += 1;
   }
   if (params.mode === 'endless') {
     lifetime.lifetimeEndlessClears += 1;
   }
 
-  if (daily) {
-    await saveDailyQuestProgress(params.userId, params.dateKey, daily);
-  }
+  await saveDailyQuestProgress(params.userId, params.dateKey, daily);
   await saveLifetimeQuestProgress(params.userId, lifetime);
 };
 

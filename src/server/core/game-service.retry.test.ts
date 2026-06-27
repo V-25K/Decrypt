@@ -281,7 +281,9 @@ describe('purchaseDailyRetryForLevel', () => {
     getInventoryMock.mockResolvedValue(inventoryFixture());
     getCompletedLevelsMock.mockResolvedValue(new Set<string>());
     hasFailedLevelMock.mockResolvedValue(true);
-    getDailyRetryCountMock.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+    // Single retry-count read happens after the transaction's +1 escalation,
+    // so it reports the new count (2).
+    getDailyRetryCountMock.mockResolvedValue(2);
     getSessionStateMock.mockResolvedValue(null);
     canStartChallengeMock.mockReturnValue(true);
     getPuzzlePrivateMock.mockResolvedValue({ prefilledIndices: [0] });
@@ -356,4 +358,46 @@ describe('purchaseDailyRetryForLevel', () => {
     expect(txMock.exec).toHaveBeenCalledTimes(3);
     expect(updateQuestProgressOnCoinSpendMock).not.toHaveBeenCalled();
   });
+
+    it('deducts coins even when an active session exists for the same level', async () => {
+      getUserProfileMock
+        .mockResolvedValueOnce(profileFixture({ coins: 500 }))
+        .mockResolvedValueOnce(profileFixture({ coins: 360 }));
+      getInventoryMock.mockResolvedValue(inventoryFixture());
+      getCompletedLevelsMock.mockResolvedValue(new Set<string>());
+      hasFailedLevelMock.mockResolvedValue(true);
+      getDailyRetryCountMock.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+      getSessionStateMock.mockResolvedValue(sessionFixture());
+      canStartChallengeMock.mockReturnValue(true);
+      getPuzzlePrivateMock.mockResolvedValue({ prefilledIndices: [0] });
+      heartsRemainingMock.mockReturnValue(3);
+      redisWatchMock.mockResolvedValue(txMock);
+      txMock.exec.mockResolvedValue(['ok']);
+      redisHGetMock.mockImplementation(async (_key: string, field: string) => {
+        if (field === 'coins') {
+          return '500';
+        }
+        if (field === 'lvl_0001') {
+          return '1';
+        }
+        return undefined;
+      });
+
+      const result = await purchaseDailyRetryForLevel({
+        levelId: 'lvl_0001',
+        mode: 'daily',
+      });
+
+      // Verify coins were deducted (70 coins for first retry attempt with difficulty 5)
+      expect(txMock.hIncrBy).toHaveBeenCalledWith(expect.any(String), 'coins', -70);
+      expect(updateQuestProgressOnCoinSpendMock).toHaveBeenCalledWith({
+        userId: 't2_test',
+        amount: 70,
+      });
+      // Verify the returned profile has deducted coins
+      expect(result.profile.coins).toBe(360);
+      // Verify it returns the existing session (not a new one)
+      expect(result.session.activeLevelId).toBe('lvl_0001');
+      expect(createSessionStateMock).not.toHaveBeenCalled();
+    });
 });

@@ -65,7 +65,7 @@ import {
   minSolveSeconds,
   sessionInactivityThresholdMs,
 } from './constants';
-import { getDailyRetryQuote } from '../../shared/game-balance';
+import { continueCoinCost, getDailyRetryQuote } from '../../shared/game-balance';
 import {
 	  computeScore,
 	  getRatingOutcomeReceipt,
@@ -779,6 +779,7 @@ export const getDailyInlineStatus = async (): Promise<GameInlineStatusResponse> 
 	      completed: false,
 	      failed: false,
       removed: false,
+      isOwn: false,
 	    };
   }
   if (await isPuzzleRemovedFromPlay(levelId)) {
@@ -787,6 +788,7 @@ export const getDailyInlineStatus = async (): Promise<GameInlineStatusResponse> 
       completed: false,
       failed: false,
       removed: true,
+      isOwn: false,
     };
   }
   const userId = context.userId ?? null;
@@ -796,17 +798,20 @@ export const getDailyInlineStatus = async (): Promise<GameInlineStatusResponse> 
 	      completed: false,
 	      failed: false,
       removed: false,
+      isOwn: false,
 	    };
   }
-  const [completedLevels, failedLevel] = await Promise.all([
+  const [completedLevels, failedLevel, authorId] = await Promise.all([
     getCompletedLevels(userId),
     hasFailedLevel(userId, levelId),
+    getCommunityLevelAuthorId(levelId),
   ]);
 	  return {
 	    levelId,
 	    completed: completedLevels.has(levelId),
 	    failed: failedLevel && !completedLevels.has(levelId),
     removed: false,
+    isOwn: Boolean(authorId && authorId === userId),
 	  };
 };
 
@@ -874,7 +879,6 @@ export const purchaseDailyRetryForLevel = async (params: {
     inventory,
     completed,
     failedLevel,
-    retryCount,
     activeSession,
     puzzle,
   ] = await Promise.all([
@@ -882,7 +886,6 @@ export const purchaseDailyRetryForLevel = async (params: {
     getInventory(userId),
     getCompletedLevels(userId),
     hasFailedLevel(userId, params.levelId),
-    getDailyRetryCount(userId, params.levelId),
     getSessionState(userId, postId),
     loadPuzzlePrivate(params.levelId),
   ]);
@@ -893,26 +896,6 @@ export const purchaseDailyRetryForLevel = async (params: {
   if (!failedLevel) {
     throw new Error('Daily retry is only available after a failed daily.');
   }
-  if (
-    activeSession &&
-    activeSession.activeLevelId === params.levelId &&
-    activeSession.mode === 'daily'
-  ) {
-    const retryState = buildDailyRetryState({
-      mode: 'daily',
-      retryCount,
-      requiresPaidRetry: false,
-      difficulty: puzzle.difficulty,
-    });
-    return {
-      ok: true,
-      session: activeSession,
-      heartsRemaining: heartsRemaining(activeSession),
-      profile,
-      inventory,
-      ...retryState,
-    };
-  }
   if (!canStartChallenge(profile)) {
     throw new Error('No lives left. Wait for refill.');
   }
@@ -920,6 +903,7 @@ export const purchaseDailyRetryForLevel = async (params: {
   const profileKey = keyUserProfile(userId);
   const retryCountsKey = keyUserDailyRetryCounts(userId);
 
+  // Deduct coins first (before checking activeSession)
   for (let attempt = 0; attempt < maxOptimisticRetries; attempt += 1) {
     const tx = await redis.watch(profileKey, retryCountsKey);
     const currentCoins = parseNumber(await redis.hGet(profileKey, 'coins'), 0);
@@ -952,6 +936,32 @@ export const purchaseDailyRetryForLevel = async (params: {
       userId,
       amount: currentRetryCost,
     });
+
+    // After coins are deducted, check if activeSession exists
+    if (
+      activeSession &&
+      activeSession.activeLevelId === params.levelId &&
+      activeSession.mode === 'daily'
+    ) {
+      const [updatedProfile, nextRetryCount] = await Promise.all([
+        getUserProfile(userId),
+        getDailyRetryCount(userId, params.levelId),
+      ]);
+      const nextRetryState = buildDailyRetryState({
+        mode: 'daily',
+        retryCount: nextRetryCount,
+        requiresPaidRetry: false,
+        difficulty: puzzle.difficulty,
+      });
+      return {
+        ok: true,
+        session: activeSession,
+        heartsRemaining: heartsRemaining(activeSession),
+        profile: updatedProfile,
+        inventory,
+        ...nextRetryState,
+      };
+    }
 
     const session = await createSessionState({
       userId,
@@ -1008,9 +1018,18 @@ export const continueSessionForLevel = async (params: {
   if (!canStartChallenge(profile)) {
     throw new Error('No lives left. Wait for refill.');
   }
+  if (profile.coins < continueCoinCost) {
+    throw new Error('Not enough coins to continue.');
+  }
 
   const now = Date.now();
-  const nextProfile = consumeHeartOnFailure(profile, now);
+  // Spend a heart AND the flat continue cost in one profile write so neither
+  // field clobbers the other. A second immediate continue is already blocked
+  // above: continuing resets mistakesMade to 0, so heartsRemaining > 0 throws.
+  const nextProfile = {
+    ...consumeHeartOnFailure(profile, now),
+    coins: profile.coins - continueCoinCost,
+  };
   const continuedSession = withTrackedSessionActivity(
     {
       ...session,
@@ -1027,6 +1046,10 @@ export const continueSessionForLevel = async (params: {
 	    markLevelContinued(userId, params.levelId),
 	    unmarkLevelFailed(userId, params.levelId),
 	  ]);
+
+  // Continue spending counts toward the "coins spent" milestone quests, same
+  // as a paid daily retry.
+  await updateQuestProgressOnCoinSpend({ userId, amount: continueCoinCost });
 
   return {
     ok: true,
@@ -1802,6 +1825,7 @@ export const completeSessionForLevel = async (params: {
         mode: params.mode,
         isCurrentDaily,
         isRecoveryRun,
+        continued: continuedLevel,
       });
     });
     await runCompletionStep('save_receipt', async () => {

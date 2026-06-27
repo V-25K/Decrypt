@@ -79,6 +79,7 @@ import {
   type EndlessSort,
   type ThemePreference,
 } from '../../shared/game';
+import { continueCoinCost } from '../../shared/game-balance';
 import type {
   AppScreen,
   BuyDialogState,
@@ -414,7 +415,7 @@ type HeartShopReturnIntent = {
   action: 'start' | 'continue';
 };
 
-const continuePromptPointCost = 50;
+const continuePromptPointCost = continueCoinCost;
 
 const buildEndlessCaughtUpMessage = (
   categoryFilter: ChallengeType | null
@@ -1327,6 +1328,11 @@ export const GameApp = () => {
             })
           );
         }
+        // Completing a challenge advances quest progress server-side (First
+        // Clear, Quick Clear, Clean Sheet, etc.). Refresh the cached quest
+        // status so the result overlay's "Claim" tag and the bottom-nav badge
+        // light up immediately instead of only after a full page reload.
+        void loadQuestStatus();
       } else {
         if (storageUserId) {
           persistOutcomeState(storageUserId, null);
@@ -2296,6 +2302,10 @@ export const GameApp = () => {
       setProfile(bought.profile);
       setInventory(bought.inventory);
       setBuyDialog(null);
+      // Spending coins advances the "coins spent" milestone quests; refresh so
+      // a milestone that just tipped over lights up the quest badge without a
+      // reload (same stale-cache issue as the completion claim tag).
+      void loadQuestStatus();
     } finally {
       dispatchAppRuntime({ type: 'setBusy', update: false });
     }
@@ -2311,7 +2321,14 @@ export const GameApp = () => {
       const result = await purchase(sku);
       if (isSuccessfulOrderStatus(result.status)) {
         showToast('Purchase successful.');
-        await Promise.all([refreshBootstrapState(), loadFeaturedOffer()]);
+        // A real-money purchase advances the purchase milestone quest, so pull
+        // fresh quest status alongside the profile/offer refresh — otherwise the
+        // claim badge only appears after a reload.
+        await Promise.all([
+          refreshBootstrapState(),
+          loadFeaturedOffer(),
+          loadQuestStatus(),
+        ]);
         if (heartShopReturnIntent) {
           const returnIntent = heartShopReturnIntent;
           setHeartShopReturnIntent(null);
@@ -2750,6 +2767,9 @@ export const GameApp = () => {
         return;
       }
       setProfile(result.profile);
+      // Buying hearts with coins advances the "coins spent" milestone quests;
+      // refresh so a milestone that just completed surfaces on the quest badge.
+      void loadQuestStatus();
       setHeartPurchaseDialogOpen(false);
       showToast(`${heartEmoji} Hearts refilled!`);
     } catch (_error) {
@@ -2782,6 +2802,9 @@ export const GameApp = () => {
         return;
       }
       setProfile(result.profile);
+      // Buying hearts with coins advances the "coins spent" milestone quests;
+      // refresh so a milestone that just completed surfaces on the quest badge.
+      void loadQuestStatus();
       setHeartPurchaseDialogOpen(false);
       showToast(`${heartEmoji} +1 heart!`);
     } catch (_error) {
@@ -2802,12 +2825,20 @@ export const GameApp = () => {
 	          setHeartPurchaseDialogOpen(true);
 	          return;
 	        }
+	        if (profile && profile.coins < continuePromptPointCost) {
+	          showToast('Not enough coins to continue.');
+	          return;
+	        }
 	        const result = await trpc.game.continueLevel.mutate({
 	          levelId,
 	          mode,
 	        });
 	        setProfile(result.profile);
 	        setInventory(result.inventory);
+	        // Continuing spends coins, advancing the "coins spent" milestone
+	        // quests; refresh so a milestone that just completed surfaces on the
+	        // quest badge without a reload.
+	        void loadQuestStatus();
 	        setContinuePrompt(null);
 	        setContinueCancelConfirmOpen(false);
 	        patchChallengeSession(
@@ -2856,6 +2887,13 @@ export const GameApp = () => {
       const result = await trpc.social.shareResult.mutate({
         levelId,
       });
+      if (result.success) {
+        // The first share of a level advances the share quests ("Share It" +
+        // the social milestone). Refresh quest status so the result overlay's
+        // "Claim" tag and the bottom-nav badge update without a reload, just
+        // like a challenge completion does.
+        void loadQuestStatus();
+      }
       showToast(result.success ? 'Result shared.' : result.reason ?? 'Share failed.');
     } catch (_error) {
       showToast('Share failed.');

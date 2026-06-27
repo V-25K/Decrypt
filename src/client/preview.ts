@@ -633,7 +633,7 @@ const mountPreview = async (): Promise<void> => {
       renderRemoved(root, status.levelId);
       return;
     }
-	    if (status.completed || status.failed) {
+	    if (status.completed || status.failed || status.isOwn) {
 	      await mountCompletedGame(root);
       return;
     }
