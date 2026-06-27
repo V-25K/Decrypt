@@ -6,10 +6,6 @@ import {
   getNextCommunityEndlessLevelId,
 } from './community';
 
-export const getRuntimeActiveEndlessCatalogVersion = async (): Promise<string | null> => {
-  return null;
-};
-
 export const getEndlessCatalogStatus = async (): Promise<EndlessCatalogStatus> => {
   const publishedLevelCount = await getApprovedCommunityCount();
   return endlessCatalogStatusSchema.parse({
@@ -19,10 +15,6 @@ export const getEndlessCatalogStatus = async (): Promise<EndlessCatalogStatus> =
     publishedLevelCount,
     bundledVersions: [],
   });
-};
-
-export const ensureEndlessCatalogReady = async (): Promise<string | null> => {
-  return null;
 };
 
 export const getNextEndlessCatalogLevelId = async (

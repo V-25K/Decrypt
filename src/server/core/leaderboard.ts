@@ -935,6 +935,28 @@ export const getDailyTop = async (
   );
 
 /**
+ * Shared windowed read for the rank-ordered leaderboard zsets: clamps the
+ * offset/limit, short-circuits empty pages, and resolves only the requested
+ * [offset, offset+limit) window in display order (reverse rank) instead of
+ * fetching from the top and slicing, so deep pages stay O(pageSize).
+ */
+const readRankWindow = async (
+  key: string,
+  offset: number,
+  limit: number
+): Promise<{ member: string; score: number }[]> => {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(0, Math.floor(limit));
+  if (safeLimit === 0) {
+    return [];
+  }
+  return await redis.zRange(key, safeOffset, safeOffset + safeLimit - 1, {
+    by: 'rank',
+    reverse: true,
+  });
+};
+
+/**
  * Window read for paginated daily leaderboard. The daily zset is score-ordered
  * (recordDailyScore uses zIncrBy by score), so a reverse rank window is already
  * in display order; null-filtered repair entries can make a page shorter than
@@ -945,19 +967,9 @@ export const getDailyWindow = async (
   offset: number,
   limit: number
 ): Promise<DailyLeaderboardEntry[]> => {
-  const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.max(0, Math.floor(limit));
-  if (safeLimit === 0) {
-    return [];
-  }
   const statsKey = keyDailyLeaderboardStats(dateKey);
   const [entries, dailyStats] = await Promise.all([
-    redis.zRange(
-      keyDailyLeaderboard(dateKey),
-      safeOffset,
-      safeOffset + safeLimit - 1,
-      { by: 'rank', reverse: true }
-    ),
+    readRankWindow(keyDailyLeaderboard(dateKey), offset, limit),
     redis.hGetAll(statsKey),
   ]);
   const resolved = await Promise.all(
@@ -1148,17 +1160,7 @@ export const getAllTimeLevelsWindow = async (
   offset: number,
   limit: number
 ): Promise<AllTimeLevelEntry[]> => {
-  const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.max(0, Math.floor(limit));
-  if (safeLimit === 0) {
-    return [];
-  }
-  const entries = await redis.zRange(
-    keyAllTimeLevelsLeaderboard,
-    safeOffset,
-    safeOffset + safeLimit - 1,
-    { by: 'rank', reverse: true }
-  );
+  const entries = await readRankWindow(keyAllTimeLevelsLeaderboard, offset, limit);
   const resolved = await Promise.all(entries.map(resolveAllTimeLevelEntry));
   return resolved.filter((entry): entry is AllTimeLevelEntry => entry !== null);
 };
@@ -1203,17 +1205,7 @@ export const getAllTimeLogicWindow = async (
   offset: number,
   limit: number
 ): Promise<AllTimeLogicEntry[]> => {
-  const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.max(0, Math.floor(limit));
-  if (safeLimit === 0) {
-    return [];
-  }
-  const entries = await redis.zRange(
-    keyAllTimeLogicLeaderboard,
-    safeOffset,
-    safeOffset + safeLimit - 1,
-    { by: 'rank', reverse: true }
-  );
+  const entries = await readRankWindow(keyAllTimeLogicLeaderboard, offset, limit);
   return await Promise.all(entries.map(resolveAllTimeLogicEntry));
 };
 
@@ -1280,17 +1272,7 @@ export const getGlobalWindow = async (
   offset: number,
   limit: number
 ): Promise<GlobalLeaderboardEntry[]> => {
-  const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.max(0, Math.floor(limit));
-  if (safeLimit === 0) {
-    return [];
-  }
-  const entries = await redis.zRange(
-    keyGlobalRatingLeaderboard,
-    safeOffset,
-    safeOffset + safeLimit - 1,
-    { by: 'rank', reverse: true }
-  );
+  const entries = await readRankWindow(keyGlobalRatingLeaderboard, offset, limit);
   return await Promise.all(entries.map(resolveGlobalEntry));
 };
 

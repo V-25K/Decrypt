@@ -539,19 +539,19 @@ export const gameInlineStatusResponseSchema = z.object({
 
 export type GameInlineStatusResponse = z.infer<typeof gameInlineStatusResponseSchema>;
 
-export const gameStartSessionInputSchema = z
+// Shared input contract for the per-level/mode game actions (start, heartbeat,
+// retry, continue, complete). They all take exactly { levelId, mode }; keeping
+// one definition avoids drift between the routes.
+const levelModeInputSchema = z
   .object({
     levelId: z.string().min(1),
     mode: z.union([z.literal('daily'), z.literal('endless')]),
   })
   .strict();
 
-export const gameHeartbeatInputSchema = z
-  .object({
-    levelId: z.string().min(1),
-    mode: z.union([z.literal('daily'), z.literal('endless')]),
-  })
-  .strict();
+export const gameStartSessionInputSchema = levelModeInputSchema;
+
+export const gameHeartbeatInputSchema = levelModeInputSchema;
 
 export const gameHeartbeatResponseSchema = z.object({
   ok: z.boolean(),
@@ -563,12 +563,7 @@ export const gameStartSessionResponseSchema = z.object({
   heartsRemaining: z.number().int().nonnegative(),
 });
 
-export const gamePurchaseDailyRetryInputSchema = z
-  .object({
-    levelId: z.string().min(1),
-    mode: z.union([z.literal('daily'), z.literal('endless')]),
-  })
-  .strict();
+export const gamePurchaseDailyRetryInputSchema = levelModeInputSchema;
 
 export const gamePurchaseDailyRetryResponseSchema = z.object({
   ok: z.boolean(),
@@ -583,12 +578,7 @@ export const gamePurchaseDailyRetryResponseSchema = z.object({
   requiresPaidRetry: z.boolean(),
 });
 
-export const gameContinueLevelInputSchema = z
-  .object({
-    levelId: z.string().min(1),
-    mode: z.union([z.literal('daily'), z.literal('endless')]),
-  })
-  .strict();
+export const gameContinueLevelInputSchema = levelModeInputSchema;
 
 export const gameContinueLevelResponseSchema = z.object({
   ok: z.boolean(),
@@ -646,12 +636,7 @@ export const gameSubmitGuessesResponseSchema = z.object({
   results: z.array(gameSubmitGuessResponseSchema),
 });
 
-export const gameCompleteSessionInputSchema = z
-  .object({
-    levelId: z.string().min(1),
-    mode: z.union([z.literal('daily'), z.literal('endless')]),
-  })
-  .strict();
+export const gameCompleteSessionInputSchema = levelModeInputSchema;
 
 export const gameCompleteSessionResponseSchema = z.object({
   ok: z.boolean(),
