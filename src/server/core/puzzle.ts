@@ -1212,11 +1212,18 @@ const passesFinalSolvabilityValidation = (params: {
   );
 };
 
+// The fully decrypted line: every tile's real character in order (letters carry
+// their solved letter, non-letter tiles their literal space/punctuation). This is
+// the plaintext answer, so it must only ever be handed to a viewer the server has
+// authorized — see buildPublicPuzzle({ revealSolution }) and the result-screen reveal.
+export const reconstructSolvedText = (puzzle: PuzzlePrivate): string =>
+  puzzle.tiles.map((tile) => tile.char).join('');
+
 export const buildPublicPuzzle = (
   puzzle: PuzzlePrivate,
   revealedIndices: number[],
   sessionRevealedIndices?: number[],
-  options?: { disableFallbackStarter?: boolean }
+  options?: { disableFallbackStarter?: boolean; revealSolution?: boolean }
 ): PuzzlePublic => {
   const lockSet = new Set(puzzle.lockIndices ?? []);
   const prefilledSet = new Set(puzzle.prefilledIndices);
@@ -1322,11 +1329,18 @@ export const buildPublicPuzzle = (
     dateKey: puzzle.dateKey,
     author: puzzle.author,
     challengeType: puzzle.challengeType,
-    words: puzzle.words,
+    // Intentionally omit `puzzle.words` (the plaintext answer). The client never
+    // needs it: word structure comes from the space tiles, and the completion
+    // quote is rebuilt from the revealed tiles client-side.
     tiles,
     difficulty: puzzle.difficulty,
     targetTimeSeconds: puzzle.targetTimeSeconds,
     heartsMax: 3,
+    // Only attach the plaintext answer when the caller has verified the viewer is
+    // entitled to it (finished or authored the puzzle). Default builds omit it.
+    ...(options?.revealSolution
+      ? { solvedText: reconstructSolvedText(puzzle) }
+      : {}),
   });
 
   return parsed;

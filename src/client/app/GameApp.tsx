@@ -1054,6 +1054,34 @@ export const GameApp = () => {
     return view;
   };
 
+  // When a run ends in a loss (live game-over, once the player declines to
+  // continue), the puzzle in state is only partially revealed, so the result
+  // screen's quote needs the full decrypted line. The server now returns
+  // `solvedText` to entitled (finished) viewers — the failure was already recorded
+  // server-side — so pull a fresh view once we enter game-over and don't already
+  // have it. No-op for wins (revealed tiles already spell the answer) and for
+  // restored/own-challenge results, which fetched the reveal on their own path.
+  useEffect(() => {
+    if (!isGameOver || !levelId) {
+      return;
+    }
+    if (puzzleRef.current?.solvedText) {
+      return;
+    }
+    let cancelled = false;
+    void trpc.game.getCurrentView
+      .query({ levelId })
+      .then((view) => {
+        if (!cancelled) {
+          applyServerPuzzleView(levelId, view);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isGameOver, levelId, applyServerPuzzleView]);
+
   const getPowerupValidity = useCallback(
     (item: PowerupType): PowerupValidity => {
       return getPowerupValidityForPuzzle({

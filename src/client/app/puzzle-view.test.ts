@@ -23,13 +23,12 @@ const tile = (
 
 const puzzle = (tiles: PuzzlePublicTile[]): Puzzle => ({
   levelId: 'daily-1',
-  quote: 'ABC',
-  normalizedQuote: 'ABC',
-  words: ['ABC'],
+  dateKey: '2026-06-27',
+  author: 'tester',
   tiles,
   heartsMax: 3,
   difficulty: 2,
-  challengeType: 'daily',
+  challengeType: 'QUOTE',
 });
 
 describe('puzzle-view helpers', () => {
@@ -87,27 +86,56 @@ describe('puzzle-view helpers', () => {
     ).toBe(1);
   });
 
-  it('rebuilds the completion quote from solved words and punctuation tiles', () => {
+  it('rebuilds the completion quote from the revealed tile letters and punctuation', () => {
+    // At completion every letter tile's displayChar holds the solved letter.
     expect(
-      buildCompletionQuote({
-        ...puzzle([
-          tile(0, { displayChar: '_' }),
-          tile(1, { displayChar: '_' }),
+      buildCompletionQuote(
+        puzzle([
+          tile(0, { displayChar: 'H' }),
+          tile(1, { displayChar: 'I' }),
           tile(2, { isLetter: false, displayChar: ' ' }),
-          tile(3, { displayChar: '_' }),
+          tile(3, { displayChar: 'A' }),
           tile(4, { isLetter: false, displayChar: '!' }),
-        ]),
-        words: ['HI', 'A'],
-      })
+        ])
+      )
     ).toBe('HI A!');
   });
 
-  it('falls back to solved words when tiles cannot rebuild visible text', () => {
+  it('preserves punctuation tiles such as apostrophes', () => {
     expect(
-      buildCompletionQuote({
-        ...puzzle([]),
-        words: ['FALL', 'BACK'],
-      })
-    ).toBe('FALL BACK');
+      buildCompletionQuote(
+        puzzle([
+          tile(0, { displayChar: 'I' }),
+          tile(1, { displayChar: 'T' }),
+          tile(2, { isLetter: false, displayChar: "'" }),
+          tile(3, { displayChar: 'S' }),
+        ])
+      )
+    ).toBe("IT'S");
+  });
+
+  it('prefers the server-authorized solvedText for losses / self-created (tiles still masked)', () => {
+    // A loss leaves most tiles masked as "_", so the tile fallback alone would
+    // produce gibberish. The server-authorized full line must win.
+    const view: Puzzle = {
+      ...puzzle([
+        tile(0, { displayChar: 'H' }),
+        tile(1, { displayChar: '_' }),
+        tile(2, { isLetter: false, displayChar: ' ' }),
+        tile(3, { displayChar: '_' }),
+      ]),
+      solvedText: 'HI A',
+    };
+
+    expect(buildCompletionQuote(view)).toBe('HI A');
+  });
+
+  it('falls back to revealed tiles when solvedText is absent (a fresh win)', () => {
+    const view: Puzzle = {
+      ...puzzle([tile(0, { displayChar: 'H' }), tile(1, { displayChar: 'I' })]),
+      solvedText: undefined,
+    };
+
+    expect(buildCompletionQuote(view)).toBe('HI');
   });
 });

@@ -262,23 +262,44 @@ export const getUserProfile = async (userId: string): Promise<UserProfile> => {
   }
   const parsed = parsedResult.data;
   const normalized = normalizeUnlockedFlairs(normalizeHearts(parsed));
+  // Read-path repair must write ONLY the fields that actually changed — never a
+  // full-profile overwrite, which would clobber a concurrent atomic coin/heart
+  // mutation. See wallet.ts for the governing rule.
+  const fieldsToPersist: Record<string, string> = {};
   if (
-    JSON.stringify(normalized.unlockedFlairs) !== JSON.stringify(parsed.unlockedFlairs) ||
-    normalized.activeFlair !== parsed.activeFlair ||
     normalized.hearts !== parsed.hearts ||
     normalized.lastHeartRefillTs !== parsed.lastHeartRefillTs
   ) {
-    await saveUserProfile(userId, normalized);
+    fieldsToPersist.hearts = `${normalized.hearts}`;
+    fieldsToPersist.lastHeartRefillTs = `${normalized.lastHeartRefillTs}`;
+    fieldsToPersist.infiniteHeartsExpiryTs = `${normalized.infiniteHeartsExpiryTs}`;
+  }
+  if (
+    JSON.stringify(normalized.unlockedFlairs) !== JSON.stringify(parsed.unlockedFlairs) ||
+    normalized.activeFlair !== parsed.activeFlair
+  ) {
+    fieldsToPersist.unlockedFlairs = JSON.stringify(normalized.unlockedFlairs);
+    fieldsToPersist.activeFlair = normalized.activeFlair;
+  }
+  if (Object.keys(fieldsToPersist).length > 0) {
+    await redis.hSet(keyUserProfile(userId), fieldsToPersist);
   }
   return normalized;
 };
 
-export const saveUserProfile = async (
-  userId: string,
-  profile: UserProfile
-): Promise<void> => {
+// The four monetary fields. They are owned exclusively by wallet.ts and must be
+// excluded from any full-profile write (see saveProfileStats). Kept as a local
+// copy to avoid a state.ts <-> wallet.ts import cycle; mirrors WALLET_FIELDS.
+const walletProfileFields = [
+  'coins',
+  'hearts',
+  'lastHeartRefillTs',
+  'infiniteHeartsExpiryTs',
+] as const;
+
+const serializeProfile = (profile: UserProfile): Record<string, string> => {
   const normalizedProfile = normalizeUnlockedFlairs(profile);
-  await redis.hSet(keyUserProfile(userId), {
+  return {
     coins: `${normalizedProfile.coins}`,
     hearts: `${normalizedProfile.hearts}`,
     lastHeartRefillTs: `${normalizedProfile.lastHeartRefillTs}`,
@@ -321,7 +342,41 @@ export const saveUserProfile = async (
       : '0',
     unlockedFlairs: JSON.stringify(normalizedProfile.unlockedFlairs),
     activeFlair: normalizedProfile.activeFlair,
-  });
+  };
+};
+
+/**
+ * Full-profile write INCLUDING the wallet fields.
+ *
+ * @deprecated For UPDATE paths use `saveProfileStats` (non-wallet fields) plus
+ * the wallet helpers in wallet.ts (`grantCoins`/`spendCoins`/`mutateHearts`).
+ * A blind full write from a stale read clobbers concurrent atomic wallet
+ * mutations. This remains only for first-time profile creation / fallback,
+ * where there is no concurrency.
+ */
+export const saveUserProfile = async (
+  userId: string,
+  profile: UserProfile
+): Promise<void> => {
+  await redis.hSet(keyUserProfile(userId), serializeProfile(profile));
+};
+
+/**
+ * Writes every NON-wallet profile field. Safe for update paths because it never
+ * touches coins/hearts/lastHeartRefillTs/infiniteHeartsExpiryTs, so it cannot
+ * clobber a concurrent atomic wallet mutation. Per rule R3, a full stats write
+ * is appropriate from single-writer / lock-serialized flows (e.g. the
+ * completion finalizer).
+ */
+export const saveProfileStats = async (
+  userId: string,
+  profile: UserProfile
+): Promise<void> => {
+  const fields = serializeProfile(profile);
+  for (const walletField of walletProfileFields) {
+    delete fields[walletField];
+  }
+  await redis.hSet(keyUserProfile(userId), fields);
 };
 
 export const getInventory = async (userId: string): Promise<Inventory> => {

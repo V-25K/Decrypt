@@ -9,7 +9,9 @@ const {
   redisHSetNXMock,
   redisGetMock,
   redisIncrByMock,
+  redisHIncrByMock,
   redisSetMock,
+  redisDelMock,
   getCompletedLevelsMock,
   getFailedLevelsMock,
   getDailyRetryCountMock,
@@ -26,6 +28,10 @@ const {
   getUserProfileMock,
   hasContinuedLevelMock,
   saveUserProfileMock,
+  saveProfileStatsMock,
+  grantCoinsMock,
+  spendCoinsMock,
+  mutateHeartsMock,
   markLevelContinuedMock,
   updateQuestProgressOnCoinSpendMock,
   createSessionStateMock,
@@ -81,7 +87,9 @@ const {
     }),
     redisGetMock: vi.fn(),
     redisIncrByMock: vi.fn(),
+    redisHIncrByMock: vi.fn(),
     redisSetMock: vi.fn(),
+    redisDelMock: vi.fn(),
     getCompletedLevelsMock: vi.fn(),
     getFailedLevelsMock: vi.fn(),
     getDailyRetryCountMock: vi.fn(),
@@ -98,6 +106,10 @@ const {
     getUserProfileMock: vi.fn(),
     hasContinuedLevelMock: vi.fn(),
     saveUserProfileMock: vi.fn(),
+    saveProfileStatsMock: vi.fn(),
+    grantCoinsMock: vi.fn(),
+    spendCoinsMock: vi.fn(),
+    mutateHeartsMock: vi.fn(),
     markLevelContinuedMock: vi.fn(),
     updateQuestProgressOnCoinSpendMock: vi.fn(),
     createSessionStateMock: vi.fn(),
@@ -126,7 +138,9 @@ vi.mock('@devvit/web/server', () => ({
     hGet: redisHGetMock,
     hSetNX: redisHSetNXMock,
     incrBy: redisIncrByMock,
+    hIncrBy: redisHIncrByMock,
     set: redisSetMock,
+    del: redisDelMock,
   },
 }));
 
@@ -146,6 +160,13 @@ vi.mock('./state', () => ({
 	  registerKnownUser: vi.fn(),
   saveInventory: vi.fn(),
   saveUserProfile: saveUserProfileMock,
+  saveProfileStats: saveProfileStatsMock,
+}));
+
+vi.mock('./wallet', () => ({
+  grantCoins: grantCoinsMock,
+  spendCoins: spendCoinsMock,
+  mutateHearts: mutateHeartsMock,
 }));
 
 vi.mock('./session', () => ({
@@ -212,7 +233,9 @@ import {
   getCurrentPuzzleView,
   startSessionForLevel,
   submitGuessForSession,
+  submitGuessesForSession,
 } from './game-service';
+import { keySessionLock, keyUserProfile } from './keys';
 
 const profileFixture = (overrides?: Partial<UserProfile>): UserProfile => ({
   coins: 0,
@@ -307,10 +330,18 @@ beforeEach(() => {
   redisGetMock.mockResolvedValue(null);
   redisIncrByMock.mockResolvedValue(1);
   redisSetMock.mockResolvedValue(true);
+  redisDelMock.mockResolvedValue(1);
+  getCompletedLevelsMock.mockResolvedValue(new Set<string>());
+  hasFailedLevelMock.mockResolvedValue(false);
   getFailedLevelsMock.mockResolvedValue(new Set<string>());
   getUserProfileMock.mockResolvedValue(profileFixture());
   hasContinuedLevelMock.mockResolvedValue(false);
   isPuzzleRemovedFromPlayMock.mockResolvedValue(false);
+  redisHIncrByMock.mockResolvedValue(1);
+  spendCoinsMock.mockResolvedValue({ ok: true, balance: 150 });
+  mutateHeartsMock.mockResolvedValue(profileFixture());
+  grantCoinsMock.mockResolvedValue(0);
+  saveProfileStatsMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -321,6 +352,7 @@ afterEach(() => {
   redisGetMock.mockReset();
   redisIncrByMock.mockReset();
   redisSetMock.mockReset();
+  redisDelMock.mockReset();
   getCompletedLevelsMock.mockReset();
   getFailedLevelsMock.mockReset();
   getDailyRetryCountMock.mockReset();
@@ -338,6 +370,11 @@ afterEach(() => {
   getUserProfileMock.mockReset();
   hasContinuedLevelMock.mockReset();
   saveUserProfileMock.mockReset();
+  saveProfileStatsMock.mockReset();
+  grantCoinsMock.mockReset();
+  spendCoinsMock.mockReset();
+  mutateHeartsMock.mockReset();
+  redisHIncrByMock.mockReset();
   markLevelContinuedMock.mockReset();
   createSessionStateMock.mockReset();
   saveSessionStateMock.mockReset();
@@ -501,10 +538,7 @@ describe('startSessionForLevel', () => {
         revealedIndices: [0, 2],
       })
     );
-	  expect(saveUserProfileMock).toHaveBeenCalledWith(
-	    't2_test',
-	    expect.objectContaining({ coins: 150 })
-	  );
+	  expect(spendCoinsMock).toHaveBeenCalledWith('t2_test', 50);
 	  expect(updateQuestProgressOnCoinSpendMock).toHaveBeenCalledWith({
 	    userId: 't2_test',
 	    amount: 50,
@@ -623,12 +657,10 @@ describe('submitGuessForSession', () => {
       't2_test',
       expect.any(Number)
     );
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
-      't2_test',
-      expect.objectContaining({
-        dailyChallengesPlayed: 3,
-        endlessChallengesPlayed: 4,
-      })
+    expect(redisHIncrByMock).toHaveBeenCalledWith(
+      keyUserProfile('t2_test'),
+      'dailyChallengesPlayed',
+      1
     );
     expect(saveSessionStateMock).toHaveBeenCalledTimes(1);
     expect(saveSessionStateMock).toHaveBeenCalledWith(
@@ -865,6 +897,140 @@ describe('submitGuessForSession', () => {
       expect.objectContaining({ mistakesMade: 1, wrongGuesses: 1 })
     );
   });
+
+  it('rejects a concurrent guess with CONFLICT when the session lock is held', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily', guessCount: 1 })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(2);
+    // NX set fails => another guess for this session already holds the lock.
+    redisSetMock.mockResolvedValue(false);
+
+    await expect(
+      submitGuessForSession({ levelId: 'lvl_0001', tileIndex: 0, guessedLetter: 'a' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    // The losing guess must never read-modify-write the session.
+    expect(saveSessionStateMock).not.toHaveBeenCalled();
+  });
+
+  it('acquires the NX lock and releases it after the guess', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily', guessCount: 1 })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(2);
+    let heldToken: string | undefined;
+    redisSetMock.mockImplementation(async (_key: string, token: string) => {
+      heldToken = token;
+      return true;
+    });
+    redisGetMock.mockImplementation(async () => heldToken ?? null);
+
+    await submitGuessForSession({
+      levelId: 'lvl_0001',
+      tileIndex: 0,
+      guessedLetter: 'a',
+    });
+
+    const lockKey = keySessionLock('t2_test', 't3_test');
+    expect(redisSetMock).toHaveBeenCalledWith(
+      lockKey,
+      expect.any(String),
+      expect.objectContaining({ nx: true, expiration: expect.any(Date) })
+    );
+    // Released only because we still owned the token (TTL had not expired under us).
+    expect(redisDelMock).toHaveBeenCalledWith(lockKey);
+  });
+});
+
+describe('submitGuessesForSession', () => {
+  it('loads the puzzle once and holds a single session lock for the whole batch', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily', guessCount: 1 })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: true, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    heartsRemainingMock.mockReturnValue(2);
+
+    const result = await submitGuessesForSession({
+      levelId: 'lvl_0001',
+      guesses: [
+        { tileIndex: 0, guessedLetter: 'a' },
+        { tileIndex: 1, guessedLetter: 'b' },
+        { tileIndex: 2, guessedLetter: 'c' },
+      ],
+    });
+
+    expect(result.results).toHaveLength(3);
+    // Phase 4: the puzzle is fetched + parsed once, not once per guess.
+    expect(getPuzzlePrivateMock).toHaveBeenCalledTimes(1);
+    // Phase 3: exactly one NX lock acquisition guards the whole batch (no nested locks).
+    expect(redisSetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the batch at game-over and does not apply later guesses', async () => {
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily', guessCount: 1 })
+    );
+    getPuzzlePrivateMock.mockResolvedValue({
+      prefilledIndices: [],
+      padlockChains: [],
+      tiles: [{ index: 0, char: 'A', isLetter: true, wordIndex: 0 }],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    revealFromGuessMock.mockReturnValue({ isCorrect: false, revealedTiles: [] });
+    checkPadlockStatusMock.mockReturnValue({
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+    });
+    puzzleIsCompleteMock.mockReturnValue(false);
+    // No hearts left => the first wrong guess ends the run.
+    heartsRemainingMock.mockReturnValue(0);
+
+    const result = await submitGuessesForSession({
+      levelId: 'lvl_0001',
+      guesses: [
+        { tileIndex: 0, guessedLetter: 'z' },
+        { tileIndex: 1, guessedLetter: 'y' },
+      ],
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.isGameOver).toBe(true);
+  });
 });
 
 describe('getCurrentPuzzleView', () => {
@@ -928,6 +1094,68 @@ describe('getCurrentPuzzleView', () => {
     ).rejects.toThrow('Puzzle is unavailable.');
 
     expect(getPuzzlePrivateMock).not.toHaveBeenCalled();
+  });
+
+  // The decrypted line must reach the client ONLY when the run is genuinely over
+  // (completed/failed and not mid-retry) — never during active play.
+  const setUpView = () => {
+    isPuzzlePublishedVisibleMock.mockResolvedValue(true);
+    isPuzzleRemovedFromPlayMock.mockResolvedValue(false);
+    getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+    checkPadlockStatusMock.mockReturnValue({
+      lockedIndexSet: new Set<number>(),
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+      lockedIndices: [],
+    });
+  };
+
+  it('reveals the solved line to a viewer who completed the puzzle', async () => {
+    setUpView();
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>(['lvl_0001']));
+    getSessionStateMock.mockResolvedValue(null);
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBe('A B');
+  });
+
+  it('reveals the solved line after a loss once no playable session remains', async () => {
+    setUpView();
+    hasFailedLevelMock.mockResolvedValue(true);
+    getSessionStateMock.mockResolvedValue(null);
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBe('A B');
+  });
+
+  it('never reveals the solved line during active play', async () => {
+    setUpView();
+    // Not completed, not failed, just playing.
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001' })
+    );
+    heartsRemainingMock.mockReturnValue(2);
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBeUndefined();
+  });
+
+  it('never reveals the solved line while a failed daily is being paid-retried', async () => {
+    setUpView();
+    // Failure record persists across a retry, but a live session with hearts left
+    // means the player is actively re-solving — the answer must stay hidden.
+    hasFailedLevelMock.mockResolvedValue(true);
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001' })
+    );
+    heartsRemainingMock.mockReturnValue(3);
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBeUndefined();
   });
 });
 

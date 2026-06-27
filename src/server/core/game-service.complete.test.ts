@@ -23,6 +23,10 @@ const {
   markLevelCompletedMock,
   saveInventoryMock,
   saveUserProfileMock,
+  saveProfileStatsMock,
+  grantCoinsMock,
+  spendCoinsMock,
+  mutateHeartsMock,
   puzzleIsCompleteMock,
 	  computeScoreMock,
 	  getRatingOutcomeReceiptMock,
@@ -64,6 +68,10 @@ const {
   markLevelCompletedMock: vi.fn(),
   saveInventoryMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
+  saveProfileStatsMock: vi.fn(),
+  grantCoinsMock: vi.fn(),
+  spendCoinsMock: vi.fn(),
+  mutateHeartsMock: vi.fn(),
   puzzleIsCompleteMock: vi.fn(),
   computeScoreMock: vi.fn(),
   getRatingOutcomeReceiptMock: vi.fn(),
@@ -122,6 +130,13 @@ vi.mock('./state', () => ({
 	  registerKnownUser: vi.fn(),
   saveInventory: saveInventoryMock,
   saveUserProfile: saveUserProfileMock,
+  saveProfileStats: saveProfileStatsMock,
+}));
+
+vi.mock('./wallet', () => ({
+  grantCoins: grantCoinsMock,
+  spendCoins: spendCoinsMock,
+  mutateHearts: mutateHeartsMock,
 }));
 
 vi.mock('./gameplay', () => ({
@@ -298,6 +313,10 @@ afterEach(() => {
   markLevelCompletedMock.mockReset();
   saveInventoryMock.mockReset();
   saveUserProfileMock.mockReset();
+  saveProfileStatsMock.mockReset();
+  grantCoinsMock.mockReset();
+  spendCoinsMock.mockReset();
+  mutateHeartsMock.mockReset();
   puzzleIsCompleteMock.mockReset();
 	  computeScoreMock.mockReset();
 	  getRatingOutcomeReceiptMock.mockReset();
@@ -319,6 +338,10 @@ const arrangeHappyPath = () => {
 	  getDailyPointerMock.mockResolvedValue('lvl_0001');
   getUserProfileMock.mockResolvedValue(profileFixture());
   getInventoryMock.mockResolvedValue(inventoryFixture());
+  // Coins are granted atomically via wallet.grantCoins (mocked); it returns the
+  // new balance. profileFixture starts at 0 coins, so balance === amount.
+  grantCoinsMock.mockImplementation(async (_userId: string, amount: number) => amount);
+  saveProfileStatsMock.mockResolvedValue(undefined);
 	  getDailyRetryCountMock.mockResolvedValue(0);
 	  puzzleIsCompleteMock.mockReturnValue(true);
 	  hasContinuedLevelMock.mockResolvedValue(false);
@@ -359,7 +382,8 @@ describe('completeSessionForLevel completion lock', () => {
     expect(result.accepted).toBe(false);
     expect(markLevelCompletedMock).not.toHaveBeenCalled();
     expect(recordDailyScoreMock).not.toHaveBeenCalled();
-    expect(saveUserProfileMock).not.toHaveBeenCalled();
+    expect(saveProfileStatsMock).not.toHaveBeenCalled();
+    expect(grantCoinsMock).not.toHaveBeenCalled();
   });
 
   it('re-checks completion marker under lock and skips duplicate acceptance', async () => {
@@ -517,7 +541,7 @@ describe('completeSessionForLevel completion lock', () => {
     expect(result.ratingDelta).toBe(23);
     expect(result.ratingAfter).toBe(523);
     expect(recordGlobalWinMock).not.toHaveBeenCalled();
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
+    expect(saveProfileStatsMock).toHaveBeenCalledWith(
       't2_test',
       expect.objectContaining({
         globalRating: 523,

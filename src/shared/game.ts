@@ -271,11 +271,21 @@ export const puzzlePublicSchema = z.object({
   dateKey: z.string().min(1),
   author: z.string().min(1),
   challengeType: challengeTypeSchema.default('QUOTE'),
-  words: z.array(z.string()),
+  // NOTE: the public payload deliberately does NOT include the plaintext `words`
+  // (that is the decrypted answer). Word boundaries are derivable from the space
+  // tiles in `tiles`, and the completion quote is rebuilt from revealed tiles.
+  // Shipping `words` would leak the solution to the client. See buildPublicPuzzle.
   tiles: z.array(puzzlePublicTileSchema),
   difficulty: z.number().int().min(1).max(10),
   targetTimeSeconds: z.number().nonnegative().optional(),
   heartsMax: z.number().int().positive(),
+  // The fully decrypted line. Present ONLY when the server has authorized the
+  // reveal — i.e. the viewer has finished this puzzle (completed or failed) or
+  // authored it. It is NEVER set while the puzzle is actively playable, so it
+  // cannot leak the answer mid-solve. The result screen uses it to render the
+  // quote for losses / self-created / reloaded-complete puzzles, where the tiles
+  // are not fully revealed. See buildPublicPuzzle({ revealSolution }).
+  solvedText: z.string().optional(),
 });
 
 export type PuzzlePublic = z.infer<typeof puzzlePublicSchema>;

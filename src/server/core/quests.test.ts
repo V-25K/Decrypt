@@ -14,6 +14,9 @@ const {
   saveDailyQuestProgressMock,
   saveLifetimeQuestProgressMock,
   saveUserProfileMock,
+  hIncrByMock,
+  hSetMock,
+  grantCoinsMock,
 } = vi.hoisted(() => ({
   hGetMock: vi.fn(),
   hGetAllMock: vi.fn(),
@@ -27,6 +30,9 @@ const {
   saveDailyQuestProgressMock: vi.fn(),
   saveLifetimeQuestProgressMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
+  hIncrByMock: vi.fn(),
+  hSetMock: vi.fn(),
+  grantCoinsMock: vi.fn(),
 }));
 
 vi.mock('@devvit/web/server', () => ({
@@ -35,6 +41,8 @@ vi.mock('@devvit/web/server', () => ({
     hSetNX: hSetNXMock,
     hDel: hDelMock,
     hGetAll: hGetAllMock,
+    hSet: hSetMock,
+    hIncrBy: hIncrByMock,
     hLen: vi.fn(async () => 0),
     incrBy: vi.fn(async () => 1),
     mGet: vi.fn(async (keys: string[]) => keys.map(() => null)),
@@ -58,6 +66,14 @@ vi.mock('./keys', () => ({
   keyUserQuestDaily: (userId: string, dateKey: string) =>
     `daily:${userId}:${dateKey}`,
   keyUserQuestLifetime: (userId: string) => `lifetime:${userId}`,
+  keyUserProfile: (userId: string) => `profile:${userId}`,
+  keyUserInventory: (userId: string) => `inventory:${userId}`,
+}));
+
+vi.mock('./wallet', () => ({
+  grantCoins: grantCoinsMock,
+  spendCoins: vi.fn(),
+  mutateHearts: vi.fn(),
 }));
 
 import {
@@ -66,6 +82,7 @@ import {
   claimQuest,
   updateQuestProgressOnCompletion,
 } from './quests';
+import { keyUserProfile } from './keys';
 
 const progressFixture = (overrides?: Partial<QuestProgress>): QuestProgress => ({
   dailyPlayCount: 0,
@@ -140,6 +157,9 @@ afterEach(() => {
   saveDailyQuestProgressMock.mockReset();
   saveLifetimeQuestProgressMock.mockReset();
   saveUserProfileMock.mockReset();
+  hIncrByMock.mockReset();
+  hSetMock.mockReset();
+  grantCoinsMock.mockReset();
 });
 
 describe('claimQuest', () => {
@@ -166,16 +186,11 @@ describe('claimQuest', () => {
     ]);
     expect(result.profile.questsCompleted).toBe(2);
     expect(result.rewardCoins).toBe(60);
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
-      'u1',
-      expect.objectContaining({ questsCompleted: 2, coins: 160 })
-    );
-    expect(saveInventoryMock).toHaveBeenCalledWith(
-      'u1',
-      expect.objectContaining({
-        hammer: 0,
-        rocket: 0,
-      })
+    expect(grantCoinsMock).toHaveBeenCalledWith('u1', 60);
+    expect(hIncrByMock).toHaveBeenCalledWith(
+      keyUserProfile('u1'),
+      'questsCompleted',
+      1
     );
   });
 });
@@ -347,10 +362,7 @@ describe('autoClaimDailyQuestsForDate', () => {
 
     expect(result.autoClaimedQuestIds).toEqual(['daily_play_1']);
     expect(result.rewardCoins).toBe(10);
-    expect(saveUserProfileMock).toHaveBeenCalledWith(
-      'u1',
-      expect.objectContaining({ coins: 110 })
-    );
+    expect(grantCoinsMock).toHaveBeenCalledWith('u1', 10);
   });
 
   it('skips daily quests that were already claimed', async () => {

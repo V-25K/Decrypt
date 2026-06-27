@@ -10,7 +10,7 @@ import type {
   SessionState,
   UserProfile,
 } from '../../shared/game';
-import { buildPublicPuzzle } from './puzzle';
+import { buildPublicPuzzle, reconstructSolvedText } from './puzzle';
 import {
   getAllLevelIds,
   getDailyPointer,
@@ -32,10 +32,10 @@ import {
   markLevelCompleted,
   markLevelFailed,
   registerKnownUser,
-  saveInventory,
-  saveUserProfile,
+  saveProfileStats,
   unmarkLevelFailed,
 } from './state';
+import { grantCoins, mutateHearts, spendCoins } from './wallet';
 import {
   clearSessionState,
   createSessionState,
@@ -94,6 +94,7 @@ import {
 } from './quests';
 import { consumePowerup } from './economy';
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { canStartChallenge, consumeHeartOnFailure } from './hearts';
 import {
   saveShareCompletionReceipt,
@@ -115,6 +116,7 @@ import {
   keyUserDailyRetryCounts,
   keyUserEndlessRewardCount,
   keyUserProfile,
+  keySessionLock,
 } from './keys';
 import { recordShadowDifficultyOutcomeSafely } from './difficulty-shadow-rating';
 import { applyEndlessRewardTaper } from '../../shared/economy';
@@ -694,6 +696,27 @@ export const loadLevelForUser = async (params: {
   const isOwnChallenge = Boolean(
     ownChallengeAuthorId && ownChallengeAuthorId === userId
   );
+  // A finished or self-authored puzzle is shown on the result screen, which needs
+  // the full decrypted line — the tiles alone are only partially revealed. Attach
+  // it only for those entitled viewers; an in-progress puzzle never carries it.
+  // (Own challenges skip the getCurrentView fetch on the client, so this is their
+  // only source of the reveal.) A failed daily mid paid-retry (a live session with
+  // hearts left) must not leak the answer, so it is gated the same as getCurrentView.
+  const hasActivePlayableSession = Boolean(
+    activeSession &&
+      activeSession.activeLevelId === levelId &&
+      heartsRemaining(activeSession) > 0
+  );
+  const entitledToSolution =
+    completed.has(levelId) ||
+    isOwnChallenge ||
+    (failedLevel && !hasActivePlayableSession);
+  const puzzleForClient = entitledToSolution
+    ? {
+        ...puzzlePublic,
+        solvedText: reconstructSolvedText(await loadPuzzlePrivate(levelId)),
+      }
+    : puzzlePublic;
   const retryState = buildDailyRetryState({
     mode: params.mode,
     retryCount,
@@ -713,7 +736,7 @@ export const loadLevelForUser = async (params: {
   return {
     mode: params.mode,
     levelId,
-    puzzle: puzzlePublic,
+    puzzle: puzzleForClient,
     alreadyCompleted: completed.has(levelId),
     isOwnChallenge,
     ...retryState,
@@ -1023,13 +1046,17 @@ export const continueSessionForLevel = async (params: {
   }
 
   const now = Date.now();
-  // Spend a heart AND the flat continue cost in one profile write so neither
-  // field clobbers the other. A second immediate continue is already blocked
-  // above: continuing resets mistakesMade to 0, so heartsRemaining > 0 throws.
-  const nextProfile = {
-    ...consumeHeartOnFailure(profile, now),
-    coins: profile.coins - continueCoinCost,
-  };
+  // Charge the continue cost and spend a heart as two atomic wallet ops so
+  // neither clobbers the other (nor a concurrent purchase). A second immediate
+  // continue is already blocked above: continuing resets mistakesMade to 0, so
+  // heartsRemaining > 0 throws.
+  const spend = await spendCoins(userId, continueCoinCost);
+  if (!spend.ok) {
+    throw new Error('Not enough coins to continue.');
+  }
+  await mutateHearts(userId, (heartProfile, ts) =>
+    consumeHeartOnFailure(heartProfile, ts)
+  );
   const continuedSession = withTrackedSessionActivity(
     {
       ...session,
@@ -1041,7 +1068,6 @@ export const continueSessionForLevel = async (params: {
   );
 
 	  await Promise.all([
-	    saveUserProfile(userId, nextProfile),
 	    saveSessionState(userId, postId, continuedSession),
 	    markLevelContinued(userId, params.levelId),
 	    unmarkLevelFailed(userId, params.levelId),
@@ -1051,24 +1077,65 @@ export const continueSessionForLevel = async (params: {
   // as a paid daily retry.
   await updateQuestProgressOnCoinSpend({ userId, amount: continueCoinCost });
 
+  const updatedProfile = await getUserProfile(userId);
+
   return {
     ok: true,
     session: continuedSession,
     heartsRemaining: heartsRemaining(continuedSession),
-    profile: nextProfile,
+    profile: updatedProfile,
     inventory,
   };
+};
+
+// Serializes a session's guess writes with a short, self-expiring NX mutex. Two
+// concurrent guesses would otherwise both read the same session hash and the slower
+// write would clobber the faster one (last-write-wins) — letting a crafted client drop
+// a mistake and dodge game-over. We use a lock (2 commands) rather than a transaction
+// because guesses are the hottest path and the platform caps concurrent transactions at
+// 20 per installation. The token check on release prevents deleting a lock we no longer
+// own after the 5s TTL expired. Honest clients send one guess at a time and never see the
+// CONFLICT; adversarial parallel requests are serialized (one wins, the rest retry).
+const withSessionGuessLock = async <T>(
+  userId: string,
+  postId: string,
+  action: () => Promise<T>
+): Promise<T> => {
+  const lockKey = keySessionLock(userId, postId);
+  const token = crypto.randomUUID();
+  const acquired = await redis.set(lockKey, token, {
+    nx: true,
+    expiration: new Date(Date.now() + 5000),
+  });
+  if (!acquired) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'A guess is already being processed. Please retry.',
+    });
+  }
+  try {
+    return await action();
+  } finally {
+    if ((await redis.get(lockKey)) === token) {
+      await redis.del(lockKey);
+    }
+  }
 };
 
 export const submitGuessForSession = async (params: {
   levelId: string;
   tileIndex: number;
   guessedLetter: string;
+  // Internal batch reuse: submitGuessesForSession loads the puzzle once and holds a single
+  // session lock for the whole batch, so it passes the puzzle in and skips re-locking here.
+  preloadedPuzzle?: Awaited<ReturnType<typeof loadPuzzlePrivate>>;
+  skipSessionLock?: boolean;
 }) => {
   const userId = assertUserId();
   const postId = assertPostId();
   await assertPuzzlePlayable(params.levelId);
-  const puzzle = await loadPuzzlePrivate(params.levelId);
+  const puzzle = params.preloadedPuzzle ?? (await loadPuzzlePrivate(params.levelId));
+  const runGuess = async () => {
   const session = await getSessionState(userId, postId);
   if (!session) {
     throw new Error('Session missing. Start a session first.');
@@ -1154,14 +1221,10 @@ export const submitGuessForSession = async (params: {
   await saveSessionState(userId, postId, nextSession);
   if (isFirstGuess) {
     try {
-      const profile = await getUserProfile(userId);
-      const playedProfile: UserProfile = {
-        ...profile,
-        dailyChallengesPlayed:
-          profile.dailyChallengesPlayed + (session.mode === 'daily' ? 1 : 0),
-        endlessChallengesPlayed:
-          profile.endlessChallengesPlayed + (session.mode === 'endless' ? 1 : 0),
-      };
+      const playedField =
+        session.mode === 'daily'
+          ? 'dailyChallengesPlayed'
+          : 'endlessChallengesPlayed';
       await Promise.all([
         recordLevelPlay(params.levelId, userId),
         recordQualifiedLevelPlay(
@@ -1169,7 +1232,9 @@ export const submitGuessForSession = async (params: {
           userId,
           nextSession.lastSeenAt || Date.now()
         ),
-        saveUserProfile(userId, playedProfile),
+        // Atomic counter increment — never a full-profile overwrite (which would
+        // clobber a concurrent coin/heart mutation).
+        redis.hIncrBy(keyUserProfile(userId), playedField, 1),
       ]);
     } catch (error) {
       console.error(
@@ -1240,7 +1305,9 @@ export const submitGuessForSession = async (params: {
 		      ratingDelta = ratingOutcome.ratingDelta;
 		      ratingAfter = ratingOutcome.ratingAfter;
 		    }
-	    await saveUserProfile(userId, nextProfile);
+	    // Game-over only changes streaks and rating fields (all non-wallet), so
+	    // saveProfileStats avoids clobbering coins/hearts.
+	    await saveProfileStats(userId, nextProfile);
 	    await Promise.all([
 	      markLevelFailed(userId, params.levelId),
 	      nextSession.guessCount >= 1
@@ -1300,28 +1367,43 @@ export const submitGuessForSession = async (params: {
     ratingDelta,
     ratingAfter,
   };
+  };
+  return params.skipSessionLock
+    ? await runGuess()
+    : await withSessionGuessLock(userId, postId, runGuess);
 };
 
 export const submitGuessesForSession = async (params: {
   levelId: string;
   guesses: { tileIndex: number; guessedLetter: string }[];
 }) => {
-  const results = [];
-  for (const guess of params.guesses) {
-    const result = await submitGuessForSession({
-      levelId: params.levelId,
-      tileIndex: guess.tileIndex,
-      guessedLetter: guess.guessedLetter,
-    });
-    results.push(result);
-    if (result.isGameOver || result.isLevelComplete) {
-      break;
+  const userId = assertUserId();
+  const postId = assertPostId();
+  await assertPuzzlePlayable(params.levelId);
+  // Phase 4: load the puzzle once for the whole batch (was re-fetched + re-parsed per
+  // guess, up to 20×). Phase 3: hold ONE session lock for the batch and let each inner
+  // call skip its own lock, so the batch is serialized as a unit with no nested locking.
+  const puzzle = await loadPuzzlePrivate(params.levelId);
+  return await withSessionGuessLock(userId, postId, async () => {
+    const results = [];
+    for (const guess of params.guesses) {
+      const result = await submitGuessForSession({
+        levelId: params.levelId,
+        tileIndex: guess.tileIndex,
+        guessedLetter: guess.guessedLetter,
+        preloadedPuzzle: puzzle,
+        skipSessionLock: true,
+      });
+      results.push(result);
+      if (result.isGameOver || result.isLevelComplete) {
+        break;
+      }
     }
-  }
-  return {
-    ok: true,
-    results,
-  };
+    return {
+      ok: true,
+      results,
+    };
+  });
 };
 
 export const completeSessionForLevel = async (params: {
@@ -1661,9 +1743,6 @@ export const completeSessionForLevel = async (params: {
         await redis.expire(counterKey, 2 * 24 * 60 * 60);
       });
     }
-    await runCompletionStep('save_inventory', async () => {
-      await saveInventory(userId, inventory);
-    });
 	    if (isCurrentDaily) {
 	      await runCompletionStep('record_daily_score', async () => {
 	        await recordDailyScore({
@@ -1810,8 +1889,21 @@ export const completeSessionForLevel = async (params: {
 	      bestOverallRank: updatedBestRank,
 	      bestGlobalRank: updatedBestGlobalRank,
 	    };
+    // Coins are granted atomically (hIncrBy) and journaled so a completion
+    // replay can never double-pay. They are NOT written by the stats save below.
+    let coinsAfterReward = profileWithBestRank.coins;
+    // Back-compat: completions journaled by the previous code added coins inside
+    // the 'save_profile' step. If that step already ran, coins are already
+    // granted — skip the new grant to avoid double-paying across a deploy.
+    if (!hasStep('save_profile')) {
+      await runCompletionStep('grant_coins', async () => {
+        coinsAfterReward = await grantCoins(userId, rewardCoins);
+      });
+    }
     await runCompletionStep('save_profile', async () => {
-      await saveUserProfile(userId, profileWithBestRank);
+      // saveProfileStats excludes the wallet fields, so the atomic coin grant
+      // above (and any concurrent heart/coin mutation) is never clobbered.
+      await saveProfileStats(userId, profileWithBestRank);
     });
     await runCompletionStep('update_quests', async () => {
       await updateQuestProgressOnCompletion({
@@ -1873,7 +1965,7 @@ export const completeSessionForLevel = async (params: {
       ratingDelta,
       ratingAfter,
       globalScoreAfter,
-      profile: profileWithBestRank,
+      profile: { ...profileWithBestRank, coins: coinsAfterReward },
       inventory,
     };
   } finally {
@@ -2158,18 +2250,43 @@ export const getCurrentPuzzleView = async (params: {
 
   const userId = context.userId;
   const postId = context.postId;
-  if (!userId || !postId) {
+  // Logged-out viewers can never be entitled to the answer (they can't complete,
+  // fail, or author), so they always get the masked, no-solution payload.
+  if (!userId) {
     return buildPublicPuzzle(puzzle, [], []);
   }
-  const session = await getSessionState(userId, postId);
-  if (!session || session.activeLevelId !== params.levelId) {
-    return buildPublicPuzzle(puzzle, [], []);
-  }
-  return buildPublicPuzzle(
-    puzzle,
-    session.revealedIndices,
-    session.revealedIndices
+
+  // The decrypted line may be revealed only to a viewer who has finished this
+  // puzzle (completed or failed it) or who authored it. An actively-playing user
+  // is none of these, so the plaintext answer never reaches the client mid-solve.
+  const [completedLevels, failedLevel, authorId, session] = await Promise.all([
+    getCompletedLevels(userId),
+    hasFailedLevel(userId, params.levelId),
+    getCommunityLevelAuthorId(params.levelId),
+    postId ? getSessionState(userId, postId) : Promise.resolve(null),
+  ]);
+  // A failed daily can be paid-retried, and the failure record persists across the
+  // retry — so a stale `failedLevel` must NOT reveal the answer while a retry is
+  // actively in progress (a live session for this level with hearts left). The
+  // reveal is safe once the run is genuinely over (no playable session) or the
+  // viewer completed/authored the puzzle.
+  const hasActivePlayableSession = Boolean(
+    session &&
+      session.activeLevelId === params.levelId &&
+      heartsRemaining(session) > 0
   );
+  const revealSolution =
+    completedLevels.has(params.levelId) ||
+    Boolean(authorId && authorId === userId) ||
+    (failedLevel && !hasActivePlayableSession);
+
+  const revealedIndices =
+    session && session.activeLevelId === params.levelId
+      ? session.revealedIndices
+      : [];
+  return buildPublicPuzzle(puzzle, revealedIndices, revealedIndices, {
+    revealSolution,
+  });
 };
 
 export const trackShareQuest = async (params: {

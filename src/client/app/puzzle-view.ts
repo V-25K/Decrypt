@@ -48,18 +48,18 @@ export const countRemainingLetters = (puzzle: Puzzle | null): number => {
   ).length;
 };
 
+// Builds the solved quote shown on the result screen. Prefers the server-
+// authorized `solvedText` (the full decrypted line), which is the only correct
+// source when the run ended in a loss, the player is viewing their own challenge,
+// or they reopened an already-finished puzzle — in all of those the tiles are not
+// fully revealed. The server only sends `solvedText` to entitled viewers, so this
+// can never leak the answer mid-solve. Falls back to the revealed tiles for a
+// fresh win, where every letter tile's `displayChar` already holds the solved
+// letter (and non-letter tiles carry their literal character). We must NOT read a
+// `words` array here — the plaintext answer is never shipped on a playable puzzle.
 export const buildCompletionQuote = (puzzle: Puzzle): string => {
-  const solvedLetters = puzzle.words.join('');
-  let letterCursor = 0;
-  const rebuilt = puzzle.tiles
-    .map((tile) => {
-      if (!tile.isLetter) {
-        return tile.displayChar;
-      }
-      const nextLetter = solvedLetters.charAt(letterCursor);
-      letterCursor += 1;
-      return nextLetter || tile.displayChar;
-    })
-    .join('');
-  return rebuilt.trim().length > 0 ? rebuilt : puzzle.words.join(' ');
+  if (puzzle.solvedText && puzzle.solvedText.length > 0) {
+    return puzzle.solvedText;
+  }
+  return puzzle.tiles.map((tile) => tile.displayChar).join('');
 };

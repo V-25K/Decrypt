@@ -11,17 +11,18 @@ import {
   getLifetimeQuestProgress,
   trackUserDailyDataDate,
   getUserProfile,
-  saveInventory,
   saveDailyQuestProgress,
-  saveUserProfile,
   saveLifetimeQuestProgress,
 } from './state';
 import {
   keyKnownUsersIndex,
   keyQuestClaimCount,
+  keyUserInventory,
+  keyUserProfile,
   keyUserQuestDaily,
   keyUserQuestLifetime,
 } from './keys';
+import { grantCoins } from './wallet';
 import { redis } from '@devvit/web/server';
 import { dailyDataTtlSeconds } from './constants';
 
@@ -312,32 +313,62 @@ export const claimQuest = async (params: {
     if (!useDailyKey) {
       await redis.incrBy(keyQuestClaimCount(params.questId), 1);
     }
+    const profileKey = keyUserProfile(params.userId);
+    const inventoryKey = keyUserInventory(params.userId);
+
+    // Read current state once: used for the flair-append decision and to build
+    // the response from known deltas (no extra read after the writes).
     const [latestProfile, latestInventory] = await Promise.all([
       getUserProfile(params.userId),
       getInventory(params.userId),
     ]);
+
+    // Coins via atomic grant; questsCompleted via atomic increment. Never a
+    // full-profile overwrite — that would clobber a concurrent wallet mutation.
+    await grantCoins(params.userId, reward.coins);
+    await redis.hIncrBy(profileKey, 'questsCompleted', 1);
+
+    // Inventory rewards: per-item atomic increments (the same primitive
+    // purchases use), so a concurrent purchase is never clobbered.
+    const inventoryReward: Array<[keyof Inventory, number]> = [
+      ['hammer', reward.inventory.hammer ?? 0],
+      ['wand', reward.inventory.wand ?? 0],
+      ['shield', reward.inventory.shield ?? 0],
+      ['rocket', reward.inventory.rocket ?? 0],
+    ];
+    for (const [item, delta] of inventoryReward) {
+      if (delta > 0) {
+        await redis.hIncrBy(inventoryKey, item, delta);
+      }
+    }
+
+    // Flair unlock: narrow append-only field write (never auto-equipped).
     const unlockedFlairs =
       reward.flair && !latestProfile.unlockedFlairs.includes(reward.flair)
         ? [...latestProfile.unlockedFlairs, reward.flair]
         : latestProfile.unlockedFlairs;
-    const profile = {
+    if (reward.flair && unlockedFlairs !== latestProfile.unlockedFlairs) {
+      await redis.hSet(profileKey, {
+        unlockedFlairs: JSON.stringify(unlockedFlairs),
+      });
+    }
+
+    // Build the response from known deltas — coins/questsCompleted/inventory all
+    // changed by exactly the reward amounts above.
+    const profile: UserProfile = {
       ...latestProfile,
       coins: latestProfile.coins + reward.coins,
       questsCompleted: latestProfile.questsCompleted + 1,
       unlockedFlairs,
       activeFlair: latestProfile.activeFlair,
     };
-    const inventory = {
+    const inventory: Inventory = {
       ...latestInventory,
       hammer: latestInventory.hammer + (reward.inventory.hammer ?? 0),
       wand: latestInventory.wand + (reward.inventory.wand ?? 0),
       shield: latestInventory.shield + (reward.inventory.shield ?? 0),
       rocket: latestInventory.rocket + (reward.inventory.rocket ?? 0),
     };
-    await Promise.all([
-      saveUserProfile(params.userId, profile),
-      saveInventory(params.userId, inventory),
-    ]);
     return {
       success: true,
       reason: null,

@@ -120,6 +120,12 @@ export const keyUserQuestLifetime = (userId: string) =>
 export const keySession = (userId: string, postId: string) =>
   `decrypt:session:${userId}:${postId}`;
 
+// Short-lived NX mutex that serializes guess writes for a single session, so two
+// concurrent guesses can never read-modify-write the same session hash and drop a
+// mistake/reveal (last-write-wins). Self-expires so a crashed request can't wedge play.
+export const keySessionLock = (userId: string, postId: string) =>
+  `decrypt:session:${userId}:${postId}:lock`;
+
 export const keyDailyLeaderboard = (dateKey: string) =>
   `decrypt:leaderboard:daily:${dateKey}`;
 
