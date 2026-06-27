@@ -37,7 +37,7 @@ vi.mock('@devvit/web/server', () => ({
 }));
 
 vi.mock('./leaderboard', () => ({
-  getDailyTop: vi.fn(),
+  getDailyWindow: vi.fn(),
   getLevelTop: vi.fn(),
 	  getAllTimeLevelsWindow: vi.fn(),
 	  getAllTimeLogicWindow: vi.fn(),
@@ -56,7 +56,7 @@ vi.mock('./serde', () => ({
 }));
 
 import { redis } from '@devvit/web/server';
-import { getDailyTop, getLevelTop, getAllTimeLevelsWindow, getAllTimeLogicWindow } from './leaderboard';
+import { getDailyWindow, getLevelTop, getAllTimeLevelsWindow, getAllTimeLogicWindow } from './leaderboard';
 
 describe('Property 3: Leaderboard Pagination Correctness', () => {
   let service: PaginatedLeaderboardService;
@@ -85,9 +85,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
           const effectivePageSize = Math.min(pageSize || 50, 50);
           const offset = (page - 1) * effectivePageSize;
           
-          // Setup mock data - getDailyTop is called with totalNeeded = offset + effectivePageSize
-          // We need to return the entries that would be sliced for this specific page
-          const totalNeeded = offset + effectivePageSize;
+          // Windowed daily read returns only this page's rank range.
           const allMockEntries = Array.from({ length: totalEntries }, (_, i) => ({
             userId: `user${i}`,
             username: `User${i}`,
@@ -97,12 +95,11 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             mistakes: i % 3,
             usedPowerups: i % 2
           }));
-          
-          // Return the entries that getDailyTop would return (up to totalNeeded)
-          const mockEntries = allMockEntries.slice(0, Math.min(totalNeeded, totalEntries));
+
+          const pageEntries = allMockEntries.slice(offset, offset + effectivePageSize);
 
           vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
-          vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
+          vi.mocked(getDailyWindow).mockResolvedValue(pageEntries);
 
           const params: DailyLeaderboardPageParams = { page, pageSize, dateKey };
           const result = await service.getDailyLeaderboardPage(params);
@@ -133,7 +130,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
    */
   it('Property 3.4: SHALL provide correct navigation controls for all valid page requests', async () => {
     await fc.assert(
-      fc.property(
+      fc.asyncProperty(
         fc.record({
           currentPage: fc.integer({ min: 1, max: 20 }),
           pageSize: fc.integer({ min: 1, max: 50 }),
@@ -145,9 +142,8 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             // Calculate effective page size and entries for this page
             const effectivePageSize = Math.min(pageSize, 50);
             const offset = (currentPage - 1) * effectivePageSize;
-            
-            // Setup mock data based on leaderboard type
-            const totalNeeded = offset + effectivePageSize;
+
+            // All boards are windowed: each returns only this page's rank range.
             const allMockEntries = Array.from({ length: totalEntries }, (_, i) => ({
               userId: `user${i}`,
               username: `User${i}`,
@@ -161,17 +157,14 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
                 levelsCompleted: 10 + i
               })
             }));
-            
-            // Daily still fetches from the top and slices; the windowed boards
-            // return only this page's rank range.
-            const mockEntries = allMockEntries.slice(0, Math.min(totalNeeded, totalEntries));
+
             const pageEntries = allMockEntries.slice(offset, offset + effectivePageSize);
 
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
 
             // Mock appropriate leaderboard function
             if (leaderboardType === 'daily') {
-              vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
+              vi.mocked(getDailyWindow).mockResolvedValue(pageEntries);
             } else if (leaderboardType === 'allTimeLevels') {
               vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(pageEntries);
             } else {
@@ -195,8 +188,8 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             const expectedHasNextPage = totalEntries > 0 && currentPage < totalPages;
             if (result.hasNextPage !== expectedHasNextPage) return false;
 
-            // Property: hasPreviousPage is correct
-            const expectedHasPreviousPage = currentPage > 1;
+            // Property: hasPreviousPage is correct (an empty board has no pages).
+            const expectedHasPreviousPage = totalEntries > 0 && currentPage > 1;
             if (result.hasPreviousPage !== expectedHasPreviousPage) return false;
 
             // Property: totalPages calculation is correct (handle zero case)
@@ -226,7 +219,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
    */
   it('Property 3.5: SHALL clearly indicate end-of-data conditions when no more entries exist', async () => {
     await fc.assert(
-      fc.property(
+      fc.asyncProperty(
         fc.record({
           pageSize: fc.integer({ min: 1, max: 50 }),
           totalEntries: fc.integer({ min: 0, max: 500 }),
@@ -298,7 +291,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
    */
   it('Property 3: Navigation controls SHALL work correctly with pagination service', async () => {
     await fc.assert(
-      fc.property(
+      fc.asyncProperty(
         fc.record({
           initialPage: fc.integer({ min: 1, max: 10 }),
           pageSize: fc.integer({ min: 1, max: 50 }),
@@ -333,9 +326,9 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
             
             if (navigationType === 'daily') {
-              vi.mocked(getDailyTop).mockImplementation(async (dateKey, limit) => {
-                // Determine which page this request is for based on limit
-                const requestedPage = Math.ceil(limit / effectivePageSize);
+              vi.mocked(getDailyWindow).mockImplementation(async (_dateKey, offset, limit) => {
+                // Window read: derive the page from the offset and return it.
+                const requestedPage = Math.floor(offset / effectivePageSize) + 1;
                 return generateMockEntries(requestedPage).slice(0, limit);
               });
             } else {
@@ -391,7 +384,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
    */
   it('Property 3: Comprehensive pagination correctness for all leaderboard types', async () => {
     await fc.assert(
-      fc.property(
+      fc.asyncProperty(
         fc.record({
           page: fc.integer({ min: 1, max: 20 }),
           requestedPageSize: fc.integer({ min: 1, max: 200 }), // Test beyond max
@@ -425,7 +418,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             }));
 
             vi.mocked(redis.zCard).mockResolvedValue(totalEntries);
-            vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
+            vi.mocked(getDailyWindow).mockResolvedValue(mockEntries);
             vi.mocked(getLevelTop).mockResolvedValue(mockEntries);
             vi.mocked(getAllTimeLevelsWindow).mockResolvedValue(mockEntries);
             vi.mocked(getAllTimeLogicWindow).mockResolvedValue(mockEntries);
@@ -472,7 +465,7 @@ describe('Property 3: Leaderboard Pagination Correctness', () => {
             // Requirement 3.4: Navigation controls correctness
             const expectedHasNextPage = expectedTotalCount > 0 && page < totalPages;
             if (result.hasNextPage !== expectedHasNextPage) return false;
-            if (result.hasPreviousPage !== (page > 1)) return false;
+            if (result.hasPreviousPage !== (expectedTotalCount > 0 && page > 1)) return false;
             if (result.pageInfo.currentPage !== page) return false;
 
             // Requirement 3.5: End-of-data indication

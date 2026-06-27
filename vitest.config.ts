@@ -21,7 +21,6 @@ export default defineConfig({
             'src/server/**/*exploration*.test.ts',
             'src/server/**/*property*.test.ts',
             'src/server/core/generator.test.ts',
-            'src/server/core/leaderboard-pagination-correctness.test.ts',
             'src/server/core/leaderboard.rank.test.ts',
             'src/server/core/puzzle.phase2.test.ts',
             'src/server/core/puzzle.phase3.test.ts',

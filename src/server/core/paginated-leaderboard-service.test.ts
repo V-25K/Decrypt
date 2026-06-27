@@ -13,7 +13,7 @@ vi.mock('@devvit/web/server', () => ({
 }));
 
 vi.mock('./leaderboard', () => ({
-  getDailyTop: vi.fn(),
+  getDailyWindow: vi.fn(),
   getLevelTop: vi.fn(),
 	  getAllTimeLevelsWindow: vi.fn(),
 	  getAllTimeLogicWindow: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock('./serde', () => ({
 }));
 
 import { redis } from '@devvit/web/server';
-import { getDailyTop, getAllTimeLevelsWindow } from './leaderboard';
+import { getDailyWindow, getAllTimeLevelsWindow } from './leaderboard';
 import { keyDailyLeaderboard } from './keys';
 
 describe('PaginatedLeaderboardService', () => {
@@ -52,7 +52,7 @@ describe('PaginatedLeaderboardService', () => {
       ];
 
       vi.mocked(redis.zCard).mockResolvedValue(100);
-      vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
+      vi.mocked(getDailyWindow).mockResolvedValue(mockEntries);
       vi.mocked(keyDailyLeaderboard).mockReturnValue('daily:2024-01-01');
 
       const result = await service.getDailyLeaderboardPage({
@@ -73,12 +73,12 @@ describe('PaginatedLeaderboardService', () => {
       });
 
       expect(redis.zCard).toHaveBeenCalledWith('daily:2024-01-01');
-      expect(getDailyTop).toHaveBeenCalledWith('2024-01-01', 2);
+      expect(getDailyWindow).toHaveBeenCalledWith('2024-01-01', 0, 2);
     });
 
     it('should enforce maximum page size of 50', async () => {
       vi.mocked(redis.zCard).mockResolvedValue(100);
-      vi.mocked(getDailyTop).mockResolvedValue([]);
+      vi.mocked(getDailyWindow).mockResolvedValue([]);
 
       await service.getDailyLeaderboardPage({
         page: 1,
@@ -86,7 +86,7 @@ describe('PaginatedLeaderboardService', () => {
       });
 
       // Should be clamped to 50
-      expect(getDailyTop).toHaveBeenCalledWith('2024-01-01', 50);
+      expect(getDailyWindow).toHaveBeenCalledWith('2024-01-01', 0, 50);
     });
 
     it('should handle last page correctly', async () => {
@@ -95,7 +95,7 @@ describe('PaginatedLeaderboardService', () => {
       ];
 
       vi.mocked(redis.zCard).mockResolvedValue(51);
-      vi.mocked(getDailyTop).mockResolvedValue(mockEntries);
+      vi.mocked(getDailyWindow).mockResolvedValue(mockEntries);
 
       const result = await service.getDailyLeaderboardPage({
         page: 2,

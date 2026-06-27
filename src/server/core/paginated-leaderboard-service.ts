@@ -1,7 +1,7 @@
 import { redis } from '@devvit/web/server';
 import { type LeaderboardEntry } from '../../shared/game.ts';
 import {
-  getDailyTop,
+  getDailyWindow,
   getLevelTop,
   getAllTimeLevelsWindow,
   getAllTimeLogicWindow,
@@ -175,12 +175,8 @@ export class PaginatedLeaderboardService {
    * Get daily leaderboard entries for a specific page
    */
   private async getDailyEntriesForPage(dateKey: string, offset: number, pageSize: number) {
-    // Use the existing getDailyTop function but with calculated offset and limit
-    // We need to get more entries than needed and slice to handle the offset
-    const totalNeeded = offset + pageSize;
-    const allEntries = await getDailyTop(dateKey, totalNeeded);
-    
-    return allEntries.slice(offset, offset + pageSize);
+    // Window read: resolve only this page's rank range (see getAllTimeLevelsWindow).
+    return await getDailyWindow(dateKey, offset, pageSize);
   }
 
   /**
@@ -230,7 +226,10 @@ export class PaginatedLeaderboardService {
     // - hasNextPage: only true if we have data and current page is less than total pages
     // - hasPreviousPage: only true if current page is greater than 1
     const hasNextPage = totalCount > 0 && currentPage < totalPages;
-    const hasPreviousPage = currentPage > 1;
+    // An empty board has no pages, so neither direction is navigable — mirror
+    // the totalCount guard on hasNextPage rather than reporting a phantom
+    // "previous" for page>1 on a board with zero entries.
+    const hasPreviousPage = totalCount > 0 && currentPage > 1;
 
     return {
       entries,
