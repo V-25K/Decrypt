@@ -139,9 +139,10 @@ describe('puzzle-view helpers', () => {
     expect(buildCompletionQuote(view)).toBe('HI');
   });
 
-  it('returns an empty quote when masked with no solvedText (a suppressed loss)', () => {
-    // A loss the server chose not to reveal (e.g. a retryable daily): some letter
-    // tiles are still "_", so the quote must be hidden rather than gibberish.
+  it('returns an empty quote when masked with no solvedText (defensive guard)', () => {
+    // Safety net: a finished daily now always carries solvedText, but if a result
+    // screen ever renders before it arrives, some letter tiles are still "_", so
+    // hide the quote rather than show "_ _ _" gibberish.
     const view: Puzzle = {
       ...puzzle([
         tile(0, { displayChar: 'H' }),

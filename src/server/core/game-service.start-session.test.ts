@@ -1097,7 +1097,7 @@ describe('getCurrentPuzzleView', () => {
   });
 
   // The decrypted line must reach the client ONLY when the run is genuinely over
-  // (completed/failed and not mid-retry) — never during active play.
+  // (completed, or a final daily loss) — never while actively playing with hearts.
   const setUpView = () => {
     isPuzzlePublishedVisibleMock.mockResolvedValue(true);
     isPuzzleRemovedFromPlayMock.mockResolvedValue(false);
@@ -1120,30 +1120,16 @@ describe('getCurrentPuzzleView', () => {
     expect(view.solvedText).toBe('A B');
   });
 
-  it('reveals the solved line after a loss on a non-current daily (no longer retryable)', async () => {
+  it('reveals the solved line after a daily loss (a lost daily is now final)', async () => {
     setUpView();
     hasFailedLevelMock.mockResolvedValue(true);
     getSessionStateMock.mockResolvedValue(null);
-    // The daily pointer has moved on, so this puzzle can no longer be paid-retried
-    // for score — safe to show the answer on the result screen.
-    getDailyPointerMock.mockResolvedValue('lvl_other_daily');
+    // A failed daily can no longer be replayed, so the answer is safe to show on
+    // the result screen regardless of which day's daily this is.
 
     const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
 
     expect(view.solvedText).toBe('A B');
-  });
-
-  it('suppresses the reveal on a failed CURRENT daily that can still be retried', async () => {
-    setUpView();
-    hasFailedLevelMock.mockResolvedValue(true);
-    getSessionStateMock.mockResolvedValue(null);
-    // puzzleFixture is AUTO_DAILY 'lvl_0001'; pointing the daily at it makes this
-    // the current, retryable daily — the answer must NOT leak before a paid retry.
-    getDailyPointerMock.mockResolvedValue('lvl_0001');
-
-    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
-
-    expect(view.solvedText).toBeUndefined();
   });
 
   it('never reveals the solved line during active play', async () => {
@@ -1159,10 +1145,11 @@ describe('getCurrentPuzzleView', () => {
     expect(view.solvedText).toBeUndefined();
   });
 
-  it('never reveals the solved line while a failed daily is being paid-retried', async () => {
+  it('keeps the line hidden when a failed-marked daily still has a live playable session', async () => {
     setUpView();
-    // Failure record persists across a retry, but a live session with hearts left
-    // means the player is actively re-solving — the answer must stay hidden.
+    // Defense-in-depth: if a failure record ever coexists with a live session that
+    // still has hearts (e.g. mid-Continue), the actively-playable run must not see
+    // the answer — only a finished run (no hearts / no session) reveals.
     hasFailedLevelMock.mockResolvedValue(true);
     getSessionStateMock.mockResolvedValue(
       sessionFixture({ activeLevelId: 'lvl_0001' })

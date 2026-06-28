@@ -113,7 +113,6 @@ import {
   keyCompletionFinalizeJournal,
   keyCompletionFinalizeLock,
   keyUserCompleted,
-  keyUserDailyRetryCounts,
   keyUserEndlessRewardCount,
   keyUserProfile,
   keySessionLock,
@@ -158,10 +157,6 @@ const getPostLevelId = (): string | null => {
   const postData = getPostData();
   return postData?.levelId ?? null;
 };
-
-import { parseNumber, transactionCommitted } from './redis-util';
-
-const maxOptimisticRetries = 3;
 
 const completionLockTtlMs = 120_000;
 
@@ -683,7 +678,7 @@ export const loadLevelForUser = async (params: {
     : new Set<string>();
   
   const postId = context.postId ?? null;
-  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId, dailyPointer] =
+  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId] =
     await Promise.all([
       getLevelEngagement(levelId),
       params.mode === 'daily' ? hasFailedLevel(userId, levelId) : Promise.resolve(false),
@@ -692,7 +687,6 @@ export const loadLevelForUser = async (params: {
         : Promise.resolve(0),
       postId ? getSessionState(userId, postId) : Promise.resolve(null),
       getCommunityLevelAuthorId(levelId),
-      params.mode === 'daily' ? getDailyPointer() : Promise.resolve(null),
     ]);
   const isOwnChallenge = Boolean(
     ownChallengeAuthorId && ownChallengeAuthorId === userId
@@ -701,21 +695,17 @@ export const loadLevelForUser = async (params: {
   // the full decrypted line — the tiles alone are only partially revealed. Attach
   // it only for those entitled viewers; an in-progress puzzle never carries it.
   // (Own challenges skip the getCurrentView fetch on the client, so this is their
-  // only source of the reveal.) A failed *current* daily must not leak the answer:
-  // it can always be paid-retried, so a live retry session OR simply reloading the
-  // level would otherwise hand the player the solution before they buy the retry.
-  // Completed/authored reveals, non-daily losses, and past (non-retryable) dailies
-  // are unaffected.
+  // only source of the reveal.) A daily loss is final (no paid retry), so a finished
+  // failure reveals; only an actively-playing run (hearts left) keeps it hidden.
   const hasActivePlayableSession = Boolean(
     activeSession &&
       activeSession.activeLevelId === levelId &&
       heartsRemaining(activeSession) > 0
   );
-  const isCurrentDaily = dailyPointer !== null && dailyPointer === levelId;
   const entitledToSolution =
     completed.has(levelId) ||
     isOwnChallenge ||
-    (failedLevel && !hasActivePlayableSession && !isCurrentDaily);
+    (failedLevel && !hasActivePlayableSession);
   const puzzleForClient = entitledToSolution
     ? {
         ...puzzlePublic,
@@ -893,133 +883,15 @@ export const startSessionForLevel = async (
   };
 };
 
-export const purchaseDailyRetryForLevel = async (params: {
+export const purchaseDailyRetryForLevel = async (_params: {
   levelId: string;
   mode: 'daily' | 'endless';
-}) => {
-  const userId = assertUserId();
-  const postId = assertPostId();
-  if (params.mode !== 'daily') {
-    throw new Error('Paid retries are only available for daily challenges.');
-  }
-  const [
-    profile,
-    inventory,
-    completed,
-    failedLevel,
-    activeSession,
-    puzzle,
-  ] = await Promise.all([
-    getUserProfile(userId),
-    getInventory(userId),
-    getCompletedLevels(userId),
-    hasFailedLevel(userId, params.levelId),
-    getSessionState(userId, postId),
-    loadPuzzlePrivate(params.levelId),
-  ]);
-
-  if (completed.has(params.levelId)) {
-    throw new Error('Daily challenge already completed.');
-  }
-  if (!failedLevel) {
-    throw new Error('Daily retry is only available after a failed daily.');
-  }
-  if (!canStartChallenge(profile)) {
-    throw new Error('No lives left. Wait for refill.');
-  }
-
-  const profileKey = keyUserProfile(userId);
-  const retryCountsKey = keyUserDailyRetryCounts(userId);
-
-  // Deduct coins first (before checking activeSession)
-  for (let attempt = 0; attempt < maxOptimisticRetries; attempt += 1) {
-    const tx = await redis.watch(profileKey, retryCountsKey);
-    const currentCoins = parseNumber(await redis.hGet(profileKey, 'coins'), 0);
-    const currentRetryCount = parseNumber(
-      await redis.hGet(retryCountsKey, params.levelId),
-      0
-    );
-    const retryState = buildDailyRetryState({
-      mode: 'daily',
-      retryCount: currentRetryCount,
-      requiresPaidRetry: true,
-      difficulty: puzzle.difficulty,
-    });
-    const currentRetryCost = retryState.nextRetryCost;
-
-    if (currentCoins < currentRetryCost) {
-      await tx.unwatch();
-      throw new Error('Not enough coins for daily retry.');
-    }
-
-    await tx.multi();
-    await tx.hIncrBy(profileKey, 'coins', -currentRetryCost);
-    await tx.hIncrBy(retryCountsKey, params.levelId, 1);
-    const execResult = await tx.exec();
-    if (!transactionCommitted(execResult)) {
-      continue;
-    }
-
-    await updateQuestProgressOnCoinSpend({
-      userId,
-      amount: currentRetryCost,
-    });
-
-    // After coins are deducted, check if activeSession exists
-    if (
-      activeSession &&
-      activeSession.activeLevelId === params.levelId &&
-      activeSession.mode === 'daily'
-    ) {
-      const [updatedProfile, nextRetryCount] = await Promise.all([
-        getUserProfile(userId),
-        getDailyRetryCount(userId, params.levelId),
-      ]);
-      const nextRetryState = buildDailyRetryState({
-        mode: 'daily',
-        retryCount: nextRetryCount,
-        requiresPaidRetry: false,
-        difficulty: puzzle.difficulty,
-      });
-      return {
-        ok: true,
-        session: activeSession,
-        heartsRemaining: heartsRemaining(activeSession),
-        profile: updatedProfile,
-        inventory,
-        ...nextRetryState,
-      };
-    }
-
-    const session = await createSessionState({
-      userId,
-      postId,
-      levelId: params.levelId,
-      mode: 'daily',
-      prefilledIndices: puzzle.prefilledIndices,
-    });
-    const [updatedProfile, nextRetryCount] = await Promise.all([
-      getUserProfile(userId),
-      getDailyRetryCount(userId, params.levelId),
-    ]);
-    const nextRetryState = buildDailyRetryState({
-      mode: 'daily',
-      retryCount: nextRetryCount,
-      requiresPaidRetry: false,
-      difficulty: puzzle.difficulty,
-    });
-
-    return {
-      ok: true,
-      session,
-      heartsRemaining: heartsRemaining(session),
-      profile: updatedProfile,
-      inventory,
-      ...nextRetryState,
-    };
-  }
-
-  throw new Error('Daily retry purchase conflicted. Please try again.');
+}): Promise<never> => {
+  // Daily challenges are one-and-done: a failed daily is now final (the result
+  // screen shows the answer instead), so the paid retry was removed. Kept as a
+  // rejecting stub so any stale or crafted client call fails loudly rather than
+  // silently re-running the puzzle with a known answer.
+  throw new Error('Daily retries are no longer available.');
 };
 
 export const continueSessionForLevel = async (params: {
@@ -2285,38 +2157,25 @@ export const getCurrentPuzzleView = async (params: {
   // The decrypted line may be revealed only to a viewer who has finished this
   // puzzle (completed or failed it) or who authored it. An actively-playing user
   // is none of these, so the plaintext answer never reaches the client mid-solve.
-  const [completedLevels, failedLevel, authorId, session, dailyPointer] =
-    await Promise.all([
-      getCompletedLevels(userId),
-      hasFailedLevel(userId, params.levelId),
-      getCommunityLevelAuthorId(params.levelId),
-      postId ? getSessionState(userId, postId) : Promise.resolve(null),
-      getDailyPointer(),
-    ]);
-  // A failed daily can be paid-retried, and the failure record persists across the
-  // retry — so a stale `failedLevel` must NOT reveal the answer while a retry is
-  // actively in progress (a live session for this level with hearts left). The
-  // reveal is safe once the run is genuinely over (no playable session) or the
-  // viewer completed/authored the puzzle.
+  const [completedLevels, failedLevel, authorId, session] = await Promise.all([
+    getCompletedLevels(userId),
+    hasFailedLevel(userId, params.levelId),
+    getCommunityLevelAuthorId(params.levelId),
+    postId ? getSessionState(userId, postId) : Promise.resolve(null),
+  ]);
+  // Reveal the answer only once the run is genuinely over — i.e. the player is not
+  // actively solving with hearts left. A daily loss is now final (no paid retry),
+  // so a finished loss reveals the line; an in-progress run (or a Continue'd run
+  // with hearts) keeps it hidden.
   const hasActivePlayableSession = Boolean(
     session &&
       session.activeLevelId === params.levelId &&
       heartsRemaining(session) > 0
   );
-  // A failed *current* daily can always be paid-retried (retries are unlimited),
-  // so revealing its answer here would let a player read the solution before
-  // buying a retry. Suppress the failure-reveal for the official daily; a
-  // completed/authored puzzle and any non-daily (endless/community) loss still
-  // reveal, and a past daily that can no longer be retried is unaffected.
-  const isOfficialDaily = isOfficialDailyPuzzle({
-    puzzle,
-    currentDateKey: formatDateKey(new Date()),
-    dailyPointer,
-  });
   const revealSolution =
     completedLevels.has(params.levelId) ||
     Boolean(authorId && authorId === userId) ||
-    (failedLevel && !hasActivePlayableSession && !isOfficialDaily);
+    (failedLevel && !hasActivePlayableSession);
 
   const revealedIndices =
     session && session.activeLevelId === params.levelId
