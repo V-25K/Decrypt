@@ -188,6 +188,7 @@ const sessionFixture = (overrides?: Partial<SessionState>): SessionState => ({
   shieldIsActive: false,
   revealedIndices: [],
   usedPowerups: 0,
+  powerupRevealedLetters: 0,
   wrongGuesses: 0,
   guessCount: 0,
   ...overrides,
@@ -319,6 +320,9 @@ describe('usePowerupForSession', () => {
       expect.objectContaining({
         revealedIndices: [0],
         usedPowerups: 1,
+        // The hammer revealed one letter tile, so the self-solve counter grows
+        // by exactly that many (drives fair scoring at completion).
+        powerupRevealedLetters: 1,
         startTimestamp: 1000,
       })
     );
@@ -437,6 +441,45 @@ describe('usePowerupForSession', () => {
     expect(result.reason).toBe('Shield is already active.');
     expect(consumePowerupMock).not.toHaveBeenCalled();
     expect(saveSessionStateMock).not.toHaveBeenCalled();
+  });
+
+  it('activates shield without growing the self-solve counter (reveals nothing)', async () => {
+    getPuzzlePrivateMock.mockResolvedValue(puzzleFixture());
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ powerupRevealedLetters: 2 })
+    );
+    getUserProfileMock.mockResolvedValue(profileFixture());
+    getInventoryMock.mockResolvedValue(inventoryFixture());
+    checkPadlockStatusMock.mockReturnValue({
+      lockedIndexSet: new Set<number>(),
+      unlockedChainIdSet: new Set<number>(),
+      unlockedChainIds: [],
+      lockedIndices: [],
+    });
+    tileIsLockedMock.mockReturnValue(false);
+    consumePowerupMock.mockResolvedValue({
+      success: true,
+      reason: null,
+      profile: profileFixture(),
+      inventory: inventoryFixture({ shield: 0 }),
+    });
+
+    const result = await usePowerupForSession({
+      levelId: 'lvl_9001',
+      itemType: 'shield',
+    });
+
+    expect(result.success).toBe(true);
+    expect(saveSessionStateMock).toHaveBeenCalledWith(
+      't2_test',
+      't3_test',
+      expect.objectContaining({
+        shieldIsActive: true,
+        usedPowerups: 1,
+        // A shield reveals no tiles, so it must NOT count toward powerup-assist.
+        powerupRevealedLetters: 2,
+      })
+    );
   });
 
   it('does not consume rocket inventory when there are no unlocked candidates', async () => {

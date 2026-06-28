@@ -174,4 +174,54 @@ describe('rating model', () => {
     expect(Number.isFinite(result.ratingDelta)).toBe(true);
     expect(Number.isFinite(result.nextRating)).toBe(true);
   });
+
+  describe('self-solve ratio (powerup-assisted clears)', () => {
+    const base = {
+      playerRating: 500,
+      ratingGames: 0,
+      outcome: 'win' as const,
+      difficulty: 5,
+      mistakes: 0,
+      currentWinStreak: 0,
+    };
+
+    it('credits a full hand solve identically to the legacy model', () => {
+      const legacy = calculateRating({ ...base, usedPowerups: 0 });
+      const handSolve = calculateRating({
+        ...base,
+        usedPowerups: 0,
+        selfSolveRatio: 1,
+      });
+
+      expect(handSolve.qualityMultiplier).toBeCloseTo(legacy.qualityMultiplier, 8);
+      expect(handSolve.ratingDelta).toBe(legacy.ratingDelta);
+    });
+
+    it('earns far less for a powerup auto-solve, but stays positive', () => {
+      const handSolve = calculateRating({
+        ...base,
+        usedPowerups: 0,
+        selfSolveRatio: 1,
+      });
+      const powerupSolve = calculateRating({
+        ...base,
+        usedPowerups: 8,
+        selfSolveRatio: 0,
+      });
+
+      expect(powerupSolve.ratingDelta).toBeGreaterThan(0);
+      expect(powerupSolve.ratingDelta).toBeLessThan(handSolve.ratingDelta);
+      // r=0, no mistakes/streak/speed → 1 − assistPenalty(0.6) = 0.4.
+      expect(powerupSolve.qualityMultiplier).toBeCloseTo(0.4, 8);
+    });
+
+    it('scales monotonically with how much the player solved', () => {
+      const low = calculateRating({ ...base, usedPowerups: 4, selfSolveRatio: 0.2 });
+      const mid = calculateRating({ ...base, usedPowerups: 4, selfSolveRatio: 0.5 });
+      const high = calculateRating({ ...base, usedPowerups: 4, selfSolveRatio: 0.9 });
+
+      expect(mid.ratingDelta).toBeGreaterThan(low.ratingDelta);
+      expect(high.ratingDelta).toBeGreaterThan(mid.ratingDelta);
+    });
+  });
 });

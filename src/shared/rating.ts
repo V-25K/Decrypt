@@ -34,6 +34,13 @@ export type RatingInput = {
   targetTimeSeconds?: number | null;
   mistakes?: number;
   usedPowerups?: number;
+  /**
+   * Fraction of the solvable board the player decoded themselves (1 = fully by
+   * hand, 0 = entirely powerup-revealed). When supplied, the win quality is
+   * earned in proportion to it instead of leaning on the raw powerup-activation
+   * count. Omit it to keep the legacy activation-count behaviour.
+   */
+  selfSolveRatio?: number | undefined;
   currentWinStreak?: number;
   isRecoveryRun?: boolean;
 };
@@ -97,11 +104,37 @@ const getSpeedModifier = (params: {
 
 const getWinQualityMultiplier = (params: RatingInput): number => {
   const mistakes = nonnegativeInteger(params.mistakes);
-  const usedPowerups = nonnegativeInteger(params.usedPowerups);
   const streakBonus = clamp(nonnegativeInteger(params.currentWinStreak) * 0.03, 0, 0.18);
+  const speedModifier = getSpeedModifier(params);
+
+  // Self-solve model: when the caller knows how much of the board the player
+  // decoded themselves, credit the "earned" bonuses (clean clear, streak, fast
+  // solve) only in proportion to that ratio and apply an assist penalty for the
+  // powerup-revealed remainder. At r = 1 (a hand solve) this is mathematically
+  // identical to the legacy multiplier below for every mistake count; at r ≈ 0
+  // (a powerup auto-solve) the bonuses vanish and only the floor remains.
+  if (
+    typeof params.selfSolveRatio === 'number' &&
+    Number.isFinite(params.selfSolveRatio)
+  ) {
+    const r = clamp(params.selfSolveRatio, 0, 1);
+    const earned =
+      r *
+      (0.08 +
+        (mistakes === 0 ? 0.1 : 0) +
+        streakBonus +
+        Math.max(0, speedModifier));
+    const mistakePenalty = mistakes === 0 ? 0 : -clamp(mistakes * 0.04, 0, 0.16);
+    const slowPenalty = Math.min(0, speedModifier);
+    const assistPenalty = (1 - r) * 0.6;
+    const raw = 1 + earned + mistakePenalty + slowPenalty - assistPenalty;
+    const capped = params.isRecoveryRun ? Math.min(raw, 0.5) : raw;
+    return clamp(capped, 0.3, 1.5);
+  }
+
+  const usedPowerups = nonnegativeInteger(params.usedPowerups);
   const mistakeModifier = mistakes === 0 ? 0.1 : -clamp(mistakes * 0.04, 0, 0.16);
   const powerupModifier = usedPowerups === 0 ? 0.08 : -clamp(usedPowerups * 0.04, 0, 0.16);
-  const speedModifier = getSpeedModifier(params);
   const raw = 1 + streakBonus + mistakeModifier + powerupModifier + speedModifier;
   const capped = params.isRecoveryRun ? Math.min(raw, 0.5) : raw;
   return clamp(capped, 0.25, 1.5);

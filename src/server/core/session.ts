@@ -33,6 +33,7 @@ const serializeSession = (session: SessionState): Record<string, string> => ({
   shieldIsActive: session.shieldIsActive ? '1' : '0',
   revealedIndices: JSON.stringify(session.revealedIndices),
   usedPowerups: `${session.usedPowerups}`,
+  powerupRevealedLetters: `${session.powerupRevealedLetters}`,
   wrongGuesses: `${session.wrongGuesses}`,
   guessCount: `${session.guessCount}`,
 });
@@ -74,6 +75,7 @@ export const getSessionState = async (
     shieldIsActive: numberFromHash(hash, 'shieldIsActive', 0) === 1,
     revealedIndices: parseRevealed(hash.revealedIndices),
     usedPowerups: numberFromHash(hash, 'usedPowerups', 0),
+    powerupRevealedLetters: numberFromHash(hash, 'powerupRevealedLetters', 0),
     wrongGuesses: numberFromHash(hash, 'wrongGuesses', 0),
     guessCount: numberFromHash(hash, 'guessCount', 0),
   });
@@ -97,6 +99,7 @@ export const createSessionState = async (params: {
     shieldIsActive: false,
     revealedIndices: params.prefilledIndices,
     usedPowerups: 0,
+    powerupRevealedLetters: 0,
     wrongGuesses: 0,
     guessCount: 0,
   });

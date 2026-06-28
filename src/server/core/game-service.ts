@@ -1697,10 +1697,26 @@ export const completeSessionForLevel = async (params: {
       endlessRewardTapered = taper.tapered;
     }
 
+    // How much of the board the player decoded themselves vs. had revealed by
+    // powerups. A single rocket/wand can uncover many tiles, so scoring on this
+    // ratio is far fairer than the raw powerup-activation count.
+    const letterTileCount = puzzle.tiles.filter((tile) => tile.isLetter).length;
+    const solvableLetterCount = Math.max(
+      1,
+      letterTileCount - puzzle.prefilledIndices.length
+    );
+    const selfSolveRatio = Math.min(
+      1,
+      Math.max(
+        0,
+        1 - trackedSession.powerupRevealedLetters / solvableLetterCount
+      )
+    );
     const baseScore = computeScore({
       solveSeconds,
       mistakes: trackedSession.mistakesMade,
       usedPowerups: trackedSession.usedPowerups,
+      selfSolveRatio,
     });
 	    const scoreBeforeContinuePenalty =
 	      params.mode === 'daily'
@@ -1853,6 +1869,7 @@ export const completeSessionForLevel = async (params: {
 	          solveSeconds,
 	          mistakes: trackedSession.mistakesMade,
 	          usedPowerups: trackedSession.usedPowerups,
+	          selfSolveRatio,
 	          isRecoveryRun,
 	          awardPoints: awardGlobalPoints,
 	        });
@@ -2206,6 +2223,10 @@ export const usePowerupForSession = async (params: {
         ? now
         : nextSession.startTimestamp,
     usedPowerups: existingSession.usedPowerups + 1,
+    // revealedTiles are the letter tiles this powerup uncovered (shield reveals
+    // none). Accumulates how much of the board powerups solved, for fair scoring.
+    powerupRevealedLetters:
+      existingSession.powerupRevealedLetters + revealedTiles.length,
   };
   const afterPadlockStatus = checkPadlockStatus(
     puzzle,

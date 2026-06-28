@@ -257,6 +257,7 @@ const sessionFixture = (): SessionState => ({
   shieldIsActive: false,
   revealedIndices: [0, 2],
   usedPowerups: 0,
+  powerupRevealedLetters: 0,
   wrongGuesses: 1,
   guessCount: 3,
 });
@@ -437,6 +438,62 @@ describe('completeSessionForLevel completion lock', () => {
 	  expect(saveShareCompletionReceiptMock).toHaveBeenCalledTimes(1);
 	  expect(redisDelMock).toHaveBeenCalledTimes(1);
 	});
+
+  it('passes a low self-solve ratio to scoring and rating for a powerup auto-solve', async () => {
+    arrangeHappyPath();
+    // The puzzle has 2 solvable letter tiles (A, B); both were uncovered by
+    // powerups, so the player solved none of it themselves → ratio 0.
+    getSessionStateMock.mockResolvedValue({
+      ...sessionFixture(),
+      powerupRevealedLetters: 2,
+    });
+    redisSetMock.mockResolvedValue('OK');
+    redisHGetAllMock.mockResolvedValue({});
+    redisHGetMock.mockResolvedValue(undefined);
+    redisHSetMock.mockResolvedValue(undefined);
+    redisExpireMock.mockResolvedValue(undefined);
+    redisGetMock.mockImplementation(async () => {
+      const firstCall = redisSetMock.mock.calls[0];
+      if (!firstCall) {
+        return null;
+      }
+      return firstCall[1];
+    });
+
+    await completeSessionForLevel({ levelId: 'lvl_0001', mode: 'daily' });
+
+    expect(computeScoreMock).toHaveBeenCalledWith(
+      expect.objectContaining({ selfSolveRatio: 0 })
+    );
+    expect(recordGlobalWinMock).toHaveBeenCalledWith(
+      expect.objectContaining({ selfSolveRatio: 0 })
+    );
+  });
+
+  it('passes a full self-solve ratio to scoring and rating for a hand solve', async () => {
+    arrangeHappyPath(); // sessionFixture has powerupRevealedLetters: 0 → ratio 1
+    redisSetMock.mockResolvedValue('OK');
+    redisHGetAllMock.mockResolvedValue({});
+    redisHGetMock.mockResolvedValue(undefined);
+    redisHSetMock.mockResolvedValue(undefined);
+    redisExpireMock.mockResolvedValue(undefined);
+    redisGetMock.mockImplementation(async () => {
+      const firstCall = redisSetMock.mock.calls[0];
+      if (!firstCall) {
+        return null;
+      }
+      return firstCall[1];
+    });
+
+    await completeSessionForLevel({ levelId: 'lvl_0001', mode: 'daily' });
+
+    expect(computeScoreMock).toHaveBeenCalledWith(
+      expect.objectContaining({ selfSolveRatio: 1 })
+    );
+    expect(recordGlobalWinMock).toHaveBeenCalledWith(
+      expect.objectContaining({ selfSolveRatio: 1 })
+    );
+  });
 
   it('applies the continue score penalty after continuing', async () => {
     arrangeHappyPath();

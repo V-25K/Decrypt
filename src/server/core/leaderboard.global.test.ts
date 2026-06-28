@@ -146,6 +146,25 @@ describe('global rating leaderboard writes', () => {
     })).toBe(599);
   });
 
+  it('scales challenge score by the self-solve ratio when provided', () => {
+    // ratio = 1 (hand solve) ignores the raw powerup activation count entirely.
+    expect(
+      computeScore({ solveSeconds: 120, mistakes: 0, usedPowerups: 5, selfSolveRatio: 1 })
+    ).toBe(700);
+    // ratio = 0 (powerup auto-solve) floors the assist factor at 0.25…
+    expect(
+      computeScore({ solveSeconds: 120, mistakes: 0, usedPowerups: 0, selfSolveRatio: 0 })
+    ).toBe(175);
+    // …and is independent of how many activations it took to get there.
+    expect(
+      computeScore({ solveSeconds: 120, mistakes: 0, usedPowerups: 10, selfSolveRatio: 0 })
+    ).toBe(175);
+    // a partial solve lands in between (0.25 + 0.75 * 0.8 = 0.85).
+    expect(
+      computeScore({ solveSeconds: 120, mistakes: 0, usedPowerups: 2, selfSolveRatio: 0.8 })
+    ).toBe(595);
+  });
+
   it('keeps challenge score finite and non-negative for bad numeric inputs', () => {
     expect(computeScore({
       solveSeconds: Number.NaN,

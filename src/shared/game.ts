@@ -365,6 +365,11 @@ export const sessionSchema = z.object({
   shieldIsActive: z.boolean(),
   revealedIndices: z.array(z.number().int().nonnegative()),
   usedPowerups: z.number().int().nonnegative(),
+  // Count of letter tiles revealed by powerups (hammer/wand/rocket) this run.
+  // Drives the "self-solve ratio" that fairly scales score/ELO so a powerup
+  // auto-solve is not rewarded like a hand solve. default(0) keeps older
+  // stored/in-flight sessions valid — no migration needed.
+  powerupRevealedLetters: z.number().int().nonnegative().default(0),
   wrongGuesses: z.number().int().nonnegative(),
   guessCount: z.number().int().nonnegative(),
 });

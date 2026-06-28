@@ -189,6 +189,14 @@ export const computeScore = (params: {
   solveSeconds: number;
   mistakes: number;
   usedPowerups: number;
+  /**
+   * Fraction of the solvable board the player decoded themselves (1 = fully by
+   * hand, 0 = entirely powerup-revealed). When supplied, it replaces the legacy
+   * per-activation powerup discount: a single rocket can reveal many tiles, so
+   * the raw activation count badly understates how much help the player got.
+   * Omit it (legacy callers/receipts) to keep the old 0.95^usedPowerups factor.
+   */
+  selfSolveRatio?: number;
 }): number => {
   const safeSolveSeconds = Number.isFinite(params.solveSeconds)
     ? Math.max(0, Math.floor(params.solveSeconds))
@@ -201,8 +209,15 @@ export const computeScore = (params: {
     : 0;
   const speedPoints = Math.round(1200 / (1 + safeSolveSeconds / 120));
   const mistakeFactor = Math.pow(0.9, safeMistakes);
-  const powerupFactor = Math.pow(0.95, safePowerups);
-  const score = Math.round((100 + speedPoints) * mistakeFactor * powerupFactor);
+  // Assist factor: scale by how much the player actually solved. A pure powerup
+  // clear keeps the 0.25 floor (which also caps the otherwise-farmable speed
+  // bonus); a hand solve keeps the full score (factor 1.0).
+  const assistFactor =
+    typeof params.selfSolveRatio === 'number' &&
+    Number.isFinite(params.selfSolveRatio)
+      ? 0.25 + 0.75 * Math.min(1, Math.max(0, params.selfSolveRatio))
+      : Math.pow(0.95, safePowerups);
+  const score = Math.round((100 + speedPoints) * mistakeFactor * assistFactor);
   return Math.max(25, score);
 };
 
@@ -568,6 +583,11 @@ export const recordGlobalWin = async (params: {
   solveSeconds: number;
   mistakes: number;
   usedPowerups: number;
+  /**
+   * Fraction of the board the player solved by hand (1) vs. powerup-revealed (0).
+   * Forwarded to the rating model so a powerup auto-solve earns less ELO.
+   */
+  selfSolveRatio?: number | undefined;
   isRecoveryRun: boolean;
   /**
    * When false, the win still updates rating but awards zero global points
@@ -616,6 +636,7 @@ export const recordGlobalWin = async (params: {
     targetTimeSeconds: params.puzzle.targetTimeSeconds ?? null,
     mistakes: params.mistakes,
     usedPowerups: params.usedPowerups,
+    selfSolveRatio: params.selfSolveRatio,
     currentWinStreak: params.profile.globalWinStreak,
     isRecoveryRun: params.isRecoveryRun,
   });
