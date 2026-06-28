@@ -144,6 +144,45 @@ describe('store.getProducts', () => {
       },
     });
   });
+
+  it('maps a coin pack to a coins-only, repeatable offer', async () => {
+    bootstrapGameMock.mockResolvedValue({ userId: 'u_test' });
+    getPurchasedSkusMock.mockResolvedValue(new Set());
+    getProductsMock.mockResolvedValue({
+      products: [
+        {
+          sku: 'coin_pouch',
+          name: 'Coin Pouch',
+          description: '500 coins',
+          price: { amount: 50 },
+        },
+      ],
+    });
+
+    const caller = appRouter.createCaller({
+      userId: 't2_u_test',
+      username: 'tester',
+      subredditName: 'PlayDecrypt',
+      postId: 't3_testpost',
+    });
+    const result = await caller.store.getProducts();
+
+    expect(result.products).toHaveLength(1);
+    expect(result.products[0]).toMatchObject({
+      sku: 'coin_pouch',
+      isOneTime: false,
+      usdApprox: 1,
+      perks: {
+        coins: 500,
+        hearts: 0,
+        hammer: 0,
+        wand: 0,
+        shield: 0,
+        rocket: 0,
+        infiniteHeartsHours: 0,
+      },
+    });
+  });
 });
 
 describe('game.submitGuesses', () => {

@@ -69,6 +69,42 @@ const bundleCatalog: Record<string, BundleCatalogEntry> = {
       infiniteHeartsHours: 24,
     },
   },
+  coin_pouch: {
+    isOneTime: false,
+    perks: {
+      coins: 500,
+      hearts: 0,
+      hammer: 0,
+      wand: 0,
+      shield: 0,
+      rocket: 0,
+      infiniteHeartsHours: 0,
+    },
+  },
+  coin_chest: {
+    isOneTime: false,
+    perks: {
+      coins: 2000,
+      hearts: 0,
+      hammer: 0,
+      wand: 0,
+      shield: 0,
+      rocket: 0,
+      infiniteHeartsHours: 0,
+    },
+  },
+  coin_trove: {
+    isOneTime: false,
+    perks: {
+      coins: 7000,
+      hearts: 0,
+      hammer: 0,
+      wand: 0,
+      shield: 0,
+      rocket: 0,
+      infiniteHeartsHours: 0,
+    },
+  },
   heart_rush_30m: {
     isOneTime: false,
     perks: {

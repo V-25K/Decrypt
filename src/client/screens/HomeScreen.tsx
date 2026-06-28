@@ -252,28 +252,37 @@ export const HomeScreen = ({
           className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
           aria-hidden="true"
         />
-        <section className="app-surface-strong app-border app-text relative z-[1] w-full max-w-[300px] rounded-2xl border px-4 py-5 text-center shadow-[0_22px_48px_rgba(0,0,0,0.5)]">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/35 bg-black/25">
-            <img src="/ui_key.png" alt="" loading="eager" className="ui-sprite h-8 w-8" />
+        <section className="app-surface-strong app-border app-text relative z-[1] w-full max-w-[320px] overflow-hidden rounded-3xl border px-5 py-7 text-center shadow-[0_26px_60px_rgba(0,0,0,0.55)]">
+          <div
+            className="pointer-events-none absolute inset-x-0 -top-16 h-32 bg-[radial-gradient(circle_at_center,rgba(255,122,48,0.22),transparent_70%)]"
+            aria-hidden="true"
+          />
+          <div className="relative mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/30 bg-black/30">
+            <img src="/ui_key.png" alt="" loading="eager" className="ui-sprite h-10 w-10" />
           </div>
-          <p className="mt-2 text-[13px] font-black uppercase leading-snug">All clear</p>
-          <p className="app-text-muted mt-1 text-[11px] font-extrabold leading-snug">
+          <p className="relative mt-3 text-[10px] font-black uppercase tracking-[0.28em] text-[rgba(255,150,90,0.92)]">
+            All clear
+          </p>
+          <h3 className="relative mt-1.5 text-[20px] font-black uppercase leading-tight">
+            {"You're all caught up"}
+          </h3>
+          <p className="app-text-muted relative mx-auto mt-2 max-w-[260px] text-[12px] font-semibold leading-relaxed">
             {homeTab === 'daily' ? dailyCaughtUpMessage : endlessCaughtUpMessage}
           </p>
           {homeTab === 'daily' ? (
             <button
               type="button"
-              className="btn-3d btn-primary mt-4 w-full rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+              className="btn-3d btn-primary relative mt-5 w-full rounded-xl px-3 py-2.5 text-[12px] font-black uppercase tracking-[0.04em]"
               onClick={onDailyCaughtUpEndless}
               data-testid="home-daily-caught-up-endless"
             >
               Try Endless
             </button>
           ) : (
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="relative mt-5 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className="btn-3d btn-primary rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+                className="btn-3d btn-primary rounded-xl px-3 py-2.5 text-[12px] font-black uppercase tracking-[0.04em]"
                 onClick={() => {
                   onEndlessCategoryFilterChange(null);
                   onEndlessSortChange('random');
@@ -283,7 +292,7 @@ export const HomeScreen = ({
               </button>
               <button
                 type="button"
-                className="btn-3d btn-home rounded-xl px-3 py-2 text-[11px] font-black uppercase"
+                className="btn-3d btn-home rounded-xl px-3 py-2.5 text-[12px] font-black uppercase tracking-[0.04em]"
                 onClick={onEndlessCaughtUpHome}
               >
                 Daily

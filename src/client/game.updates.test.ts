@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  setExpandedChallengeModeIntent,
+  setExpandedScreenIntent,
+} from './app/game-storage';
 
 const bootstrapQuery = vi.fn();
 const loadLevelQuery = vi.fn();
@@ -613,6 +617,34 @@ describe('Game updates', { timeout: 15000 }, () => {
     ).toBeFalsy();
   });
 
+  it('lands a one-tap inline Next straight on the caught-up screen', async () => {
+    primeMocks();
+    getWebViewModeMock.mockReturnValue('inline');
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Boot has loaded the inline post level and consumed any (empty) intent.
+    await waitFor(() => loadLevelQuery.mock.calls.length > 0);
+
+    // Simulate the inline "Next" tap: it stashes the next-challenge intent and
+    // asks Reddit to expand. The daily pool is exhausted, so the next load is
+    // caught up.
+    loadLevelQuery.mockRejectedValueOnce(new Error("You're all caught up."));
+    setExpandedScreenIntent('challenge');
+    setExpandedChallengeModeIntent('daily', null, 'random', true, 'lvl_0001', false);
+
+    // Reddit expanding the panel fires a focus event, flipping the view mode.
+    getWebViewModeMock.mockReturnValue('expanded');
+    window.dispatchEvent(new Event('focus'));
+
+    // One tap: straight to the redesigned caught-up screen — no second Next and
+    // no re-show of the finished result.
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="home-daily-caught-up"]'))
+    );
+    expect((document.body.textContent ?? '').toLowerCase()).toContain('caught up');
+  });
+
   it('remembers the settings audio toggle state', async () => {
     primeMocks();
 
@@ -960,6 +992,74 @@ describe('Game updates', { timeout: 15000 }, () => {
       mode: 'daily',
     });
     expect(purchaseDailyRetryMutation).not.toHaveBeenCalled();
+  });
+
+  it('sends a coin-short Continue to the shop instead of dead-ending', async () => {
+    primeMocks();
+    // Plenty of hearts to clear the out-of-hearts gate, but no coins for the
+    // 50-coin Continue: the prompt should route to the shop to top up (and keep
+    // the run resumable), not just toast and dead-end.
+    bootstrapQuery.mockResolvedValue({
+      userId: 't2_test',
+      username: 'tester',
+      subredditName: 'decrypttest_dev',
+      postId: 't3_test',
+      currentDailyLevelId: 'lvl_0001',
+      todayDateKey: '2026-03-16',
+      profile: { ...profileFixture(), coins: 0, hearts: 3 },
+      inventory: inventoryFixture(),
+      endlessCatalog: {
+        available: false,
+        activeCatalogVersion: null,
+        runtimeCatalogVersion: null,
+        publishedLevelCount: 0,
+        bundledVersions: [],
+      },
+    });
+    submitGuessMutation.mockResolvedValue({
+      ok: true,
+      isCorrect: false,
+      errorCode: null,
+      revealedTiles: [],
+      revealedIndices: [],
+      revealedLetter: null,
+      newlyUnlockedChainIds: [],
+      heartsRemaining: 0,
+      shieldConsumed: false,
+      isLevelComplete: false,
+      isGameOver: true,
+    });
+
+    await renderGame('<div id="root" data-initial-screen="challenge"></div>');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="puzzle-token-wrap"] button'))
+    );
+
+    document
+      .querySelector('[data-testid="puzzle-token-wrap"] button')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await waitFor(
+      () =>
+        document
+          .querySelector('[data-testid="puzzle-token-wrap"] button')
+          ?.getAttribute('data-tile-state') === 'selected'
+    );
+    expect(typeLetterWithProxy('Q')).toBe(true);
+    await waitFor(() => submitGuessMutation.mock.calls.length > 0);
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="continue-prompt"]'))
+    );
+
+    document
+      .querySelector('[data-testid="continue-prompt-button"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    // Lands on the shop, and never fires a Continue charge it can't afford.
+    await waitFor(() =>
+      Boolean(document.querySelector('[data-testid="shop-screen"]'))
+    );
+    expect(continueLevelMutation).not.toHaveBeenCalled();
   });
 
   it('requires confirmation before canceling the continue prompt', async () => {

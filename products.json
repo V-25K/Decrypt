@@ -35,6 +35,39 @@
       }
     },
     {
+      "sku": "coin_pouch",
+      "displayName": "Coin Pouch",
+      "description": "500 coins",
+      "price": 50,
+      "accountingType": "INSTANT",
+      "metadata": {
+        "tier": "coins",
+        "category": "coins"
+      }
+    },
+    {
+      "sku": "coin_chest",
+      "displayName": "Coin Chest",
+      "description": "2,000 coins",
+      "price": 150,
+      "accountingType": "INSTANT",
+      "metadata": {
+        "tier": "coins",
+        "category": "coins"
+      }
+    },
+    {
+      "sku": "coin_trove",
+      "displayName": "Coin Trove",
+      "description": "7,000 coins",
+      "price": 500,
+      "accountingType": "INSTANT",
+      "metadata": {
+        "tier": "coins",
+        "category": "coins"
+      }
+    },
+    {
       "sku": "heart_rush_30m",
       "displayName": "Heart Rush",
       "description": "30 minutes of infinite hearts",

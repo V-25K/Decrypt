@@ -47,12 +47,17 @@ export const ShopScreen = ({
     ] satisfies ToolPerk[]).filter((entry) => entry.value > 0);
     const bonusHours = product.perks.infiniteHeartsHours;
     const isHeartOnly = product.perks.coins <= 0 && toolPerks.length === 0 && bonusHours > 0;
+    const isCoinOnly =
+      product.perks.coins > 0 && toolPerks.length === 0 && bonusHours <= 0;
 
-    return { product, toolPerks, bonusHours, isHeartOnly };
+    return { product, toolPerks, bonusHours, isHeartOnly, isCoinOnly };
   });
 
+  const coinOnlyProducts = productsWithUiHints.filter((entry) => entry.isCoinOnly);
   const heartOnlyProducts = productsWithUiHints.filter((entry) => entry.isHeartOnly);
-  const bundleProducts = productsWithUiHints.filter((entry) => !entry.isHeartOnly);
+  const bundleProducts = productsWithUiHints.filter(
+    (entry) => !entry.isHeartOnly && !entry.isCoinOnly
+  );
 
   return (
     <section
@@ -83,6 +88,51 @@ export const ShopScreen = ({
             </div>
           ) : (
             <div className="flex flex-col gap-3">
+              {coinOnlyProducts.length > 0 && (
+                <section
+                  data-testid="shop-coin-section"
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                >
+                  {coinOnlyProducts.map(({ product }) => (
+                    <section
+                      key={product.sku}
+                      data-testid={`shop-product-card-${product.sku}`}
+                      className="hub-card hub-product-card panel-transparent relative overflow-hidden rounded-2xl border app-border p-3"
+                    >
+                      <div className="mt-5 flex flex-col gap-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="app-text min-w-0 truncate text-sm font-black uppercase leading-tight">
+                            {product.displayName}
+                          </h3>
+                          <button
+                            data-testid={`shop-buy-${product.sku}`}
+                            type="button"
+                            className="btn-3d btn-primary inline-flex w-fit shrink-0 rounded-xl px-4 py-2 text-sm font-black uppercase"
+                            onClick={() => onPurchase(product.sku)}
+                            disabled={offerBusy}
+                          >
+                            <span className="flex items-center justify-center gap-1.5">
+                              <RedditTokenIcon className="h-4 w-4" />
+                              {product.price}
+                            </span>
+                          </button>
+                        </div>
+
+                        <div className="hub-subpanel app-surface-subtle flex items-center justify-between rounded-xl px-3 py-3">
+                          <div className="flex items-center gap-2 text-[18px] font-black">
+                            <HudSprite icon="coin" decorative className="h-6 w-6" />
+                            <span>{product.perks.coins.toLocaleString()}</span>
+                          </div>
+                          <div className="app-text-muted text-[11px] font-semibold uppercase">
+                            Coins
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  ))}
+                </section>
+              )}
+
               {heartOnlyProducts.length > 0 && (
                 <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {heartOnlyProducts.map(({ product, bonusHours }) => {

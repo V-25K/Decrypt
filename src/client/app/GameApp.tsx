@@ -390,6 +390,8 @@ type LoadLevelOptions = {
   dailyArchive?: boolean;
   excludeLevelId?: string | null;
   ignorePostLevel?: boolean;
+  categoryFilter?: ChallengeType | null;
+  endlessSort?: EndlessSort;
 };
 
 type ContinuePromptState = {
@@ -409,7 +411,7 @@ type FailedOutcomeStats = {
   ratingDelta: number | null;
 };
 
-type HeartShopReturnIntent = {
+type ShopReturnIntent = {
   levelId: string;
   mode: ChallengeMode;
   action: 'start' | 'continue';
@@ -563,8 +565,8 @@ export const GameApp = () => {
   const [coinHeartLimitReached, setCoinHeartLimitReached] = useState(false);
   const [heartPurchaseLimitStatus, setHeartPurchaseLimitStatus] =
     useState<HeartPurchaseLimitStatus | null>(null);
-  const [heartShopReturnIntent, setHeartShopReturnIntent] =
-    useState<HeartShopReturnIntent | null>(null);
+  const [shopReturnIntent, setShopReturnIntent] =
+    useState<ShopReturnIntent | null>(null);
   const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => isSfxEnabled());
   const [audioPreferenceBusy, setAudioPreferenceBusy] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
@@ -1222,14 +1224,26 @@ export const GameApp = () => {
   ) => {
     dispatchAppRuntime({ type: 'setBusy', update: true });
     try {
+      // Prefer filters the caller passed explicitly (e.g. resuming a "Next
+      // challenge" intent after the inline view expands); otherwise use the
+      // active endless filters. `undefined` means "not provided"; an explicit
+      // `null` category (All Categories) is honored.
+      let resolvedCategoryFilter: ChallengeType | null = null;
+      if (nextMode === 'endless') {
+        resolvedCategoryFilter =
+          options.categoryFilter !== undefined
+            ? options.categoryFilter
+            : endlessCategoryFilter;
+      }
+      const resolvedEndlessSort =
+        nextMode === 'endless' ? options.endlessSort ?? endlessSort : 'random';
       const loaded = await trpc.game.loadLevel.query({
         mode: nextMode,
         dailyArchive: nextMode === 'daily' ? options.dailyArchive ?? false : false,
         excludeLevelId: options.excludeLevelId ?? null,
         ignorePostLevel: nextMode === 'daily' ? options.ignorePostLevel ?? false : false,
-        categoryFilter:
-          nextMode === 'endless' ? endlessCategoryFilter : null,
-        endlessSort: nextMode === 'endless' ? endlessSort : 'random',
+        categoryFilter: resolvedCategoryFilter,
+        endlessSort: resolvedEndlessSort,
       });
       if (nextMode === 'endless') {
         setEndlessCaughtUpMessage(null);
@@ -1671,7 +1685,31 @@ export const GameApp = () => {
     }
     expandedScreenSyncHandledRef.current = true;
 	    const nextScreen = consumeExpandedScreenIntent() ?? readEntrypointScreen() ?? 'challenge';
+	    if (nextScreen === 'challenge') {
+	      // A "Next challenge" tap from the inline view expands first, then needs
+	      // the requested level loaded HERE — the one-shot bootstrap already ran
+	      // for the inline mount, so it won't fire again. Without this the expanded
+	      // view just re-shows the finished result and the player has to tap Next a
+	      // second time. Honoring the pending intent loads the next level (or lands
+	      // on the caught-up screen) in a single tap.
+	      const challengeIntent = consumeExpandedChallengeModeIntent();
+	      if (challengeIntent) {
+	        if (challengeIntent.mode === 'endless') {
+	          setEndlessCategoryFilter(challengeIntent.categoryFilter);
+	          setEndlessSort(challengeIntent.endlessSort);
+	        }
+	        void loadModeAndOpenChallenge(challengeIntent.mode, undefined, {
+	          dailyArchive: challengeIntent.dailyArchive,
+	          excludeLevelId: challengeIntent.excludeLevelId,
+	          ignorePostLevel: challengeIntent.ignorePostLevel,
+	          categoryFilter: challengeIntent.categoryFilter,
+	          endlessSort: challengeIntent.endlessSort,
+	        });
+	        return;
+	      }
+	    }
 	    setActiveScreen(nextScreen);
+	    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per expand; loadModeAndOpenChallenge is defined later and intentionally omitted.
 	  }, [webViewMode]);
 
   useSfxPriming();
@@ -2357,15 +2395,15 @@ export const GameApp = () => {
           loadFeaturedOffer(),
           loadQuestStatus(),
         ]);
-        if (heartShopReturnIntent) {
-          const returnIntent = heartShopReturnIntent;
-          setHeartShopReturnIntent(null);
+        if (shopReturnIntent) {
+          const returnIntent = shopReturnIntent;
+          setShopReturnIntent(null);
           setActiveScreen('challenge');
           if (returnIntent.action === 'start') {
             await startLevel(returnIntent.levelId, returnIntent.mode);
             await refreshCurrentView(returnIntent.levelId);
           } else {
-            showToast('Hearts restored. Continue your challenge.');
+            showToast("You're set — continue your challenge.");
           }
         }
       } else {
@@ -2402,7 +2440,7 @@ export const GameApp = () => {
 
   const openHeartShopPackages = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (levelId) {
-      setHeartShopReturnIntent({
+      setShopReturnIntent({
         levelId,
         mode,
         action: continuePromptActive || isGameOver ? 'continue' : 'start',
@@ -2854,7 +2892,14 @@ export const GameApp = () => {
 	          return;
 	        }
 	        if (profile && profile.coins < continuePromptPointCost) {
-	          showToast('Not enough coins to continue.');
+	          // Out of coins for Continue: send the player to the shop to grab a
+	          // coin pack, then bring them back to the still-active Continue
+	          // prompt (mirrors the out-of-hearts → shop flow).
+	          if (levelId) {
+	            setShopReturnIntent({ levelId, mode, action: 'continue' });
+	          }
+	          showToast('Not enough coins — grab a coin pack to continue.');
+	          openShop();
 	          return;
 	        }
 	        const result = await trpc.game.continueLevel.mutate({
