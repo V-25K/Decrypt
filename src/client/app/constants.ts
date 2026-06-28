@@ -16,6 +16,14 @@ export type UiSpriteType =
   | 'thumbUp'
   | 'thumbDown';
 
+// External legal docs, opened in the user's browser via navigateTo. Devvit app
+// review requires a visible in-app link to Terms + Privacy because the app uses
+// server-side HTTP Fetch. Surfaced in the Home footer and the in-game Settings.
+export const TERMS_URL =
+  'https://github.com/V-25K/Decrypt/blob/main/TERMS_AND_CONDITIONS.md';
+export const PRIVACY_URL =
+  'https://github.com/V-25K/Decrypt/blob/main/PRIVACY_POLICY.md';
+
 export const coinEmoji = '\u{1FA99}';
 export const crossMarkEmoji = '\u{274C}';
 export const wordContinuationGlyph = '\u{21B3}';

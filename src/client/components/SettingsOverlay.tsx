@@ -1,6 +1,8 @@
 import type { RefObject } from 'react';
+import { navigateTo } from '@devvit/web/client';
 import type { ThemePreference } from '../../shared/game';
 import type { KeyboardPreference } from '../app/game-storage';
+import { PRIVACY_URL, TERMS_URL } from '../app/constants';
 import type { DeviceTier } from '../app/types';
 import { UiSprite } from './UiSprite';
 import { cn } from '../utils';
@@ -191,6 +193,43 @@ export const SettingsOverlay = ({
           >
             Choose the in-app on-screen keyboard or your device's system
             keyboard. Auto picks the best one for your device.
+          </p>
+        </section>
+        <section className="app-surface-strong rounded-lg border app-border px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <UiSprite icon="question" decorative className="h-4 w-4 shrink-0" />
+            <h3
+              className={`${
+                deviceTier === 'mobile' ? 'text-[10px]' : 'text-[11px]'
+              } app-text font-black uppercase`}
+            >
+              Legal
+            </h3>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-testid="settings-terms-link"
+              className="btn-3d btn-neutral btn-compact rounded-lg border py-1.5 text-[10px] font-black uppercase"
+              onClick={() => navigateTo(TERMS_URL)}
+            >
+              Terms
+            </button>
+            <button
+              type="button"
+              data-testid="settings-privacy-link"
+              className="btn-3d btn-neutral btn-compact rounded-lg border py-1.5 text-[10px] font-black uppercase"
+              onClick={() => navigateTo(PRIVACY_URL)}
+            >
+              Privacy
+            </button>
+          </div>
+          <p
+            className={`${
+              deviceTier === 'mobile' ? 'text-[9px]' : 'text-[10px]'
+            } app-text-muted mt-2 font-semibold normal-case`}
+          >
+            Opens our Terms and Privacy Policy in your browser.
           </p>
         </section>
       </div>

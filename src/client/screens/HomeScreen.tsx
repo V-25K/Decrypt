@@ -8,14 +8,9 @@ import {
   type EndlessSort,
 } from '../../shared/game';
 import { tabButtonClass } from '../app/ui';
+import { PRIVACY_URL, TERMS_URL } from '../app/constants';
 import type { ChallengeMetrics, DeviceTier, HomeTab } from '../app/types';
 import { cn } from '../utils';
-
-// External legal docs, opened in the user's browser via navigateTo. Devvit app
-// review requires a visible in-app link to Terms + Privacy because the app uses
-// server-side HTTP Fetch.
-const TERMS_URL = 'https://github.com/V-25K/Decrypt/blob/main/TERMS_AND_CONDITIONS.md';
-const PRIVACY_URL = 'https://github.com/V-25K/Decrypt/blob/main/PRIVACY_POLICY.md';
 
 type HomeScreenProps = {
   deviceTier: DeviceTier;
