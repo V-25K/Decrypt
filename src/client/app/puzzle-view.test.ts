@@ -138,4 +138,20 @@ describe('puzzle-view helpers', () => {
 
     expect(buildCompletionQuote(view)).toBe('HI');
   });
+
+  it('returns an empty quote when masked with no solvedText (a suppressed loss)', () => {
+    // A loss the server chose not to reveal (e.g. a retryable daily): some letter
+    // tiles are still "_", so the quote must be hidden rather than gibberish.
+    const view: Puzzle = {
+      ...puzzle([
+        tile(0, { displayChar: 'H' }),
+        tile(1, { displayChar: '_' }),
+        tile(2, { isLetter: false, displayChar: ' ' }),
+        tile(3, { displayChar: '_' }),
+      ]),
+      solvedText: undefined,
+    };
+
+    expect(buildCompletionQuote(view)).toBe('');
+  });
 });

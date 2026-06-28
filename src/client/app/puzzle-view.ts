@@ -57,9 +57,19 @@ export const countRemainingLetters = (puzzle: Puzzle | null): number => {
 // fresh win, where every letter tile's `displayChar` already holds the solved
 // letter (and non-letter tiles carry their literal character). We must NOT read a
 // `words` array here — the plaintext answer is never shipped on a playable puzzle.
+//
+// When there is no authorized `solvedText` AND the grid is still partly masked
+// (a loss the server chose not to reveal — e.g. a retryable daily), return '' so
+// the result screen hides the quote rather than showing "_ _ _" gibberish.
 export const buildCompletionQuote = (puzzle: Puzzle): string => {
   if (puzzle.solvedText && puzzle.solvedText.length > 0) {
     return puzzle.solvedText;
+  }
+  const hasMaskedLetter = puzzle.tiles.some(
+    (tile) => tile.isLetter && tile.displayChar === '_'
+  );
+  if (hasMaskedLetter) {
+    return '';
   }
   return puzzle.tiles.map((tile) => tile.displayChar).join('');
 };

@@ -1120,14 +1120,30 @@ describe('getCurrentPuzzleView', () => {
     expect(view.solvedText).toBe('A B');
   });
 
-  it('reveals the solved line after a loss once no playable session remains', async () => {
+  it('reveals the solved line after a loss on a non-current daily (no longer retryable)', async () => {
     setUpView();
     hasFailedLevelMock.mockResolvedValue(true);
     getSessionStateMock.mockResolvedValue(null);
+    // The daily pointer has moved on, so this puzzle can no longer be paid-retried
+    // for score — safe to show the answer on the result screen.
+    getDailyPointerMock.mockResolvedValue('lvl_other_daily');
 
     const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
 
     expect(view.solvedText).toBe('A B');
+  });
+
+  it('suppresses the reveal on a failed CURRENT daily that can still be retried', async () => {
+    setUpView();
+    hasFailedLevelMock.mockResolvedValue(true);
+    getSessionStateMock.mockResolvedValue(null);
+    // puzzleFixture is AUTO_DAILY 'lvl_0001'; pointing the daily at it makes this
+    // the current, retryable daily — the answer must NOT leak before a paid retry.
+    getDailyPointerMock.mockResolvedValue('lvl_0001');
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBeUndefined();
   });
 
   it('never reveals the solved line during active play', async () => {

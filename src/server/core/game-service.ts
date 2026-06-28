@@ -683,7 +683,7 @@ export const loadLevelForUser = async (params: {
     : new Set<string>();
   
   const postId = context.postId ?? null;
-  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId] =
+  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId, dailyPointer] =
     await Promise.all([
       getLevelEngagement(levelId),
       params.mode === 'daily' ? hasFailedLevel(userId, levelId) : Promise.resolve(false),
@@ -692,6 +692,7 @@ export const loadLevelForUser = async (params: {
         : Promise.resolve(0),
       postId ? getSessionState(userId, postId) : Promise.resolve(null),
       getCommunityLevelAuthorId(levelId),
+      params.mode === 'daily' ? getDailyPointer() : Promise.resolve(null),
     ]);
   const isOwnChallenge = Boolean(
     ownChallengeAuthorId && ownChallengeAuthorId === userId
@@ -700,17 +701,21 @@ export const loadLevelForUser = async (params: {
   // the full decrypted line — the tiles alone are only partially revealed. Attach
   // it only for those entitled viewers; an in-progress puzzle never carries it.
   // (Own challenges skip the getCurrentView fetch on the client, so this is their
-  // only source of the reveal.) A failed daily mid paid-retry (a live session with
-  // hearts left) must not leak the answer, so it is gated the same as getCurrentView.
+  // only source of the reveal.) A failed *current* daily must not leak the answer:
+  // it can always be paid-retried, so a live retry session OR simply reloading the
+  // level would otherwise hand the player the solution before they buy the retry.
+  // Completed/authored reveals, non-daily losses, and past (non-retryable) dailies
+  // are unaffected.
   const hasActivePlayableSession = Boolean(
     activeSession &&
       activeSession.activeLevelId === levelId &&
       heartsRemaining(activeSession) > 0
   );
+  const isCurrentDaily = dailyPointer !== null && dailyPointer === levelId;
   const entitledToSolution =
     completed.has(levelId) ||
     isOwnChallenge ||
-    (failedLevel && !hasActivePlayableSession);
+    (failedLevel && !hasActivePlayableSession && !isCurrentDaily);
   const puzzleForClient = entitledToSolution
     ? {
         ...puzzlePublic,
@@ -2280,12 +2285,14 @@ export const getCurrentPuzzleView = async (params: {
   // The decrypted line may be revealed only to a viewer who has finished this
   // puzzle (completed or failed it) or who authored it. An actively-playing user
   // is none of these, so the plaintext answer never reaches the client mid-solve.
-  const [completedLevels, failedLevel, authorId, session] = await Promise.all([
-    getCompletedLevels(userId),
-    hasFailedLevel(userId, params.levelId),
-    getCommunityLevelAuthorId(params.levelId),
-    postId ? getSessionState(userId, postId) : Promise.resolve(null),
-  ]);
+  const [completedLevels, failedLevel, authorId, session, dailyPointer] =
+    await Promise.all([
+      getCompletedLevels(userId),
+      hasFailedLevel(userId, params.levelId),
+      getCommunityLevelAuthorId(params.levelId),
+      postId ? getSessionState(userId, postId) : Promise.resolve(null),
+      getDailyPointer(),
+    ]);
   // A failed daily can be paid-retried, and the failure record persists across the
   // retry — so a stale `failedLevel` must NOT reveal the answer while a retry is
   // actively in progress (a live session for this level with hearts left). The
@@ -2296,10 +2303,20 @@ export const getCurrentPuzzleView = async (params: {
       session.activeLevelId === params.levelId &&
       heartsRemaining(session) > 0
   );
+  // A failed *current* daily can always be paid-retried (retries are unlimited),
+  // so revealing its answer here would let a player read the solution before
+  // buying a retry. Suppress the failure-reveal for the official daily; a
+  // completed/authored puzzle and any non-daily (endless/community) loss still
+  // reveal, and a past daily that can no longer be retried is unaffected.
+  const isOfficialDaily = isOfficialDailyPuzzle({
+    puzzle,
+    currentDateKey: formatDateKey(new Date()),
+    dailyPointer,
+  });
   const revealSolution =
     completedLevels.has(params.levelId) ||
     Boolean(authorId && authorId === userId) ||
-    (failedLevel && !hasActivePlayableSession);
+    (failedLevel && !hasActivePlayableSession && !isOfficialDaily);
 
   const revealedIndices =
     session && session.activeLevelId === params.levelId
