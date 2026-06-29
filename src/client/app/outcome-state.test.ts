@@ -156,17 +156,17 @@ describe('outcome state helpers', () => {
   it('chooses already-completed first for direct level loads', () => {
     expect(
       getLoadLevelOutcomeDecision({
-        mode: 'daily',
         requiresPaidRetry: true,
         alreadyCompleted: true,
       })
     ).toBe('already-completed');
   });
 
-  it('chooses paid retry only for direct daily level loads', () => {
+  it('shows the terminal result screen for a finalized run in either mode', () => {
+    // requiresPaidRetry is the legacy name for "run finalized (ended)"; a finished
+    // loss routes to the terminal screen for daily and community alike.
     expect(
       getLoadLevelOutcomeDecision({
-        mode: 'daily',
         requiresPaidRetry: true,
         alreadyCompleted: false,
       })
@@ -174,8 +174,7 @@ describe('outcome state helpers', () => {
 
     expect(
       getLoadLevelOutcomeDecision({
-        mode: 'endless',
-        requiresPaidRetry: true,
+        requiresPaidRetry: false,
         alreadyCompleted: false,
       })
     ).toBe('start-session');

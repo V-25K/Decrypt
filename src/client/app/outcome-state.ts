@@ -108,7 +108,9 @@ export const getBootstrapOutcomeDecision = ({
 };
 
 type LoadLevelOutcomeDecisionParams = {
-  mode: 'daily' | 'endless';
+  // `requiresPaidRetry` is a legacy field name meaning "this run is finalized
+  // (ended) — show the terminal result screen instead of play". It now applies to
+  // both daily and community challenges, so the decision no longer branches on mode.
   requiresPaidRetry: boolean;
   alreadyCompleted: boolean;
 };
@@ -119,7 +121,6 @@ export type LoadLevelOutcomeDecision =
   | 'start-session';
 
 export const getLoadLevelOutcomeDecision = ({
-  mode,
   requiresPaidRetry,
   alreadyCompleted,
 }: LoadLevelOutcomeDecisionParams): LoadLevelOutcomeDecision => {
@@ -127,7 +128,7 @@ export const getLoadLevelOutcomeDecision = ({
     return 'already-completed';
   }
 
-  if (mode === 'daily' && requiresPaidRetry) {
+  if (requiresPaidRetry) {
     return 'show-paid-retry';
   }
 

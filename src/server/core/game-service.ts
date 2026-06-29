@@ -27,9 +27,11 @@ import {
   getUserProfile,
   hasContinuedLevel,
   hasFailedLevel,
+  hasLevelEnded,
   incrementUserEndlessCursor,
   markLevelContinued,
   markLevelCompleted,
+  markLevelEnded,
   markLevelFailed,
   registerKnownUser,
   saveProfileStats,
@@ -340,12 +342,15 @@ const buildDailyRetryState = (params: {
   difficulty?: number;
 }) => {
   if (params.mode !== 'daily') {
+    // Community/endless never had a paid-retry cost ladder, but the run can still
+    // be finalized (ended); pass the flag through so a finished community loss also
+    // routes to the terminal result screen.
     return {
       retryCount: 0,
       nextRetryCost: 0,
       retryScoreFactor: 1,
       nextRetryScoreFactor: 1,
-      requiresPaidRetry: false,
+      requiresPaidRetry: params.requiresPaidRetry,
     };
   }
   const quote = getDailyRetryQuote({
@@ -678,10 +683,11 @@ export const loadLevelForUser = async (params: {
     : new Set<string>();
   
   const postId = context.postId ?? null;
-  const [challengeMetrics, failedLevel, retryCount, activeSession, ownChallengeAuthorId] =
+  const [challengeMetrics, failedLevel, endedLevel, retryCount, activeSession, ownChallengeAuthorId] =
     await Promise.all([
       getLevelEngagement(levelId),
-      params.mode === 'daily' ? hasFailedLevel(userId, levelId) : Promise.resolve(false),
+      hasFailedLevel(userId, levelId),
+      hasLevelEnded(userId, levelId),
       params.mode === 'daily'
         ? getDailyRetryCount(userId, levelId)
         : Promise.resolve(0),
@@ -691,21 +697,29 @@ export const loadLevelForUser = async (params: {
   const isOwnChallenge = Boolean(
     ownChallengeAuthorId && ownChallengeAuthorId === userId
   );
-  // A finished or self-authored puzzle is shown on the result screen, which needs
-  // the full decrypted line — the tiles alone are only partially revealed. Attach
-  // it only for those entitled viewers; an in-progress puzzle never carries it.
-  // (Own challenges skip the getCurrentView fetch on the client, so this is their
-  // only source of the reveal.) A daily loss is final (no paid retry), so a finished
-  // failure reveals; only an actively-playing run (hearts left) keeps it hidden.
+  const alreadyCompleted = completed.has(levelId);
   const hasActivePlayableSession = Boolean(
     activeSession &&
       activeSession.activeLevelId === levelId &&
       heartsRemaining(activeSession) > 0
   );
-  const entitledToSolution =
-    completed.has(levelId) ||
-    isOwnChallenge ||
-    (failedLevel && !hasActivePlayableSession);
+  // "Leave and come back" finalizes a still-pending loss. If the player lost this
+  // level (failed, and hasn't Continue'd back into a playable session) but never
+  // tapped "End Run", merely loading it again counts as ending the run — same as
+  // the explicit End Run path. This unlocks the answer below, locks the puzzle, and
+  // stops a free retry-by-reloading. (A Continue clears `failed`, so a live, still
+  // -playable run never trips this.)
+  let runEnded = endedLevel;
+  if (!runEnded && !alreadyCompleted && failedLevel && !hasActivePlayableSession) {
+    await markLevelEnded(userId, levelId);
+    runEnded = true;
+  }
+  // The decrypted line is revealed only once the run is over for this viewer: they
+  // solved it, they authored it, or the loss is finalized (ended). A run that can
+  // still be continued never carries it, so the answer can't be peeked mid-run and
+  // then continued/retried for the win. (Own challenges skip the getCurrentView
+  // fetch on the client, so this is their only source of the reveal.)
+  const entitledToSolution = alreadyCompleted || isOwnChallenge || runEnded;
   const puzzleForClient = entitledToSolution
     ? {
         ...puzzlePublic,
@@ -715,16 +729,10 @@ export const loadLevelForUser = async (params: {
   const retryState = buildDailyRetryState({
     mode: params.mode,
     retryCount,
-    requiresPaidRetry:
-      params.mode === 'daily' &&
-      failedLevel &&
-      !completed.has(levelId) &&
-      !(
-        activeSession &&
-        activeSession.activeLevelId === levelId &&
-        activeSession.mode === 'daily' &&
-        heartsRemaining(activeSession) > 0
-      ),
+    // Legacy field name (see gameLoadLevelResponseSchema): now means "this run is
+    // finalized — show the terminal result screen instead of play". True for a
+    // finished loss that wasn't won, for both daily and community challenges.
+    requiresPaidRetry: runEnded && !alreadyCompleted,
     difficulty: puzzlePublic.difficulty,
   });
 
@@ -855,14 +863,16 @@ export const startSessionForLevel = async (
       heartsRemaining: heartsRemaining(activeSession),
     };
   }
-  const [completed, failedLevel] = await Promise.all([
+  const [completed, failedLevel, endedLevel] = await Promise.all([
     getCompletedLevels(userId),
     hasFailedLevel(userId, levelId),
+    hasLevelEnded(userId, levelId),
   ]);
   if (mode === 'daily' && completed.has(levelId)) {
     throw new Error('Daily challenge already completed.');
   }
-  if (failedLevel) {
+  // A failed or finalized (ended) run is locked — no fresh session/replay.
+  if (failedLevel || endedLevel) {
     throw new Error('Challenge already failed.');
   }
   if (!canStartChallenge(profile)) {
@@ -883,6 +893,41 @@ export const startSessionForLevel = async (
   };
 };
 
+// Finalize a lost run when the player taps "End Run" on the loss prompt. This is
+// the one place that flips a failure to "ended": it reveals the solved line on the
+// result screen and locks the puzzle from further Continue/retry. Idempotent.
+//
+// Critically, it only finalizes a run that is genuinely lost — the player must have
+// already failed the level (or be sitting on a 0-heart session for it). Without
+// this guard a crafted client could "end" an in-progress, still-winnable run just
+// to unlock the answer mid-solve.
+export const endRunForLevel = async (params: {
+  levelId: string;
+  mode: 'daily' | 'endless';
+}): Promise<{ ok: true }> => {
+  const userId = assertUserId();
+  const postId = context.postId ?? null;
+  const [session, completed, failed] = await Promise.all([
+    postId ? getSessionState(userId, postId) : Promise.resolve(null),
+    getCompletedLevels(userId),
+    hasFailedLevel(userId, params.levelId),
+  ]);
+  if (completed.has(params.levelId)) {
+    // Already won — never lock a win or reveal-gate it differently. No-op.
+    return { ok: true };
+  }
+  const sessionAtZero = Boolean(
+    session &&
+      session.activeLevelId === params.levelId &&
+      heartsRemaining(session) <= 0
+  );
+  if (!failed && !sessionAtZero) {
+    throw new Error('Run is still in progress.');
+  }
+  await markLevelEnded(userId, params.levelId);
+  return { ok: true };
+};
+
 export const purchaseDailyRetryForLevel = async (_params: {
   levelId: string;
   mode: 'daily' | 'endless';
@@ -900,10 +945,11 @@ export const continueSessionForLevel = async (params: {
 }) => {
   const userId = assertUserId();
   const postId = assertPostId();
-  const [session, profile, inventory] = await Promise.all([
+  const [session, profile, inventory, ended] = await Promise.all([
     getSessionState(userId, postId),
     getUserProfile(userId),
     getInventory(userId),
+    hasLevelEnded(userId, params.levelId),
   ]);
 
   if (!session || session.activeLevelId !== params.levelId) {
@@ -911,6 +957,12 @@ export const continueSessionForLevel = async (params: {
   }
   if (session.mode !== params.mode) {
     throw new Error('Session mode mismatch.');
+  }
+  // Once a loss is finalized (End Run, or left-and-reloaded) the answer is shown,
+  // so Continue must be closed — otherwise a player could read the solution then
+  // pay to continue and trivially win.
+  if (ended) {
+    throw new Error('This run has ended.');
   }
   if (heartsRemaining(session) > 0) {
     throw new Error('Continue is only available after all mistakes are used.');
@@ -1351,6 +1403,35 @@ export const completeSessionForLevel = async (params: {
   }
   if (session.mode !== params.mode) {
     throw new Error('Session mode mismatch.');
+  }
+  // Loophole guard: a win can't be banked on a run that was already lost (0 hearts
+  // → failed) or finalized (ended). Once a run is failed/ended the answer may be
+  // revealed, so without this a crafted client could read the solution, fill in the
+  // tiles on the dead session, and complete it for the reward. A legitimate clear
+  // never trips this — winning the final guess doesn't set `failed`, and Continue
+  // clears it before play resumes.
+  const [completionFailedLevel, completionRunEnded] = await Promise.all([
+    hasFailedLevel(userId, params.levelId),
+    hasLevelEnded(userId, params.levelId),
+  ]);
+  if (completionFailedLevel || completionRunEnded) {
+    await clearSessionState(userId, postId);
+    return {
+      ok: true,
+      accepted: false,
+      solveSeconds: 0,
+      score: 0,
+      rewardCoins: 0,
+      mistakes: session.mistakesMade,
+      usedPowerups: session.usedPowerups,
+      retryCount: 0,
+      retryScoreFactor: 1,
+      isRecoveryRun: false,
+      isCurrentDaily: false,
+      rewardNotice: null,
+      profile,
+      inventory,
+    };
   }
   const trackedSession = withTrackedSessionActivity(session, Date.now());
   const activeSolveSeconds = Math.max(
@@ -2157,25 +2238,20 @@ export const getCurrentPuzzleView = async (params: {
   // The decrypted line may be revealed only to a viewer who has finished this
   // puzzle (completed or failed it) or who authored it. An actively-playing user
   // is none of these, so the plaintext answer never reaches the client mid-solve.
-  const [completedLevels, failedLevel, authorId, session] = await Promise.all([
+  const [completedLevels, endedLevel, authorId, session] = await Promise.all([
     getCompletedLevels(userId),
-    hasFailedLevel(userId, params.levelId),
+    hasLevelEnded(userId, params.levelId),
     getCommunityLevelAuthorId(params.levelId),
     postId ? getSessionState(userId, postId) : Promise.resolve(null),
   ]);
-  // Reveal the answer only once the run is genuinely over — i.e. the player is not
-  // actively solving with hearts left. A daily loss is now final (no paid retry),
-  // so a finished loss reveals the line; an in-progress run (or a Continue'd run
-  // with hearts) keeps it hidden.
-  const hasActivePlayableSession = Boolean(
-    session &&
-      session.activeLevelId === params.levelId &&
-      heartsRemaining(session) > 0
-  );
+  // Reveal the answer only once the run is over for this viewer: solved, authored,
+  // or the loss is finalized (ended via "End Run" / left-and-reloaded). A run that
+  // can still be Continue'd never reveals, so the line can't be peeked mid-run and
+  // then continued for the win.
   const revealSolution =
     completedLevels.has(params.levelId) ||
     Boolean(authorId && authorId === userId) ||
-    (failedLevel && !hasActivePlayableSession);
+    endedLevel;
 
   const revealedIndices =
     session && session.activeLevelId === params.levelId

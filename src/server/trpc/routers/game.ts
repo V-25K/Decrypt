@@ -3,6 +3,8 @@ import {
   gameBootstrapResponseSchema,
   gameContinueLevelInputSchema,
   gameContinueLevelResponseSchema,
+  gameEndRunInputSchema,
+  gameEndRunResponseSchema,
   gameCompletedOutcomeSchema,
   gameCompleteSessionInputSchema,
   gameCompleteSessionResponseSchema,
@@ -26,6 +28,7 @@ import {
   bootstrapGame,
   completeSessionForLevel,
   continueSessionForLevel,
+  endRunForLevel,
   getCurrentPuzzleView,
   getDailyPreview,
   heartbeatSessionForLevel,
@@ -90,6 +93,16 @@ export const gameRouter = router({
     .mutation(async ({ input }) => {
       return gameContinueLevelResponseSchema.parse(
         await continueSessionForLevel({
+          levelId: input.levelId,
+          mode: input.mode,
+        })
+      );
+    }),
+  endRun: authedProcedure
+    .input(gameEndRunInputSchema)
+    .mutation(async ({ input }) => {
+      return gameEndRunResponseSchema.parse(
+        await endRunForLevel({
           levelId: input.levelId,
           mode: input.mode,
         })

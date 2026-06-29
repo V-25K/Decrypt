@@ -603,6 +603,14 @@ export const gameContinueLevelResponseSchema = z.object({
   inventory: inventorySchema,
 });
 
+// "End Run" on the loss prompt: finalize a lost run so the answer is revealed and
+// the puzzle locks (no further Continue/retry).
+export const gameEndRunInputSchema = levelModeInputSchema;
+
+export const gameEndRunResponseSchema = z.object({
+  ok: z.literal(true),
+});
+
 export const gameSubmitGuessInputSchema = z
   .object({
     levelId: z.string().min(1),

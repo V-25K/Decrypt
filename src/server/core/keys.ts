@@ -99,6 +99,13 @@ export const keyUserEndlessLevelScores = (userId: string) =>
 export const keyUserFailedLevels = (userId: string) =>
   `decrypt:user:${userId}:failed_levels`;
 
+// Levels whose lost run the player has finalized ("End Run", or by leaving and
+// reloading a still-pending loss). An ended run is locked: no more Continue/retry,
+// and only now is the solved line revealed. Distinct from `failed_levels` (which a
+// Continue clears) — ending is permanent.
+export const keyUserEndedLevels = (userId: string) =>
+  `decrypt:user:${userId}:ended_levels`;
+
 export const keyUserContinuedLevels = (userId: string) =>
   `decrypt:user:${userId}:continued_levels`;
 

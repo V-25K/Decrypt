@@ -13,6 +13,7 @@ import {
   keyOneTimeSkuClaimLock,
   keyUserCompleted,
   keyUserContinuedLevels,
+  keyUserEndedLevels,
   keyUserDailyDataDates,
   keyUserDailyRetryCounts,
   keyUserEndlessCursor,
@@ -541,6 +542,25 @@ export const unmarkLevelFailed = async (
   levelId: string
 ): Promise<void> => {
   await redis.hDel(keyUserFailedLevels(userId), [levelId]);
+};
+
+export const hasLevelEnded = async (
+  userId: string,
+  levelId: string
+): Promise<boolean> => {
+  const raw = await redis.hGet(keyUserEndedLevels(userId), levelId);
+  return raw !== undefined && raw !== null;
+};
+
+// Permanently finalize a lost run: locks it from further Continue/retry and
+// unlocks the solved line on the result screen. Idempotent.
+export const markLevelEnded = async (
+  userId: string,
+  levelId: string
+): Promise<void> => {
+  await redis.hSet(keyUserEndedLevels(userId), {
+    [levelId]: `${Date.now()}`,
+  });
 };
 
 export const markLevelContinued = async (

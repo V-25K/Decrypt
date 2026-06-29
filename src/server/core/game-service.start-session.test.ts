@@ -18,6 +18,8 @@ const {
   getDailyPointerMock,
   getAllLevelIdsMock,
   hasFailedLevelMock,
+  hasLevelEndedMock,
+  markLevelEndedMock,
 	  getPuzzlePrivateMock,
 	  getPuzzlePublicMock,
 	  getEndlessCatalogStatusMock,
@@ -96,6 +98,8 @@ const {
     getDailyPointerMock: vi.fn(),
     getAllLevelIdsMock: vi.fn(),
     hasFailedLevelMock: vi.fn(),
+    hasLevelEndedMock: vi.fn(),
+    markLevelEndedMock: vi.fn(),
     getPuzzlePrivateMock: vi.fn(),
     getPuzzlePublicMock: vi.fn(),
     getEndlessCatalogStatusMock: vi.fn(),
@@ -152,9 +156,11 @@ vi.mock('./state', () => ({
 	  getUserProfile: getUserProfileMock,
 	  hasContinuedLevel: hasContinuedLevelMock,
 	  hasFailedLevel: hasFailedLevelMock,
+	  hasLevelEnded: hasLevelEndedMock,
 	  incrementDailyRetryCount: vi.fn(),
 		  markLevelCompleted: vi.fn(),
 		  markLevelContinued: markLevelContinuedMock,
+		  markLevelEnded: markLevelEndedMock,
 		  markLevelFailed: vi.fn(),
 		  unmarkLevelFailed: vi.fn(),
 	  registerKnownUser: vi.fn(),
@@ -229,6 +235,7 @@ vi.mock('./quests', () => ({
 
 import {
   continueSessionForLevel,
+  endRunForLevel,
   loadLevelForUser,
   getCurrentPuzzleView,
   startSessionForLevel,
@@ -333,6 +340,8 @@ beforeEach(() => {
   redisDelMock.mockResolvedValue(1);
   getCompletedLevelsMock.mockResolvedValue(new Set<string>());
   hasFailedLevelMock.mockResolvedValue(false);
+  hasLevelEndedMock.mockResolvedValue(false);
+  markLevelEndedMock.mockResolvedValue(undefined);
   getFailedLevelsMock.mockResolvedValue(new Set<string>());
   getUserProfileMock.mockResolvedValue(profileFixture());
   hasContinuedLevelMock.mockResolvedValue(false);
@@ -360,6 +369,8 @@ afterEach(() => {
   updateQuestProgressOnCoinSpendMock.mockClear();
   getAllLevelIdsMock.mockReset();
   hasFailedLevelMock.mockReset();
+  hasLevelEndedMock.mockReset();
+  markLevelEndedMock.mockReset();
   getPuzzlePrivateMock.mockReset();
 	  getPuzzlePublicMock.mockReset();
 	  getEndlessCatalogStatusMock.mockReset();
@@ -583,6 +594,27 @@ describe('startSessionForLevel', () => {
     expect(updateQuestProgressOnCoinSpendMock).not.toHaveBeenCalled();
   });
 
+  it('rejects continue once the run has ended (answer already revealed)', async () => {
+    // The exploit guard: a finalized run shows the answer, so Continue must be
+    // closed — otherwise a player could read the solution then pay to win.
+    hasLevelEndedMock.mockResolvedValue(true);
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ mistakesMade: 3, wrongGuesses: 3 })
+    );
+    getUserProfileMock.mockResolvedValue(profileFixture({ hearts: 2, coins: 200 }));
+    canStartChallengeMock.mockReturnValue(true);
+    heartsRemainingMock.mockImplementation((session: SessionState) =>
+      Math.max(0, 3 - session.mistakesMade)
+    );
+
+    await expect(
+      continueSessionForLevel({ levelId: 'lvl_0001', mode: 'daily' })
+    ).rejects.toThrow('This run has ended.');
+
+    expect(spendCoinsMock).not.toHaveBeenCalled();
+    expect(saveSessionStateMock).not.toHaveBeenCalled();
+  });
+
   it('allows replaying already completed endless levels', async () => {
     const createdSession = sessionFixture({
       activeLevelId: 'endless_0001',
@@ -606,6 +638,58 @@ describe('startSessionForLevel', () => {
       mode: 'endless',
       prefilledIndices: [],
     });
+  });
+});
+
+describe('endRunForLevel', () => {
+  it('finalizes a lost run so the answer unlocks and the puzzle locks', async () => {
+    hasFailedLevelMock.mockResolvedValue(true);
+    getSessionStateMock.mockResolvedValue(null);
+
+    const result = await endRunForLevel({ levelId: 'lvl_0001', mode: 'daily' });
+
+    expect(result).toEqual({ ok: true });
+    expect(markLevelEndedMock).toHaveBeenCalledWith('t2_test', 'lvl_0001');
+  });
+
+  it('finalizes a run sitting on a 0-heart session even if not failed-marked', async () => {
+    hasFailedLevelMock.mockResolvedValue(false);
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily' })
+    );
+    heartsRemainingMock.mockReturnValue(0);
+
+    const result = await endRunForLevel({ levelId: 'lvl_0001', mode: 'daily' });
+
+    expect(result).toEqual({ ok: true });
+    expect(markLevelEndedMock).toHaveBeenCalledWith('t2_test', 'lvl_0001');
+  });
+
+  it('refuses to end an in-progress, still-winnable run (no reveal-on-demand)', async () => {
+    // Guards against a crafted client "ending" a live run just to unlock the
+    // solved line mid-solve.
+    hasFailedLevelMock.mockResolvedValue(false);
+    getSessionStateMock.mockResolvedValue(
+      sessionFixture({ activeLevelId: 'lvl_0001', mode: 'daily' })
+    );
+    heartsRemainingMock.mockReturnValue(2);
+
+    await expect(
+      endRunForLevel({ levelId: 'lvl_0001', mode: 'daily' })
+    ).rejects.toThrow('Run is still in progress.');
+
+    expect(markLevelEndedMock).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for an already-won level (never locks a win)', async () => {
+    getCompletedLevelsMock.mockResolvedValue(new Set<string>(['lvl_0001']));
+    hasFailedLevelMock.mockResolvedValue(false);
+    getSessionStateMock.mockResolvedValue(null);
+
+    const result = await endRunForLevel({ levelId: 'lvl_0001', mode: 'daily' });
+
+    expect(result).toEqual({ ok: true });
+    expect(markLevelEndedMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1120,16 +1204,30 @@ describe('getCurrentPuzzleView', () => {
     expect(view.solvedText).toBe('A B');
   });
 
-  it('reveals the solved line after a daily loss (a lost daily is now final)', async () => {
+  it('reveals the solved line once the run is finalized (ended)', async () => {
     setUpView();
-    hasFailedLevelMock.mockResolvedValue(true);
+    hasLevelEndedMock.mockResolvedValue(true);
     getSessionStateMock.mockResolvedValue(null);
-    // A failed daily can no longer be replayed, so the answer is safe to show on
-    // the result screen regardless of which day's daily this is.
+    // The answer is shown only after the run is finalized (End Run, or left and
+    // reloaded). Continue is locked at that point, so the line can't be peeked and
+    // then continued for the win.
 
     const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
 
     expect(view.solvedText).toBe('A B');
+  });
+
+  it('hides the solved line on a failed run that is not yet ended', async () => {
+    setUpView();
+    // Lost all hearts (failed) but still on the Continue prompt — not ended. The
+    // answer must stay hidden so a player can't peek then pay to continue and win.
+    hasFailedLevelMock.mockResolvedValue(true);
+    hasLevelEndedMock.mockResolvedValue(false);
+    getSessionStateMock.mockResolvedValue(null);
+
+    const view = await getCurrentPuzzleView({ levelId: 'lvl_0001' });
+
+    expect(view.solvedText).toBeUndefined();
   });
 
   it('never reveals the solved line during active play', async () => {

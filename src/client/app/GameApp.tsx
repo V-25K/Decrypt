@@ -872,32 +872,47 @@ export const GameApp = () => {
       return;
     }
     const promptLevelId = continuePrompt.levelId;
+    const promptMode = continuePrompt.mode;
+    const promptHeartsRemaining = continuePrompt.heartsRemaining;
+    const promptRatingDelta = continuePrompt.ratingDelta;
     setContinuePrompt(null);
     setContinueCancelConfirmOpen(false);
-    if (promptLevelId !== levelId || continuePrompt.mode !== mode) {
+    if (promptLevelId !== levelId || promptMode !== mode) {
       return;
     }
-    patchChallengeSession(
-      buildGameOverChallengeSessionPatch(continuePrompt.heartsRemaining)
-    );
-    setCompletionRatingDelta(null);
-    setCompletionPointsGained(null);
-    setFailureRatingDelta(continuePrompt.ratingDelta);
-    setRequiresPaidRetry(mode === 'daily');
-    setCompletionResult(null);
-    setCompletionSolveSeconds(null);
-    void refreshBootstrapState().catch(() => undefined);
-    const storageUserId = currentUserIdRef.current;
-    if (storageUserId) {
-      persistOutcomeState(
-        storageUserId,
-        buildPersistedGameOverOutcomeState(
-          promptLevelId,
-          Date.now(),
-          continuePrompt.ratingDelta
-        )
+    const showFinalLoss = () => {
+      patchChallengeSession(
+        buildGameOverChallengeSessionPatch(promptHeartsRemaining)
       );
-    }
+      setCompletionRatingDelta(null);
+      setCompletionPointsGained(null);
+      setFailureRatingDelta(promptRatingDelta);
+      // The run is now finalized for both modes (legacy flag name): show the
+      // terminal result screen.
+      setRequiresPaidRetry(true);
+      setCompletionResult(null);
+      setCompletionSolveSeconds(null);
+      void refreshBootstrapState().catch(() => undefined);
+      const storageUserId = currentUserIdRef.current;
+      if (storageUserId) {
+        persistOutcomeState(
+          storageUserId,
+          buildPersistedGameOverOutcomeState(
+            promptLevelId,
+            Date.now(),
+            promptRatingDelta
+          )
+        );
+      }
+    };
+    // Finalize the loss server-side FIRST so the result screen's reveal fetch (the
+    // isGameOver effect) comes back with the solved line, and Continue is now
+    // locked. Best-effort: even if it fails we still show the loss screen — the
+    // server simply won't reveal an un-ended run.
+    void trpc.game.endRun
+      .mutate({ levelId: promptLevelId, mode: promptMode })
+      .catch(() => undefined)
+      .finally(showFinalLoss);
   }, [
     continuePrompt,
     levelId,
@@ -1262,7 +1277,6 @@ export const GameApp = () => {
       applyDailyRetryState(loaded);
       setChallengeMetrics(loaded.challengeMetrics ?? { plays: 0, wins: 0, winRatePct: 0 });
       const outcomeDecision = getLoadLevelOutcomeDecision({
-        mode: nextMode,
         requiresPaidRetry: loaded.requiresPaidRetry,
         alreadyCompleted: loaded.alreadyCompleted,
       });

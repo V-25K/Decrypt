@@ -8,6 +8,7 @@ const bootstrapQuery = vi.fn();
 const loadLevelQuery = vi.fn();
 const startSessionMutation = vi.fn();
 const continueLevelMutation = vi.fn();
+const endRunMutation = vi.fn().mockResolvedValue({ ok: true });
 const heartbeatMutation = vi.fn().mockResolvedValue({ ok: true });
 const getCurrentViewQuery = vi.fn();
 const submitGuessMutation = vi.fn();
@@ -70,6 +71,7 @@ vi.mock('./trpc', () => ({
 	      loadLevel: { query: loadLevelQuery },
 	      startSession: { mutate: startSessionMutation },
 	      continueLevel: { mutate: continueLevelMutation },
+	      endRun: { mutate: endRunMutation },
       heartbeat: { mutate: heartbeatMutation },
       getCurrentView: { query: getCurrentViewQuery },
       submitGuess: { mutate: submitGuessMutation },
@@ -523,6 +525,8 @@ afterEach(() => {
   loadLevelQuery.mockReset();
   startSessionMutation.mockReset();
   continueLevelMutation.mockReset();
+  endRunMutation.mockReset();
+  endRunMutation.mockResolvedValue({ ok: true });
   heartbeatMutation.mockReset();
   heartbeatMutation.mockResolvedValue({ ok: true });
   getCurrentViewQuery.mockReset();

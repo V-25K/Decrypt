@@ -20,6 +20,7 @@ const {
   getDailyRetryCountMock,
   hasContinuedLevelMock,
   hasFailedLevelMock,
+  hasLevelEndedMock,
   markLevelCompletedMock,
   saveInventoryMock,
   saveUserProfileMock,
@@ -65,6 +66,7 @@ const {
 	  getDailyRetryCountMock: vi.fn(),
 	  hasContinuedLevelMock: vi.fn(),
 	  hasFailedLevelMock: vi.fn(),
+	  hasLevelEndedMock: vi.fn(),
   markLevelCompletedMock: vi.fn(),
   saveInventoryMock: vi.fn(),
   saveUserProfileMock: vi.fn(),
@@ -123,8 +125,10 @@ vi.mock('./state', () => ({
 	  getUserProfile: getUserProfileMock,
 	  hasContinuedLevel: hasContinuedLevelMock,
 	  hasFailedLevel: hasFailedLevelMock,
+	  hasLevelEnded: hasLevelEndedMock,
 	  incrementDailyRetryCount: vi.fn(),
 	  markLevelCompleted: markLevelCompletedMock,
+	  markLevelEnded: vi.fn(),
 	  markLevelFailed: vi.fn(),
 	  unmarkLevelFailed: vi.fn(),
 	  registerKnownUser: vi.fn(),
@@ -311,6 +315,7 @@ afterEach(() => {
 	  getDailyRetryCountMock.mockReset();
 	  hasContinuedLevelMock.mockReset();
 	  hasFailedLevelMock.mockReset();
+	  hasLevelEndedMock.mockReset();
   markLevelCompletedMock.mockReset();
   saveInventoryMock.mockReset();
   saveUserProfileMock.mockReset();
@@ -347,6 +352,7 @@ const arrangeHappyPath = () => {
 	  puzzleIsCompleteMock.mockReturnValue(true);
 	  hasContinuedLevelMock.mockResolvedValue(false);
 	  hasFailedLevelMock.mockResolvedValue(false);
+	  hasLevelEndedMock.mockResolvedValue(false);
   computeScoreMock.mockReturnValue(120);
 	  getUserRankSummaryMock.mockResolvedValue({
 	    dailyRank: null,
@@ -438,6 +444,34 @@ describe('completeSessionForLevel completion lock', () => {
 	  expect(saveShareCompletionReceiptMock).toHaveBeenCalledTimes(1);
 	  expect(redisDelMock).toHaveBeenCalledTimes(1);
 	});
+
+  it('refuses to bank a win on a failed run (peek-then-complete guard)', async () => {
+    arrangeHappyPath();
+    // Lost the run (0 hearts → failed) but tries to complete it anyway, e.g. after
+    // reading a revealed answer. No reward, no completion mark.
+    hasFailedLevelMock.mockResolvedValue(true);
+
+    const result = await completeSessionForLevel({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(markLevelCompletedMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to bank a win on a finalized (ended) run', async () => {
+    arrangeHappyPath();
+    hasLevelEndedMock.mockResolvedValue(true);
+
+    const result = await completeSessionForLevel({
+      levelId: 'lvl_0001',
+      mode: 'daily',
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(markLevelCompletedMock).not.toHaveBeenCalled();
+  });
 
   it('passes a low self-solve ratio to scoring and rating for a powerup auto-solve', async () => {
     arrangeHappyPath();
