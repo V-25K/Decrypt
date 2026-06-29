@@ -29,6 +29,13 @@ and share your own challenges for the community to solve.
 
 ## Versions
 
+- 1.1.1
+  - Fixed coins not deducting on retry.
+  - Added Terms and Privacy policy cta on home and setting page.
+  - Fixed bug where claim button didn't appear as soon as a challenge was over.
+  - Added Gold bundles in the shop. 
+  - Added flow to purchase gold if out of gold when trying to retry / continue a challenge.
+
 - 1.1.0
   - Fixed Keyboard not appearing bug.
   - Adjusted difficulty for hard and expert challenges.
